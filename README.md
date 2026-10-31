@@ -8,10 +8,11 @@ metadata, and tool-specific documentation.
 
 ### BGA Interposer Wizard
 
-Generates BGA-style interposer footprints with independently configurable grid
-and centered-opening dimensions, symmetric corner depopulation, plus optional
-guide pin hole and slot features. The origin can be the package center or guide
-pin hole center. The wizard supports KiCad 9.0 through 10.0.
+Generates BGA-style interposer footprints with independently configurable grid,
+center pad depopulation, and symmetric corner depopulation. Optional features
+include a guide pin hole and slots plus centered rectangular board cutouts. The
+origin can be the package center or guide pin hole center. The wizard supports
+KiCad 9.0 through 10.0.
 
 See [`plugins/bga_interposer/README.md`](plugins/bga_interposer/README.md) for
 parameters and manual installation instructions.

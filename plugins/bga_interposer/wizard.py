@@ -2,7 +2,7 @@
 
 The drawing and parameter conventions intentionally follow KiCad's bundled
 ``bga_wizard.py``.  Pad names retain their full-grid row and column locations,
-so omitting the center opening does not renumber the surrounding balls.
+so center pad depopulation does not renumber the surrounding balls.
 """
 
 from __future__ import division
@@ -26,13 +26,13 @@ FEATURE_CORNERS = (
 
 
 class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
-    """Generate a BGA interposer with a center opening and mounting feature."""
+    """Generate a BGA interposer with optional depopulation and cutouts."""
 
     def GetName(self):
         return "BGA Interposer"
 
     def GetDescription(self):
-        return "BGA interposer with depopulation and optional guide pin features"
+        return "BGA interposer with depopulation, board cutout, and guide features"
 
     def GenerateParameterList(self):
         self.AddParam("Package", "width", self.uMM, 26.0, designator="X")
@@ -117,7 +117,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         self.AddParam("Pads", "rows", self.uInteger, 20, designator="ny", min_value=3)
         self.AddParam(
             "Pads",
-            "corner depopulation depth",
+            "corner depop depth",
             self.uInteger,
             0,
             min_value=0,
@@ -125,7 +125,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         )
 
         self.AddParam(
-            "Center opening",
+            "Center pad depop",
             "columns",
             self.uInteger,
             8,
@@ -134,7 +134,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             hint="Number of omitted pad columns in the centered rectangle",
         )
         self.AddParam(
-            "Center opening",
+            "Center pad depop",
             "rows",
             self.uInteger,
             8,
@@ -143,48 +143,76 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             hint="Number of omitted pad rows in the centered rectangle",
         )
 
+        self.AddParam("Center board cutout", "enabled", self.uBool, False)
+        self.AddParam(
+            "Center board cutout",
+            "width",
+            self.uMM,
+            5.0,
+            designator="X",
+            min_value=0.01,
+        )
+        self.AddParam(
+            "Center board cutout",
+            "length",
+            self.uMM,
+            5.0,
+            designator="Y",
+            min_value=0.01,
+        )
+        self.AddParam(
+            "Center board cutout",
+            "corner radius",
+            self.uMM,
+            0,
+            min_value=0,
+        )
+
     def CheckParameters(self):
         pads = self.parameters["Pads"]
-        opening = self.parameters["Center opening"]
+        center_depopulation = self.parameters["Center pad depop"]
+        center_cutout = self.parameters["Center board cutout"]
         mounting_layout = self.parameters["Mounting layout"]
         guide_hole = self.parameters["Guide pin hole"]
         guide_slots = self.parameters["Guide pin slots"]
 
         columns = pads["columns"]
         rows = pads["rows"]
-        opening_columns = opening["columns"]
-        opening_rows = opening["rows"]
+        depopulation_columns = center_depopulation["columns"]
+        depopulation_rows = center_depopulation["rows"]
 
         self.CheckParam(
             "Pads",
-            "corner depopulation depth",
+            "corner depop depth",
             max_value=(min(columns, rows) - 1) // 2,
             info="at least one pad position must remain between opposing corner cuts",
         )
 
-        # A non-empty opening must leave at least one row/column on every
-        # side. Matching parity is what puts its geometric center at (0, 0).
-        self.CheckParam("Center opening", "columns", max_value=max(0, columns - 2))
-        self.CheckParam("Center opening", "rows", max_value=max(0, rows - 2))
+        # Non-empty center pad depopulation must leave at least one row and
+        # column on every side. Matching parity puts its center at (0, 0).
+        self.CheckParam(
+            "Center pad depop", "columns", max_value=max(0, columns - 2)
+        )
+        self.CheckParam("Center pad depop", "rows", max_value=max(0, rows - 2))
 
-        opening_columns_param = self.GetParam("Center opening", "columns")
-        opening_rows_param = self.GetParam("Center opening", "rows")
+        depopulation_columns_param = self.GetParam("Center pad depop", "columns")
+        depopulation_rows_param = self.GetParam("Center pad depop", "rows")
 
-        if (opening_columns == 0) != (opening_rows == 0):
-            message = "both opening dimensions must be zero, or both must be positive"
-            opening_columns_param.AddError(message)
-            opening_rows_param.AddError(message)
+        if (depopulation_columns == 0) != (depopulation_rows == 0):
+            message = "both center depop dimensions must be zero or positive"
+            depopulation_columns_param.AddError(message)
+            depopulation_rows_param.AddError(message)
 
-        if opening_columns and (columns - opening_columns) % 2:
-            opening_columns_param.AddError(
-                "outer and opening column counts must have matching parity",
-                "required for an opening centered at the origin",
+        if depopulation_columns and (columns - depopulation_columns) % 2:
+            depopulation_columns_param.AddError(
+                "outer and center depop column counts must have matching parity",
+                "required for depopulation centered at the package center",
             )
 
-        if opening_rows and (rows - opening_rows) % 2:
-            opening_rows_param.AddError(
-                "outer and opening row counts must have matching parity",
-                "required for an opening centered at the origin",
+        if depopulation_rows and (rows - depopulation_rows) % 2:
+            depopulation_rows_param.AddError(
+                "outer and center depop row counts must have matching parity",
+                "required for depopulation centered at the package center",
             )
 
         minimum_width = pcbnew.ToMM(pads["pitch"] * columns)
@@ -275,6 +303,45 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         pad_radius = pads["size"] / 2
         retained_pads = self._retained_pad_centers()
 
+        if center_cutout["enabled"]:
+            maximum_radius = min(center_cutout["width"], center_cutout["length"]) / 2
+            self.CheckParam(
+                "Center board cutout",
+                "corner radius",
+                max_value=pcbnew.ToMM(maximum_radius),
+                info="corner radius cannot exceed half the shorter dimension",
+            )
+
+            package = self.parameters["Package"]
+            if center_cutout["width"] >= package["width"]:
+                self.GetParam("Center board cutout", "width").AddError(
+                    "must be smaller than the package width"
+                )
+            if center_cutout["length"] >= package["length"]:
+                self.GetParam("Center board cutout", "length").AddError(
+                    "must be smaller than the package length"
+                )
+
+            if center_cutout["corner radius"] <= maximum_radius:
+                half_width = center_cutout["width"] / 2
+                half_length = center_cutout["length"] / 2
+                radius = center_cutout["corner radius"]
+                for pad_name, pad_position in retained_pads:
+                    distance = self._rounded_rectangle_signed_distance(
+                        pad_position, half_width, half_length, radius
+                    )
+                    if distance < pad_radius:
+                        message = "center board cutout overlaps BGA pad {}".format(
+                            pad_name
+                        )
+                        self.GetParam("Center board cutout", "width").AddError(
+                            message
+                        )
+                        self.GetParam("Center board cutout", "length").AddError(
+                            message
+                        )
+                        break
+
         if guide_hole_position is not None:
             clearance = guide_hole["diameter"] / 2 + pad_radius
             for pad_name, pad_position in retained_pads:
@@ -325,7 +392,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
 
     def GetValue(self):
         pads = self.parameters["Pads"]
-        opening = self.parameters["Center opening"]
+        center_depopulation = self.parameters["Center pad depop"]
         package = self.parameters["Package"]
         pin_count = sum(
             not self._pad_is_omitted(column, row)
@@ -334,14 +401,15 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         )
 
         return (
-            "BGA-Interposer-{pins}_{columns}x{rows}_Opening{opening_columns}x{opening_rows}_"
-            "{width:g}x{length:g}mm_P{pitch:g}mm"
+            "BGA-Interposer-{pins}_{columns}x{rows}_"
+            "CenterDepopulation{depopulation_columns}x"
+            "{depopulation_rows}_{width:g}x{length:g}mm_P{pitch:g}mm"
         ).format(
             pins=pin_count,
             columns=pads["columns"],
             rows=pads["rows"],
-            opening_columns=opening["columns"],
-            opening_rows=opening["rows"],
+            depopulation_columns=center_depopulation["columns"],
+            depopulation_rows=center_depopulation["rows"],
             width=pcbnew.ToMM(package["width"]),
             length=pcbnew.ToMM(package["length"]),
             pitch=pcbnew.ToMM(pads["pitch"]),
@@ -359,14 +427,16 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         return result
 
     @staticmethod
-    def _inside_opening(column, row, columns, rows, opening_columns, opening_rows):
-        if not opening_columns or not opening_rows:
+    def _inside_center_depopulation(
+        column, row, columns, rows, depopulation_columns, depopulation_rows
+    ):
+        if not depopulation_columns or not depopulation_rows:
             return False
-        first_column = (columns - opening_columns) // 2
-        first_row = (rows - opening_rows) // 2
+        first_column = (columns - depopulation_columns) // 2
+        first_row = (rows - depopulation_rows) // 2
         return (
-            first_column <= column < first_column + opening_columns
-            and first_row <= row < first_row + opening_rows
+            first_column <= column < first_column + depopulation_columns
+            and first_row <= row < first_row + depopulation_rows
         )
 
     @staticmethod
@@ -379,21 +449,30 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
 
     def _pad_is_omitted(self, column, row):
         pads = self.parameters["Pads"]
-        opening = self.parameters["Center opening"]
-        return self._inside_opening(
+        center_depopulation = self.parameters["Center pad depop"]
+        return self._inside_center_depopulation(
             column,
             row,
             pads["columns"],
             pads["rows"],
-            opening["columns"],
-            opening["rows"],
+            center_depopulation["columns"],
+            center_depopulation["rows"],
         ) or self._inside_corner_depopulation(
             column,
             row,
             pads["columns"],
             pads["rows"],
-            pads["corner depopulation depth"],
+            pads["corner depop depth"],
         )
+
+    @staticmethod
+    def _rounded_rectangle_signed_distance(point, half_width, half_length, radius):
+        """Return distance to a centered, axis-aligned rounded rectangle."""
+        x_distance = abs(point[0]) - (half_width - radius)
+        y_distance = abs(point[1]) - (half_length - radius)
+        outside_distance = math.hypot(max(x_distance, 0), max(y_distance, 0))
+        inside_distance = min(max(x_distance, y_distance), 0)
+        return outside_distance + inside_distance - radius
 
     def _selected_corners(self, page):
         parameters = self.parameters[page]
@@ -587,6 +666,109 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             )
             self.module.Add(pad)
 
+    def _add_cutout_line(self, layer, line_width, start, end):
+        line = pcbnew.PCB_SHAPE(self.module)
+        line.SetShape(pcbnew.SHAPE_T_SEGMENT)
+        line.SetLayer(layer)
+        line.SetWidth(line_width)
+        line.SetStartEnd(
+            self.draw.TransformPoint(*start), self.draw.TransformPoint(*end)
+        )
+        self.module.Add(line)
+
+    def _add_cutout_arc(self, layer, line_width, center, start):
+        arc = pcbnew.PCB_SHAPE(self.module)
+        arc.SetShape(pcbnew.SHAPE_T_ARC)
+        arc.SetLayer(layer)
+        arc.SetWidth(line_width)
+        arc.SetCenter(self.draw.TransformPoint(*center))
+        arc.SetStart(self.draw.TransformPoint(*start))
+        arc.SetArcAngleAndEnd(pcbnew.EDA_ANGLE(90, pcbnew.DEGREES_T), True)
+        self.module.Add(arc)
+
+    @staticmethod
+    def _supports_native_rounded_rectangle():
+        return hasattr(pcbnew.PCB_SHAPE, "SetCornerRadius")
+
+    def _add_center_board_cutout_on_layer(self, layer, line_width):
+        cutout = self.parameters["Center board cutout"]
+        half_width = cutout["width"] / 2
+        half_length = cutout["length"] / 2
+        radius = cutout["corner radius"]
+
+        # KiCad 10 supports a radius on its native rectangle object. KiCad 9
+        # uses exact line and arc primitives for the rounded form instead.
+        if not radius or self._supports_native_rounded_rectangle():
+            rectangle = pcbnew.PCB_SHAPE(self.module)
+            rectangle.SetShape(pcbnew.SHAPE_T_RECT)
+            rectangle.SetLayer(layer)
+            rectangle.SetWidth(line_width)
+            rectangle.SetFilled(False)
+            rectangle.SetStart(self.draw.TransformPoint(-half_width, -half_length))
+            rectangle.SetEnd(self.draw.TransformPoint(half_width, half_length))
+            if radius:
+                rectangle.SetCornerRadius(int(radius))
+            self.module.Add(rectangle)
+            return
+
+        self._add_cutout_line(
+            layer,
+            line_width,
+            (-half_width + radius, -half_length),
+            (half_width - radius, -half_length),
+        )
+        self._add_cutout_line(
+            layer,
+            line_width,
+            (half_width, -half_length + radius),
+            (half_width, half_length - radius),
+        )
+        self._add_cutout_line(
+            layer,
+            line_width,
+            (half_width - radius, half_length),
+            (-half_width + radius, half_length),
+        )
+        self._add_cutout_line(
+            layer,
+            line_width,
+            (-half_width, half_length - radius),
+            (-half_width, -half_length + radius),
+        )
+
+        self._add_cutout_arc(
+            layer,
+            line_width,
+            (half_width - radius, -half_length + radius),
+            (half_width - radius, -half_length),
+        )
+        self._add_cutout_arc(
+            layer,
+            line_width,
+            (half_width - radius, half_length - radius),
+            (half_width, half_length - radius),
+        )
+        self._add_cutout_arc(
+            layer,
+            line_width,
+            (-half_width + radius, half_length - radius),
+            (-half_width + radius, half_length),
+        )
+        self._add_cutout_arc(
+            layer,
+            line_width,
+            (-half_width + radius, -half_length + radius),
+            (-half_width, -half_length + radius),
+        )
+
+    def _add_center_board_cutout(self):
+        if not self.parameters["Center board cutout"]["enabled"]:
+            return
+        self._add_center_board_cutout_on_layer(
+            pcbnew.Edge_Cuts, pcbnew.FromMM(0.05)
+        )
+        self._add_center_board_cutout_on_layer(pcbnew.F_Fab, pcbnew.FromMM(0.1))
+
     def BuildThisFootprint(self):
         self._add_pads()
         self._add_guide_pin_hole()
@@ -605,6 +787,10 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         self.draw.BoxWithDiagonalAtCorner(
             0, 0, half_width * 2, half_length * 2, bevel
         )
+
+        # The functional board cutout and matching fabrication drawing share
+        # geometry but retain their layer-standard line widths.
+        self._add_center_board_cutout()
 
         # Sparse silkscreen corners keep clear of the outer balls.
         self.draw.SetLayer(pcbnew.F_SilkS)

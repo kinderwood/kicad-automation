@@ -39,8 +39,13 @@ def make_default_icon(size=64):
             grid_x = (x - 8) % 7
             grid_y = (y - 8) % 7
             in_grid = 5 <= x <= 58 and 5 <= y <= 58
-            in_opening = 22 <= x <= 41 and 22 <= y <= 41
-            ball = in_grid and not in_opening and grid_x <= 3 and grid_y <= 3
+            in_center_depopulation = 22 <= x <= 41 and 22 <= y <= 41
+            ball = (
+                in_grid
+                and not in_center_depopulation
+                and grid_x <= 3
+                and grid_y <= 3
+            )
             row.extend((246, 189, 66, 255) if ball else background)
         rows.append(bytes(row))
     raw = b"".join(rows)

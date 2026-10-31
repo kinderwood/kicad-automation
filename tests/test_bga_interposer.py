@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,14 +60,24 @@ class BGAInterposerWizardTests(unittest.TestCase):
             if pad.GetDrillShape() == pcbnew.PAD_DRILL_SHAPE_OBLONG
         ]
 
-    def test_default_20_by_20_with_8_by_8_opening(self):
+    @staticmethod
+    def shapes_on_layer(wizard_or_footprint, layer):
+        footprint = getattr(wizard_or_footprint, "module", wizard_or_footprint)
+        return [
+            item
+            for item in footprint.GraphicalItems()
+            if isinstance(item, pcbnew.PCB_SHAPE) and item.GetLayer() == layer
+        ]
+
+    def test_default_20_by_20_with_8_by_8_center_depopulation(self):
         wizard = self.make_wizard()
         self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
         pads = self.pads_by_name(wizard)
 
         self.assertEqual(336, len(pads))
         self.assertEqual(
-            "BGA-Interposer-336_20x20_Opening8x8_26x26mm_P1mm", wizard.GetValue()
+            "BGA-Interposer-336_20x20_CenterDepopulation8x8_26x26mm_P1mm",
+            wizard.GetValue(),
         )
         self.assertIn("A1", pads)
         self.assertIn("Y20", pads)
@@ -97,6 +108,12 @@ class BGAInterposerWizardTests(unittest.TestCase):
         self.assertFalse(
             wizard.parameters["Guide pin hole"]["top left (A1 corner)"]
         )
+        center_cutout = wizard.parameters["Center board cutout"]
+        self.assertFalse(center_cutout["enabled"])
+        self.assertEqual(pcbnew.FromMM(5), center_cutout["width"])
+        self.assertEqual(pcbnew.FromMM(5), center_cutout["length"])
+        self.assertEqual(0, center_cutout["corner radius"])
+        self.assertEqual([], self.shapes_on_layer(wizard, pcbnew.Edge_Cuts))
 
     def test_parameter_pages_follow_drawing_entry_order(self):
         wizard = BGAInterposerWizard()
@@ -107,16 +124,19 @@ class BGAInterposerWizardTests(unittest.TestCase):
                 "Guide pin hole",
                 "Guide pin slots",
                 "Pads",
-                "Center opening",
+                "Center pad depop",
+                "Center board cutout",
             ],
             [
                 wizard.GetParameterPageName(index)
                 for index in range(wizard.GetNumParameterPages())
             ],
         )
+        self.assertIsNotNone(wizard.GetParam("Pads", "corner depop depth"))
+        self.assertIsNone(wizard.GetParam("Pads", "corner depopulation depth"))
 
     def test_symmetric_corner_depopulation_depth_four(self):
-        wizard = self.make_wizard(Pads__corner_depopulation_depth=4)
+        wizard = self.make_wizard(Pads__corner_depop_depth=4)
         self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
         pads = self.pads_by_name(wizard)
 
@@ -140,18 +160,18 @@ class BGAInterposerWizardTests(unittest.TestCase):
         for name in ("A5", "B4", "C3", "D2", "E1"):
             self.assertIn(name, pads)
         self.assertEqual(
-            "BGA-Interposer-296_20x20_Opening8x8_26x26mm_P1mm",
+            "BGA-Interposer-296_20x20_CenterDepopulation8x8_26x26mm_P1mm",
             wizard.GetValue(),
         )
 
     def test_corner_depopulation_depth_is_bounded(self):
-        wizard = self.make_wizard(Pads__corner_depopulation_depth=10)
+        wizard = self.make_wizard(Pads__corner_depop_depth=10)
         self.assertTrue(wizard.AnyErrors())
         self.assertIn("opposing corner cuts", wizard.GetBuildMessages())
 
     def test_corner_depopulation_can_clear_guide_pin_hole(self):
         wizard = self.make_wizard(
-            Pads__corner_depopulation_depth=3,
+            Pads__corner_depop_depth=3,
             Mounting_layout__x_distance=9.5,
             Mounting_layout__y_distance=9.5,
             Guide_pin_hole__enabled=True,
@@ -160,12 +180,12 @@ class BGAInterposerWizardTests(unittest.TestCase):
         self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
         self.assertNotIn("A1", self.pads_by_name(wizard))
 
-    def test_rectangular_array_and_opening(self):
+    def test_rectangular_array_and_center_depopulation(self):
         wizard = self.make_wizard(
             Pads__columns=18,
             Pads__rows=14,
-            Center_opening__columns=6,
-            Center_opening__rows=4,
+            Center_pad_depop__columns=6,
+            Center_pad_depop__rows=4,
             Package__width=18,
             Package__length=14,
             Guide_pin_hole__enabled=False,
@@ -403,15 +423,173 @@ class BGAInterposerWizardTests(unittest.TestCase):
             self.guide_pin_slots(wizard)[0].GetPosition(),
         )
 
+    def test_center_board_cutout_is_one_rectangle_on_each_layer(self):
+        wizard = self.make_wizard(Center_board_cutout__enabled=True)
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+
+        edge_shapes = self.shapes_on_layer(wizard, pcbnew.Edge_Cuts)
+        self.assertEqual(1, len(edge_shapes))
+        self.assertEqual(pcbnew.SHAPE_T_RECT, edge_shapes[0].GetShape())
+        self.assertEqual(pcbnew.FromMM(0.05), edge_shapes[0].GetWidth())
+        self.assertEqual(
+            pcbnew.VECTOR2I(pcbnew.FromMM(-2.5), pcbnew.FromMM(-2.5)),
+            edge_shapes[0].GetStart(),
+        )
+        self.assertEqual(
+            pcbnew.VECTOR2I(pcbnew.FromMM(2.5), pcbnew.FromMM(2.5)),
+            edge_shapes[0].GetEnd(),
+        )
+
+        fab_rectangles = [
+            shape
+            for shape in self.shapes_on_layer(wizard, pcbnew.F_Fab)
+            if shape.GetShape() == pcbnew.SHAPE_T_RECT
+        ]
+        self.assertEqual(1, len(fab_rectangles))
+        self.assertEqual(pcbnew.FromMM(0.1), fab_rectangles[0].GetWidth())
+        self.assertEqual(edge_shapes[0].GetStart(), fab_rectangles[0].GetStart())
+        self.assertEqual(edge_shapes[0].GetEnd(), fab_rectangles[0].GetEnd())
+
+    def test_center_board_cutout_supports_corner_radius(self):
+        wizard = self.make_wizard(
+            Center_board_cutout__enabled=True,
+            Center_board_cutout__width=6,
+            Center_board_cutout__length=4,
+            Center_board_cutout__corner_radius=1,
+        )
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        edge_shapes = self.shapes_on_layer(wizard, pcbnew.Edge_Cuts)
+        fab_shapes = self.shapes_on_layer(wizard, pcbnew.F_Fab)
+
+        if hasattr(pcbnew.PCB_SHAPE, "SetCornerRadius"):
+            self.assertEqual(1, len(edge_shapes))
+            self.assertEqual(pcbnew.SHAPE_T_RECT, edge_shapes[0].GetShape())
+            self.assertEqual(pcbnew.FromMM(1), edge_shapes[0].GetCornerRadius())
+            fab_rounded_rectangles = [
+                shape
+                for shape in fab_shapes
+                if shape.GetShape() == pcbnew.SHAPE_T_RECT
+            ]
+            self.assertEqual(1, len(fab_rounded_rectangles))
+            self.assertEqual(
+                pcbnew.FromMM(1), fab_rounded_rectangles[0].GetCornerRadius()
+            )
+        else:
+            self.assertEqual(8, len(edge_shapes))
+            self.assertEqual(
+                4,
+                sum(shape.GetShape() == pcbnew.SHAPE_T_SEGMENT for shape in edge_shapes),
+            )
+            self.assertEqual(
+                4,
+                sum(shape.GetShape() == pcbnew.SHAPE_T_ARC for shape in edge_shapes),
+            )
+            self.assertEqual(
+                4,
+                sum(shape.GetShape() == pcbnew.SHAPE_T_ARC for shape in fab_shapes),
+            )
+
+    def test_center_board_cutout_line_and_arc_fallback(self):
+        with mock.patch.object(
+            BGAInterposerWizard,
+            "_supports_native_rounded_rectangle",
+            return_value=False,
+        ):
+            wizard = self.make_wizard(
+                Center_board_cutout__enabled=True,
+                Center_board_cutout__width=6,
+                Center_board_cutout__length=4,
+                Center_board_cutout__corner_radius=1,
+            )
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        edge_shapes = self.shapes_on_layer(wizard, pcbnew.Edge_Cuts)
+        self.assertEqual(8, len(edge_shapes))
+        self.assertEqual(
+            4,
+            sum(shape.GetShape() == pcbnew.SHAPE_T_SEGMENT for shape in edge_shapes),
+        )
+        self.assertEqual(
+            4,
+            sum(shape.GetShape() == pcbnew.SHAPE_T_ARC for shape in edge_shapes),
+        )
+        self.assertEqual(
+            4,
+            sum(
+                shape.GetShape() == pcbnew.SHAPE_T_ARC
+                for shape in self.shapes_on_layer(wizard, pcbnew.F_Fab)
+            ),
+        )
+
+    def test_center_board_cutout_must_fit_inside_package(self):
+        wizard = self.make_wizard(
+            Center_board_cutout__enabled=True,
+            Center_board_cutout__width=26,
+        )
+        self.assertTrue(wizard.AnyErrors())
+        self.assertIn("smaller than the package width", wizard.GetBuildMessages())
+
+    def test_center_board_cutout_radius_is_bounded(self):
+        wizard = self.make_wizard(
+            Center_board_cutout__enabled=True,
+            Center_board_cutout__width=6,
+            Center_board_cutout__length=4,
+            Center_board_cutout__corner_radius=2.1,
+        )
+        self.assertTrue(wizard.AnyErrors())
+        self.assertIn("half the shorter dimension", wizard.GetBuildMessages())
+
+    def test_center_board_cutout_must_not_overlap_retained_pad(self):
+        wizard = self.make_wizard(
+            Center_board_cutout__enabled=True,
+            Center_pad_depop__columns=0,
+            Center_pad_depop__rows=0,
+        )
+        self.assertTrue(wizard.AnyErrors())
+        self.assertIn("center board cutout overlaps BGA pad", wizard.GetBuildMessages())
+
+    def test_guide_pin_hole_origin_translates_center_board_cutout(self):
+        wizard = self.make_wizard(
+            Center_board_cutout__enabled=True,
+            Guide_pin_hole__enabled=True,
+            Guide_pin_hole__origin_at_guide_pin_hole=True,
+            **{"Guide_pin_hole__top_left_(A1_corner)": True},
+        )
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        rectangle = self.shapes_on_layer(wizard, pcbnew.Edge_Cuts)[0]
+        self.assertEqual(
+            pcbnew.VECTOR2I(pcbnew.FromMM(9), pcbnew.FromMM(9)),
+            rectangle.GetStart(),
+        )
+        self.assertEqual(
+            pcbnew.VECTOR2I(pcbnew.FromMM(14), pcbnew.FromMM(14)),
+            rectangle.GetEnd(),
+        )
+
+    def test_center_board_cutout_round_trips_through_kicad_format(self):
+        wizard = self.make_wizard(
+            Center_board_cutout__enabled=True,
+            Center_board_cutout__corner_radius=1,
+        )
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        with tempfile.TemporaryDirectory(suffix=".pretty") as library:
+            plugin = pcbnew.PCB_IO_KICAD_SEXPR()
+            plugin.FootprintSave(library, wizard.module)
+            loaded = plugin.FootprintLoad(library, wizard.GetValue())
+            self.assertIsNotNone(loaded)
+            self.assertEqual(
+                len(self.shapes_on_layer(wizard, pcbnew.Edge_Cuts)),
+                len(self.shapes_on_layer(loaded, pcbnew.Edge_Cuts)),
+            )
+
     def test_parity_mismatch_is_rejected(self):
-        wizard = self.make_wizard(Center_opening__columns=7)
+        wizard = self.make_wizard(Center_pad_depop__columns=7)
         self.assertTrue(wizard.AnyErrors())
         self.assertIn("matching parity", wizard.GetBuildMessages())
 
-    def test_one_zero_opening_dimension_is_rejected(self):
-        wizard = self.make_wizard(Center_opening__rows=0)
+    def test_one_zero_center_depopulation_dimension_is_rejected(self):
+        wizard = self.make_wizard(Center_pad_depop__rows=0)
         self.assertTrue(wizard.AnyErrors())
-        self.assertIn("both opening dimensions", wizard.GetBuildMessages())
+        self.assertIn("both center depop dimensions", wizard.GetBuildMessages())
 
 
 if __name__ == "__main__":

@@ -1,23 +1,23 @@
 # BGA Interposer Wizard
 
-A KiCad 9 and 10 footprint wizard for BGA-style interposers with a rectangular group
-of balls omitted from the exact center. It follows the behavior and drawing style
-of KiCad's bundled BGA wizard while adding independent overall and center-opening
-row and column controls, symmetric corner depopulation, and optional guide-pin
-features.
+A KiCad 9 and 10 footprint wizard for BGA-style interposers with a rectangular
+group of balls omitted from the exact center. It follows the behavior and
+drawing style of KiCad's bundled BGA wizard while adding independent overall
+and center-depopulation row and column controls, symmetric corner depopulation,
+optional guide-pin features, and an optional centered board cutout.
 
 The default generates a 20 × 20 full grid at 1 mm pitch with an 8 × 8 center
-opening: 336 electrical pads over the same 19 mm × 19 mm pad-center span as a
-full 20 × 20 grid. Names retain their full-grid locations, so an omitted ball
-does not cause later balls to be renumbered. The default 26 mm × 26 mm package
-uses 20 mil pads. The guide pin hole and all guide pin slots are disabled by
-default.
+pad depopulation region: 336 electrical pads over the same 19 mm × 19 mm
+pad-center span as a full 20 × 20 grid. Names retain their full-grid locations,
+so an omitted ball does not cause later balls to be renumbered. The default
+26 mm × 26 mm package uses 20 mil pads. The board cutout, guide pin hole, and
+all guide pin slots are disabled by default.
 
 ## Parameters
 
 - Parameter pages are ordered for entry from a mechanical drawing: `Package`,
   `Mounting layout`, `Guide pin hole`, `Guide pin slots`, `Pads`, then
-  `Center opening`.
+  `Center pad depop` and `Center board cutout`.
 - `Package`: body width, body length, and courtyard margin.
 - `Mounting layout`: shared positive X/Y distances from package center. Corner
   selection supplies the coordinate signs.
@@ -29,14 +29,24 @@ default.
   a horizontal long axis.
 - `Pads`: metric pitch, pad size in mils, total columns, and total rows. Pad size
   defaults to 20 mil; all other physical dimensions remain metric.
-- `Pads` also includes a symmetric corner-depopulation depth. A depth of 4
-  removes 4, 3, 2, and 1 pads from successive rows at all four corners.
-- `Center opening`: omitted columns and omitted rows.
+- `Pads` also includes `corner depop depth`, the symmetric corner-depopulation
+  depth. A depth of 4 removes 4, 3, 2, and 1 pads from successive rows at all
+  four corners.
+- `Center pad depop`: omitted columns and omitted rows.
+- `Center board cutout`: optional centered rectangular board cutout with
+  independent width, length, and corner radius. It defaults to disabled with
+  5 mm × 5 mm dimensions and zero corner radius.
 
-For an exactly centered opening, each opening dimension must have the same parity
-as its corresponding outer dimension. For example, 20/8 and 19/7 are valid;
-20/7 is rejected because it would be offset by half a pitch. Set both opening
-dimensions to zero to generate a full grid.
+For exactly centered pad depopulation, each depopulation dimension must have the
+same parity as its corresponding outer dimension. For example, 20/8 and 19/7
+are valid; 20/7 is rejected because it would be offset by half a pitch. Set both
+depopulation dimensions to zero to generate a full grid.
+
+The board cutout is independent of center pad depopulation. When enabled, it is
+drawn with matching geometry on `Edge.Cuts` and `F.Fab`, must remain inside the
+package, and cannot overlap a retained BGA pad. A zero-radius cutout is one
+native rectangle object. Rounded cutouts use a native rounded rectangle where
+KiCad supports it and exact line-and-arc geometry otherwise.
 
 When the guide pin hole is enabled, select exactly one corner. Slots may be
 enabled in any of the other three corners. A hole and slot cannot share a corner,
