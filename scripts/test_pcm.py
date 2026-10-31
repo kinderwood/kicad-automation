@@ -61,8 +61,8 @@ def main():
             names = set(archive.namelist())
             assert "metadata.json" in names
             assert "resources/icon.png" in names
-            assert any(name.startswith("plugins/") for name in names)
-            assert any(name.endswith("/LICENSE") for name in names)
+            assert "plugins/__init__.py" in names
+            assert "plugins/LICENSE" in names
             assert version["install_size"] == sum(
                 item.file_size for item in archive.infolist()
             )

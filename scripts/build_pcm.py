@@ -71,14 +71,16 @@ def build_plugin(plugin_dir, metadata, base_url, output_dir):
 
     with zipfile.ZipFile(plugin_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         archive.write(plugin_dir / "metadata.json", "metadata.json")
-        archive.write(ROOT / "LICENSE", Path("plugins") / plugin_dir.name / "LICENSE")
+        # PCM inserts a package-identifier directory below `plugins/` while
+        # extracting. The archive payload must therefore be flat at this level.
+        archive.write(ROOT / "LICENSE", Path("plugins") / "LICENSE")
         for source in sorted(plugin_dir.rglob("*")):
             if not source.is_file() or source.name == "metadata.json":
                 continue
             if "__pycache__" in source.parts or source.suffix in {".pyc", ".pyo"}:
                 continue
             relative = source.relative_to(plugin_dir)
-            archive.write(source, Path("plugins") / plugin_dir.name / relative)
+            archive.write(source, Path("plugins") / relative)
         archive.writestr("resources/icon.png", icon_bytes(plugin_dir))
 
     package = dict(metadata)
