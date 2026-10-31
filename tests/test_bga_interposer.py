@@ -76,6 +76,59 @@ class BGAInterposerWizardTests(unittest.TestCase):
         )
         self.assertEqual(337, len(list(wizard.module.Pads())))
 
+    def test_parameter_pages_follow_drawing_entry_order(self):
+        wizard = BGAInterposerWizard()
+        self.assertEqual(
+            ["Package", "Mounting features", "Pads", "Center opening"],
+            [
+                wizard.GetParameterPageName(index)
+                for index in range(wizard.GetNumParameterPages())
+            ],
+        )
+
+    def test_symmetric_corner_depopulation_depth_four(self):
+        wizard = self.make_wizard(Pads__corner_depopulation_depth=4)
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        pads = self.pads_by_name(wizard)
+
+        self.assertEqual(296, len(pads))
+        top_left_removed = {
+            "A1",
+            "A2",
+            "A3",
+            "A4",
+            "B1",
+            "B2",
+            "B3",
+            "C1",
+            "C2",
+            "D1",
+        }
+        self.assertTrue(top_left_removed.isdisjoint(pads))
+        self.assertTrue(
+            {"A17", "A18", "A19", "A20", "Y1", "Y4", "Y17", "Y20"}.isdisjoint(pads)
+        )
+        for name in ("A5", "B4", "C3", "D2", "E1"):
+            self.assertIn(name, pads)
+        self.assertEqual(
+            "BGA-Interposer-296_20x20_Opening8x8_26x26mm_P1mm",
+            wizard.GetValue(),
+        )
+
+    def test_corner_depopulation_depth_is_bounded(self):
+        wizard = self.make_wizard(Pads__corner_depopulation_depth=10)
+        self.assertTrue(wizard.AnyErrors())
+        self.assertIn("opposing corner cuts", wizard.GetBuildMessages())
+
+    def test_corner_depopulation_can_clear_mounting_hole(self):
+        wizard = self.make_wizard(
+            Pads__corner_depopulation_depth=3,
+            Mounting_features__x_distance=9.5,
+            Mounting_features__y_distance=9.5,
+        )
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        self.assertNotIn("A1", self.pads_by_name(wizard))
+
     def test_rectangular_array_and_opening(self):
         wizard = self.make_wizard(
             Pads__columns=18,

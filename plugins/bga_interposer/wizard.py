@@ -33,30 +33,6 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         return "BGA interposer with a centered opening and optional corner NPTH"
 
     def GenerateParameterList(self):
-        self.AddParam("Pads", "pitch", self.uMM, 1.0, designator="p", min_value=0.01)
-        self.AddParam("Pads", "size", self.uMM, 0.5, min_value=0.01)
-        self.AddParam("Pads", "columns", self.uInteger, 20, designator="nx", min_value=3)
-        self.AddParam("Pads", "rows", self.uInteger, 20, designator="ny", min_value=3)
-
-        self.AddParam(
-            "Center opening",
-            "columns",
-            self.uInteger,
-            8,
-            designator="ox",
-            min_value=0,
-            hint="Number of omitted pad columns in the centered rectangle",
-        )
-        self.AddParam(
-            "Center opening",
-            "rows",
-            self.uInteger,
-            8,
-            designator="oy",
-            min_value=0,
-            hint="Number of omitted pad rows in the centered rectangle",
-        )
-
         self.AddParam("Package", "width", self.uMM, 26.0, designator="X")
         self.AddParam("Package", "length", self.uMM, 26.0, designator="Y")
         self.AddParam(
@@ -107,6 +83,38 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             hint="Otherwise the footprint origin is the package center",
         )
 
+        self.AddParam("Pads", "pitch", self.uMM, 1.0, designator="p", min_value=0.01)
+        self.AddParam("Pads", "size", self.uMM, 0.5, min_value=0.01)
+        self.AddParam("Pads", "columns", self.uInteger, 20, designator="nx", min_value=3)
+        self.AddParam("Pads", "rows", self.uInteger, 20, designator="ny", min_value=3)
+        self.AddParam(
+            "Pads",
+            "corner depopulation depth",
+            self.uInteger,
+            0,
+            min_value=0,
+            hint="Symmetric triangular corner removal; 4 removes 4, 3, 2, 1 pads",
+        )
+
+        self.AddParam(
+            "Center opening",
+            "columns",
+            self.uInteger,
+            8,
+            designator="ox",
+            min_value=0,
+            hint="Number of omitted pad columns in the centered rectangle",
+        )
+        self.AddParam(
+            "Center opening",
+            "rows",
+            self.uInteger,
+            8,
+            designator="oy",
+            min_value=0,
+            hint="Number of omitted pad rows in the centered rectangle",
+        )
+
     def CheckParameters(self):
         pads = self.parameters["Pads"]
         opening = self.parameters["Center opening"]
@@ -116,6 +124,13 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         rows = pads["rows"]
         opening_columns = opening["columns"]
         opening_rows = opening["rows"]
+
+        self.CheckParam(
+            "Pads",
+            "corner depopulation depth",
+            max_value=(min(columns, rows) - 1) // 2,
+            info="at least one pad position must remain between opposing corner cuts",
+        )
 
         # A non-empty opening must leave at least one row/column on every
         # side. Matching parity is what puts its geometric center at (0, 0).
@@ -197,14 +212,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
 
         for row in range(rows):
             for column in range(columns):
-                if self._inside_opening(
-                    column,
-                    row,
-                    columns,
-                    rows,
-                    opening_columns,
-                    opening_rows,
-                ):
+                if self._pad_is_omitted(column, row):
                     continue
                 pad_x = first_x + column * pads["pitch"]
                 pad_y = first_y + row * pads["pitch"]
@@ -224,7 +232,11 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         pads = self.parameters["Pads"]
         opening = self.parameters["Center opening"]
         package = self.parameters["Package"]
-        pin_count = pads["rows"] * pads["columns"] - opening["rows"] * opening["columns"]
+        pin_count = sum(
+            not self._pad_is_omitted(column, row)
+            for row in range(pads["rows"])
+            for column in range(pads["columns"])
+        )
 
         return (
             "BGA-Interposer-{pins}_{columns}x{rows}_Opening{opening_columns}x{opening_rows}_"
@@ -262,6 +274,32 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             and first_row <= row < first_row + opening_rows
         )
 
+    @staticmethod
+    def _inside_corner_depopulation(column, row, columns, rows, depth):
+        if not depth:
+            return False
+        distance_from_horizontal_edge = min(column, columns - 1 - column)
+        distance_from_vertical_edge = min(row, rows - 1 - row)
+        return distance_from_horizontal_edge + distance_from_vertical_edge < depth
+
+    def _pad_is_omitted(self, column, row):
+        pads = self.parameters["Pads"]
+        opening = self.parameters["Center opening"]
+        return self._inside_opening(
+            column,
+            row,
+            pads["columns"],
+            pads["rows"],
+            opening["columns"],
+            opening["rows"],
+        ) or self._inside_corner_depopulation(
+            column,
+            row,
+            pads["columns"],
+            pads["rows"],
+            pads["corner depopulation depth"],
+        )
+
     def _mounting_hole_position(self):
         mounting = self.parameters["Mounting features"]
         for name, x_sign, y_sign in MOUNTING_CORNERS:
@@ -280,7 +318,6 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
 
     def _add_pads(self):
         pads = self.parameters["Pads"]
-        opening = self.parameters["Center opening"]
         columns = pads["columns"]
         rows = pads["rows"]
         pitch = pads["pitch"]
@@ -292,14 +329,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
 
         for row in range(rows):
             for column in range(columns):
-                if self._inside_opening(
-                    column,
-                    row,
-                    columns,
-                    rows,
-                    opening["columns"],
-                    opening["rows"],
-                ):
+                if self._pad_is_omitted(column, row):
                     continue
 
                 pad = prototype.Duplicate()

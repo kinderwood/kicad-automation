@@ -15,5 +15,5 @@ python3 scripts/build_pcm.py \
     --output-dir "$test_root/dist"
 
 "$appdir/AppRun" python3.11 scripts/test_kicad_loader.py \
-    "$test_root/dist/bga-interposer-0.2.0.zip" \
+    "$test_root/dist/bga-interposer-0.3.0.zip" \
     --builtin-plugins "$plugin_dir"

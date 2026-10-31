@@ -3,7 +3,8 @@
 A KiCad 10 footprint wizard for BGA-style interposers with a rectangular group
 of balls omitted from the exact center. It follows the behavior and drawing style
 of KiCad's bundled BGA wizard while adding independent overall and center-opening
-row and column controls.
+row and column controls, symmetric corner depopulation, and an optional corner
+mounting hole.
 
 The default generates a 20 × 20 full grid at 1 mm pitch with an 8 × 8 center
 opening: 336 electrical pads over the same 19 mm × 19 mm pad-center span as a
@@ -14,11 +15,15 @@ Y from package center.
 
 ## Parameters
 
-- `Pads`: pitch, ball/pad size, total columns, and total rows.
-- `Center opening`: omitted columns and omitted rows.
+- Parameter pages are ordered for entry from a mechanical drawing: `Package`,
+  `Mounting features`, `Pads`, then `Center opening`.
 - `Package`: body width, body length, and courtyard margin.
 - `Mounting features`: optional round NPTH, corner, positive X/Y distances from
   package center, hole diameter, and optional origin at the round-hole center.
+- `Pads`: pitch, ball/pad size, total columns, and total rows.
+- `Pads` also includes a symmetric corner-depopulation depth. A depth of 4
+  removes 4, 3, 2, and 1 pads from successive rows at all four corners.
+- `Center opening`: omitted columns and omitted rows.
 
 For an exactly centered opening, each opening dimension must have the same parity
 as its corresponding outer dimension. For example, 20/8 and 19/7 are valid;
