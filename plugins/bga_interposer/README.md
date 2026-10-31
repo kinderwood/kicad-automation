@@ -10,8 +10,8 @@ The default generates a 20 × 20 full grid at 1 mm pitch with an 8 × 8 center
 opening: 336 electrical pads over the same 19 mm × 19 mm pad-center span as a
 full 20 × 20 grid. Names retain their full-grid locations, so an omitted ball
 does not cause later balls to be renumbered. The default 26 mm × 26 mm package
-also includes a 2.5 mm round NPTH at the top-left (A1) corner, 11.5 mm in X and
-Y from package center. Guide pin slots are disabled by default.
+uses 20 mil pads. The guide pin hole and all guide pin slots are disabled by
+default.
 
 ## Parameters
 
@@ -22,11 +22,13 @@ Y from package center. Guide pin slots are disabled by default.
 - `Mounting layout`: shared positive X/Y distances from package center. Corner
   selection supplies the coordinate signs.
 - `Guide pin hole`: optional round NPTH, exactly one selected corner, hole
-  diameter, and optional footprint origin at the guide pin hole center.
+  diameter, and optional footprint origin at the guide pin hole center. The
+  feature and all corner selections default to off.
 - `Guide pin slots`: independent enable checkbox and rotation for each corner,
   plus shared width and overall length. Each rotation is counterclockwise from
   a horizontal long axis.
-- `Pads`: pitch, ball/pad size, total columns, and total rows.
+- `Pads`: metric pitch, pad size in mils, total columns, and total rows. Pad size
+  defaults to 20 mil; all other physical dimensions remain metric.
 - `Pads` also includes a symmetric corner-depopulation depth. A depth of 4
   removes 4, 3, 2, and 1 pads from successive rows at all four corners.
 - `Center opening`: omitted columns and omitted rows.

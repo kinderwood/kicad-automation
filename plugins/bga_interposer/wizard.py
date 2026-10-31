@@ -63,9 +63,9 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             hint="Positive distance from package center; corner selects the sign",
         )
 
-        self.AddParam("Guide pin hole", "enabled", self.uBool, True)
+        self.AddParam("Guide pin hole", "enabled", self.uBool, False)
         self.AddParam(
-            "Guide pin hole", "top left (A1 corner)", self.uBool, True
+            "Guide pin hole", "top left (A1 corner)", self.uBool, False
         )
         self.AddParam("Guide pin hole", "top right", self.uBool, False)
         self.AddParam("Guide pin hole", "bottom right", self.uBool, False)
@@ -112,7 +112,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             hint="Overall finished NPTH slot length",
         )
         self.AddParam("Pads", "pitch", self.uMM, 1.0, designator="p", min_value=0.01)
-        self.AddParam("Pads", "size", self.uMM, 0.5, min_value=0.01)
+        self.AddParam("Pads", "size", self.uMils, 20, min_value=0.01)
         self.AddParam("Pads", "columns", self.uInteger, 20, designator="nx", min_value=3)
         self.AddParam("Pads", "rows", self.uInteger, 20, designator="ny", min_value=3)
         self.AddParam(
