@@ -55,7 +55,9 @@ def main():
         wizard = module.BGAInterposerWizard()
         wizard.BuildFootprint()
         assert not wizard.AnyErrors(), wizard.GetBuildMessages()
-        assert len(list(wizard.module.Pads())) == 336
+        pads = list(wizard.module.Pads())
+        assert len(pads) == 337
+        assert sum(pad.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH for pad in pads) == 1
 
         print(f"KiCad discovered {package_directory} from the PCM layout")
 

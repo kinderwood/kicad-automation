@@ -9,7 +9,8 @@ metadata, and tool-specific documentation.
 ### BGA Interposer Wizard
 
 Generates BGA-style interposer footprints with independently configurable grid
-and centered-opening dimensions. The first release targets KiCad 10.
+and centered-opening dimensions, plus an optional corner mounting hole and
+selectable package-center or hole-center origin. The wizard targets KiCad 10.
 
 See [`plugins/bga_interposer/README.md`](plugins/bga_interposer/README.md) for
 parameters and manual installation instructions.

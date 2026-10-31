@@ -1,8 +1,8 @@
 {
   "$schema": "https://go.kicad.org/pcm/schemas/v1",
   "name": "BGA Interposer Wizard",
-  "description": "Generate BGA-style interposer footprints with a centered rectangular opening",
-  "description_full": "A KiCad 10 footprint wizard for BGA-style interposers, based on KiCad's bundled BGA wizard. Overall rows and columns and center-opening rows and columns are independently configurable. Pad designators retain their full-grid locations across the omitted center rectangle.",
+  "description": "Generate BGA-style interposer footprints with a centered opening and mounting hole",
+  "description_full": "A KiCad 10 footprint wizard for BGA-style interposers, based on KiCad's bundled BGA wizard. Overall rows and columns and center-opening rows and columns are independently configurable. An optional round NPTH can be placed in any package corner, with the footprint origin at either package center or hole center. Pad designators retain their full-grid locations across the omitted center rectangle.",
   "identifier": "com.github.kinderwood.kicad-automation.bga-interposer",
   "type": "plugin",
   "author": {
@@ -28,7 +28,7 @@
   ],
   "versions": [
     {
-      "version": "0.1.1",
+      "version": "0.2.0",
       "status": "stable",
       "kicad_version": "10.0"
     }
