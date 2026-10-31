@@ -39,7 +39,10 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         return "BGA Interposer"
 
     def GetDescription(self):
-        return "BGA interposer with depopulation, board cutout, and guide features"
+        return (
+            "BGA interposer with depopulation, perimeter naming, board cutout, "
+            "and guide features"
+        )
 
     def GenerateParameterList(self):
         # AddParam declaration order is the wizard UI order. Keep the package
@@ -155,6 +158,25 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             "Pads", "rows", self.uInteger, 20, designator="ny", min_value=3
         )
 
+        self.AddParam("Perimeter naming", "enabled", self.uBool, False)
+        self.AddParam("Perimeter naming", "prefix", self.uString, "GND")
+        self.AddParam(
+            "Perimeter naming",
+            "row depth",
+            self.uInteger,
+            1,
+            min_value=1,
+            hint="Number of renamed rows at both top and bottom",
+        )
+        self.AddParam(
+            "Perimeter naming",
+            "column depth",
+            self.uInteger,
+            1,
+            min_value=1,
+            hint="Number of renamed columns at both left and right",
+        )
+
         self.AddParam(
             "Center pad depop",
             "columns",
@@ -225,6 +247,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         pads = self.parameters["Pads"]
         center_depopulation = self.parameters["Center pad depop"]
         center_cutout = self.parameters["Center board cutout"]
+        perimeter_naming = self.parameters["Perimeter naming"]
         package = self.parameters["Package"]
         silkscreen = self.parameters["Silkscreen"]
         guide_hole = self.parameters["Guide pin hole"]
@@ -234,6 +257,38 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         rows = pads["rows"]
         depopulation_columns = center_depopulation["columns"]
         depopulation_rows = center_depopulation["rows"]
+
+        if perimeter_naming["enabled"]:
+            self.CheckParam(
+                "Perimeter naming",
+                "row depth",
+                max_value=(rows - 1) // 2,
+                info="perimeter naming must leave at least one interior row",
+            )
+            self.CheckParam(
+                "Perimeter naming",
+                "column depth",
+                max_value=(columns - 1) // 2,
+                info="perimeter naming must leave at least one interior column",
+            )
+
+            prefix = str(perimeter_naming["prefix"])
+            prefix_param = self.GetParam("Perimeter naming", "prefix")
+            if not prefix.strip():
+                prefix_param.AddError("prefix must not be empty")
+            else:
+                seen_designations = set()
+                duplicate_designations = set()
+                for designation in self._pad_designations().values():
+                    if designation in seen_designations:
+                        duplicate_designations.add(designation)
+                    seen_designations.add(designation)
+                if duplicate_designations:
+                    prefix_param.AddError(
+                        "prefix creates duplicate pad designation {}".format(
+                            sorted(duplicate_designations)[0]
+                        )
+                    )
 
         self.CheckParam(
             "Pads",
@@ -554,6 +609,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
     def GetValue(self):
         pads = self.parameters["Pads"]
         center_depopulation = self.parameters["Center pad depop"]
+        perimeter_naming = self.parameters["Perimeter naming"]
         package = self.parameters["Package"]
         pin_count = sum(
             not self._pad_is_omitted(column, row)
@@ -561,20 +617,43 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             for column in range(pads["columns"])
         )
 
+        perimeter_suffix = ""
+        if perimeter_naming["enabled"]:
+            perimeter_suffix = "_PerimeterR{rows}C{columns}_{prefix}".format(
+                rows=perimeter_naming["row depth"],
+                columns=perimeter_naming["column depth"],
+                prefix=self._footprint_name_token(perimeter_naming["prefix"]),
+            )
+
         return (
             "BGA-Interposer-{pins}_{columns}x{rows}_"
             "CenterDepopulation{depopulation_columns}x"
-            "{depopulation_rows}_{width:g}x{length:g}mm_P{pitch:g}mm"
+            "{depopulation_rows}{perimeter_suffix}_"
+            "{width:g}x{length:g}mm_P{pitch:g}mm"
         ).format(
             pins=pin_count,
             columns=pads["columns"],
             rows=pads["rows"],
             depopulation_columns=center_depopulation["columns"],
             depopulation_rows=center_depopulation["rows"],
+            perimeter_suffix=perimeter_suffix,
             width=pcbnew.ToMM(package["width"]),
             length=pcbnew.ToMM(package["length"]),
             pitch=pcbnew.ToMM(pads["pitch"]),
         )
+
+    @staticmethod
+    def _footprint_name_token(value):
+        """Encode a user prefix as a reversible footprint-name token."""
+        result = []
+        for character in str(value):
+            if character.isascii() and (
+                character.isalnum() or character in "_+-"
+            ) and character != "x":
+                result.append(character)
+            else:
+                result.append("x{:X}x".format(ord(character)))
+        return "".join(result)
 
     @staticmethod
     def _row_name(row_index):
@@ -625,6 +704,47 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             pads["rows"],
             pads["corner depop depth"],
         )
+
+    def _inside_perimeter(self, column, row):
+        pads = self.parameters["Pads"]
+        perimeter = self.parameters["Perimeter naming"]
+        return (
+            row < perimeter["row depth"]
+            or row >= pads["rows"] - perimeter["row depth"]
+            or column < perimeter["column depth"]
+            or column >= pads["columns"] - perimeter["column depth"]
+        )
+
+    def _pad_designations(self):
+        """Return retained pad designations keyed by physical grid position."""
+        pads = self.parameters["Pads"]
+        perimeter = self.parameters["Perimeter naming"]
+        designations = {}
+        perimeter_number = 0
+
+        for row in range(pads["rows"]):
+            for column in range(pads["columns"]):
+                if self._pad_is_omitted(column, row):
+                    continue
+
+                if perimeter["enabled"] and self._inside_perimeter(column, row):
+                    perimeter_number += 1
+                    designation = "{}{}".format(
+                        perimeter["prefix"], perimeter_number
+                    )
+                else:
+                    interior_row = row
+                    interior_column = column
+                    if perimeter["enabled"]:
+                        interior_row -= perimeter["row depth"]
+                        interior_column -= perimeter["column depth"]
+                    designation = "{}{}".format(
+                        self._row_name(interior_row), interior_column + 1
+                    )
+
+                designations[(column, row)] = designation
+
+        return designations
 
     @staticmethod
     def _rounded_rectangle_signed_distance(point, half_width, half_length, radius):
@@ -740,16 +860,17 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
 
     def _retained_pad_centers(self):
         pads = self.parameters["Pads"]
+        designations = self._pad_designations()
         first_x = -((pads["columns"] - 1) * pads["pitch"]) / 2
         first_y = -((pads["rows"] - 1) * pads["pitch"]) / 2
         result = []
         for row in range(pads["rows"]):
             for column in range(pads["columns"]):
-                if self._pad_is_omitted(column, row):
+                if (column, row) not in designations:
                     continue
                 result.append(
                     (
-                        "{}{}".format(self._row_name(row), column + 1),
+                        designations[(column, row)],
                         (
                             first_x + column * pads["pitch"],
                             first_y + row * pads["pitch"],
@@ -779,14 +900,15 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             prototype.SetLayerSet(layers)
         first_x = -((columns - 1) * pitch) / 2
         first_y = -((rows - 1) * pitch) / 2
+        designations = self._pad_designations()
 
         for row in range(rows):
             for column in range(columns):
-                if self._pad_is_omitted(column, row):
+                if (column, row) not in designations:
                     continue
 
                 pad = prototype.Duplicate()
-                pad.SetName("{}{}".format(self._row_name(row), column + 1))
+                pad.SetName(designations[(column, row)])
                 pad.SetPosition(
                     pcbnew.VECTOR2I(
                         int(first_x + column * pitch - origin_x),
@@ -1175,8 +1297,8 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
 
         if hasattr(self.module, "SetLibDescription"):
             self.module.SetLibDescription(
-                "BGA interposer with centered pad depopulation and optional "
-                "guide features"
+                "BGA interposer with depopulation, perimeter naming, board "
+                "cutout, and guide features"
             )
         if hasattr(self.module, "SetKeywords"):
             self.module.SetKeywords("BGA interposer land grid array")

@@ -9,9 +9,10 @@ metadata, and tool-specific documentation.
 ### BGA Interposer Wizard
 
 Generates BGA-style interposer footprints with independently configurable grid,
-center pad depopulation, and symmetric corner depopulation. Optional features
-include a guide pin hole and slots plus centered rectangular board cutouts. The
-origin can be the package center or guide pin hole center.
+center pad depopulation, symmetric corner depopulation, and perimeter pad
+naming. Optional features include a guide pin hole and slots plus centered
+rectangular board cutouts. The origin can be the package center or guide pin
+hole center.
 
 See [`plugins/bga_interposer/README.md`](plugins/bga_interposer/README.md) for
 parameters and manual installation instructions.

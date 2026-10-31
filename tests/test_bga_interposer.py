@@ -125,7 +125,8 @@ class BGAInterposerWizardTests(unittest.TestCase):
             all(pad.GetProperty() == pcbnew.PAD_PROP_BGA for pad in pads.values())
         )
         self.assertEqual(
-            "BGA interposer with centered pad depopulation and optional guide features",
+            "BGA interposer with depopulation, perimeter naming, board cutout, "
+            "and guide features",
             wizard.module.GetLibDescription(),
         )
         self.assertEqual(
@@ -142,6 +143,11 @@ class BGAInterposerWizardTests(unittest.TestCase):
         self.assertEqual(pcbnew.FromMM(5), center_cutout["length"])
         self.assertEqual(0, center_cutout["corner radius"])
         self.assertEqual([], self.shapes_on_layer(wizard, pcbnew.Edge_Cuts))
+        perimeter_naming = wizard.parameters["Perimeter naming"]
+        self.assertFalse(perimeter_naming["enabled"])
+        self.assertEqual("GND", perimeter_naming["prefix"])
+        self.assertEqual(1, perimeter_naming["row depth"])
+        self.assertEqual(1, perimeter_naming["column depth"])
 
     def test_parameter_pages_follow_drawing_entry_order(self):
         wizard = BGAInterposerWizard()
@@ -152,6 +158,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
                 "Guide pin hole",
                 "Guide pin slots",
                 "Pads",
+                "Perimeter naming",
                 "Center pad depop",
                 "Center board cutout",
                 "Silkscreen",
@@ -201,6 +208,12 @@ class BGAInterposerWizardTests(unittest.TestCase):
                 "corner depop depth",
                 "columns",
                 "rows",
+            ],
+            "Perimeter naming": [
+                "enabled",
+                "prefix",
+                "row depth",
+                "column depth",
             ],
             "Center pad depop": ["columns", "rows"],
             "Center board cutout": [
@@ -525,6 +538,127 @@ class BGAInterposerWizardTests(unittest.TestCase):
         self.assertEqual(
             "BGA-Interposer-296_20x20_CenterDepopulation8x8_26x26mm_P1mm",
             wizard.GetValue(),
+        )
+
+    def test_perimeter_naming_uses_row_major_sequence_and_local_bga_grid(self):
+        wizard = self.make_wizard(Perimeter_naming__enabled=True)
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        pads = self.pads_by_name(wizard)
+
+        self.assertEqual(336, len(pads))
+        self.assertEqual(76, len([name for name in pads if name.startswith("GND")]))
+        expected_positions = {
+            "GND1": (-9.5, -9.5),
+            "GND20": (9.5, -9.5),
+            "GND21": (-9.5, -8.5),
+            "GND22": (9.5, -8.5),
+            "A1": (-8.5, -8.5),
+            "V18": (8.5, 8.5),
+            "GND55": (-9.5, 8.5),
+            "GND56": (9.5, 8.5),
+            "GND57": (-9.5, 9.5),
+            "GND76": (9.5, 9.5),
+        }
+        for name, (x, y) in expected_positions.items():
+            with self.subTest(name=name):
+                self.assertEqual(
+                    pcbnew.VECTOR2I(pcbnew.FromMM(x), pcbnew.FromMM(y)),
+                    pads[name].GetPosition(),
+                )
+
+        self.assertEqual(
+            "BGA-Interposer-336_20x20_CenterDepopulation8x8_"
+            "PerimeterR1C1_GND_26x26mm_P1mm",
+            wizard.GetValue(),
+        )
+
+        with tempfile.TemporaryDirectory(suffix=".pretty") as library:
+            plugin = pcbnew.PCB_IO_KICAD_SEXPR()
+            plugin.FootprintSave(library, wizard.module)
+            loaded = plugin.FootprintLoad(library, wizard.GetValue())
+            loaded_names = {
+                str(pad.GetName()) for pad in loaded.Pads() if str(pad.GetName())
+            }
+            self.assertEqual(set(pads), loaded_names)
+
+    def test_perimeter_naming_supports_independent_depths_and_prefix(self):
+        wizard = self.make_wizard(
+            Pads__columns=10,
+            Pads__rows=8,
+            Package__width=10,
+            Package__length=8,
+            Guide_pin_hole__enabled=False,
+            Center_pad_depop__columns=0,
+            Center_pad_depop__rows=0,
+            Perimeter_naming__enabled=True,
+            Perimeter_naming__prefix="VSS",
+            Perimeter_naming__row_depth=1,
+            Perimeter_naming__column_depth=2,
+        )
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        pads = self.pads_by_name(wizard)
+
+        self.assertEqual(44, len([name for name in pads if name.startswith("VSS")]))
+        self.assertIn("VSS1", pads)
+        self.assertIn("VSS44", pads)
+        self.assertIn("A1", pads)
+        self.assertIn("F6", pads)
+        self.assertNotIn("G1", pads)
+        self.assertIn("PerimeterR1C2_VSS", wizard.GetValue())
+
+    def test_perimeter_sequence_skips_depopulated_positions_without_gaps(self):
+        wizard = self.make_wizard(
+            Pads__corner_depop_depth=4,
+            Perimeter_naming__enabled=True,
+        )
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        pads = self.pads_by_name(wizard)
+        perimeter_names = sorted(
+            (name for name in pads if name.startswith("GND")),
+            key=lambda name: int(name[3:]),
+        )
+
+        self.assertEqual(
+            ["GND{}".format(number) for number in range(1, 49)],
+            perimeter_names,
+        )
+        self.assertEqual(
+            pcbnew.VECTOR2I(pcbnew.FromMM(-5.5), pcbnew.FromMM(-9.5)),
+            pads["GND1"].GetPosition(),
+        )
+        self.assertNotIn("A1", pads)
+        self.assertIn("A3", pads)
+
+    def test_perimeter_naming_validates_depth_prefix_and_uniqueness(self):
+        too_deep = self.make_wizard(
+            Perimeter_naming__enabled=True,
+            Perimeter_naming__row_depth=10,
+        )
+        self.assertTrue(too_deep.AnyErrors())
+        self.assertIn("leave at least one interior row", too_deep.GetBuildMessages())
+
+        blank_prefix = self.make_wizard(
+            Perimeter_naming__enabled=True,
+            Perimeter_naming__prefix="   ",
+        )
+        self.assertTrue(blank_prefix.AnyErrors())
+        self.assertIn("prefix must not be empty", blank_prefix.GetBuildMessages())
+
+        duplicate_prefix = self.make_wizard(
+            Perimeter_naming__enabled=True,
+            Perimeter_naming__prefix="A",
+        )
+        self.assertTrue(duplicate_prefix.AnyErrors())
+        self.assertIn(
+            "duplicate pad designation A1", duplicate_prefix.GetBuildMessages()
+        )
+
+        self.assertEqual(
+            "GNDx2Fx", BGAInterposerWizard._footprint_name_token("GND/")
+        )
+        self.assertNotEqual(
+            BGAInterposerWizard._footprint_name_token("GND/"),
+            BGAInterposerWizard._footprint_name_token("GNDx2F"),
         )
 
     def test_corner_depopulation_depth_is_bounded(self):

@@ -9,10 +9,12 @@ optional guide-pin features, and an optional centered board cutout.
 The default generates a 20 × 20 full grid at 1 mm pitch with an 8 × 8 center
 pad depopulation region: 336 electrical pads over the same 19 mm × 19 mm
 pad-center span as a full 20 × 20 grid. Names retain their full-grid locations,
-so an omitted ball does not cause later balls to be renumbered. The default
-26 mm × 26 mm package uses 20 mil pads. The board cutout and all guide pin slots
-are disabled by default. The top-left guide pin hole is enabled by default so
-changes on the `Guide feat placement` page remain visible while entering offsets.
+so an omitted ball does not cause later balls to be renumbered. Optional
+perimeter naming can instead assign sequential designations to retained pads in
+an outer band. The default 26 mm × 26 mm package uses 20 mil pads. Perimeter
+naming, the board cutout, and all guide pin slots are disabled by default. The
+top-left guide pin hole is enabled by default so changes on the
+`Guide feat placement` page remain visible while entering offsets.
 
 ## Parameters
 
@@ -22,8 +24,8 @@ changes on the `Guide feat placement` page remain visible while entering offsets
   in the wizard controls the UI, and an integration test locks every page and
   field in the sequence documented below.
 - Parameter pages are ordered for entry from a mechanical drawing: `Package`,
-  `Guide feat placement`, `Guide pin hole`, `Guide pin slots`, `Pads`, `Center pad
-  depop`, `Center board cutout`, and `Silkscreen`.
+  `Guide feat placement`, `Guide pin hole`, `Guide pin slots`, `Pads`, `Perimeter
+  naming`, `Center pad depop`, `Center board cutout`, and `Silkscreen`.
 - `Package`: body width, body length, one physical package chamfer size with an
   enable checkbox for each corner, and courtyard margin. The courtyard follows
   the selected package chamfers while preserving clearance at diagonal edges.
@@ -45,6 +47,15 @@ changes on the `Guide feat placement` page remain visible while entering offsets
 - `Pads` also includes `corner depop depth`, the symmetric corner-depopulation
   depth. A depth of 4 removes 4, 3, 2, and 1 pads from successive rows at all
   four corners.
+- `Perimeter naming`: optional sequential pad designations with a user-defined
+  prefix and independent row and column depths. The depths apply symmetrically
+  to opposite sides and must leave at least one interior row and column. The
+  feature defaults off with a `GND` prefix and depths of one. When enabled,
+  retained perimeter pads are named `GND1`, `GND2`, and so on while scanning
+  left to right, top to bottom. Omitted perimeter positions do not consume
+  numbers. The reduced interior grid begins at `A1` and retains its row/column
+  coordinates across omitted positions. These are unique pad designations; a
+  shared prefix does not assign them to one net.
 - `Center pad depop`: omitted columns and omitted rows.
 - `Center board cutout`: optional centered rectangular board cutout with
   independent width, length, and corner radius. It defaults to disabled with
