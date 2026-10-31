@@ -42,6 +42,9 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         return "BGA interposer with depopulation, board cutout, and guide features"
 
     def GenerateParameterList(self):
+        # AddParam declaration order is the wizard UI order. Keep the package
+        # envelope and mechanical features ahead of pads and openings so a
+        # drawing can be entered without transient geometry-validation errors.
         self.AddParam("Package", "width", self.uMM, 26.0, designator="X")
         self.AddParam("Package", "length", self.uMM, 26.0, designator="Y")
         self.AddParam(
@@ -204,6 +207,9 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             min_value=0,
         )
         self.AddParam("Package graphics", "pin 1 dot", self.uBool, True)
+        self.AddParam(
+            "Package graphics", "reference designator", self.uBool, True
+        )
 
     def CheckParameters(self):
         pads = self.parameters["Pads"]
@@ -837,9 +843,15 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         )
         self._add_center_board_cutout_on_layer(pcbnew.F_Fab, pcbnew.FromMM(0.1))
 
-    def _package_outline_points(self, half_width, half_length):
+    def _package_outline_points(
+        self, half_width, half_length, chamfer_size=None
+    ):
         package = self.parameters["Package"]
-        chamfer = package["chamfer size"]
+        chamfer = (
+            package["chamfer size"]
+            if chamfer_size is None
+            else chamfer_size
+        )
         top_left = (
             package[PACKAGE_CHAMFER_PARAMETERS["top left (A1 corner)"]]
             and chamfer
@@ -981,18 +993,43 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
                 -half_width, -half_length, pcbnew.FromMM(0.2), filled=True
             )
 
-        # Courtyard rounded to the 0.1 mm size grid, as in KiCad's wizard.
+        # Courtyard dimensions are rounded to the 0.1 mm size grid, as in
+        # KiCad's wizard. Its selected chamfers are true geometric offsets of
+        # the fabrication outline, preserving the effective courtyard margin
+        # along both straight and diagonal edges.
         margin = package["courtyard margin"]
         self.draw.SetLayer(pcbnew.F_CrtYd)
         courtyard_width = pcbnew.PutOnGridMM((half_width + margin) * 2, 0.1)
         courtyard_length = pcbnew.PutOnGridMM((half_length + margin) * 2, 0.1)
+        courtyard_half_width = courtyard_width / 2
+        courtyard_half_length = courtyard_length / 2
+        x_margin = courtyard_half_width - half_width
+        y_margin = courtyard_half_length - half_length
+        effective_margin = min(x_margin, y_margin)
+        courtyard_chamfer = 0
+        if package["chamfer size"]:
+            courtyard_chamfer = (
+                package["chamfer size"]
+                + x_margin
+                + y_margin
+                - math.sqrt(2) * effective_margin
+            )
         self.draw.SetLineThickness(pcbnew.FromMM(0.05))
-        self.draw.Box(0, 0, courtyard_width, courtyard_length)
+        self.draw.Polyline(
+            self._package_outline_points(
+                courtyard_half_width,
+                courtyard_half_length,
+                courtyard_chamfer,
+            )
+        )
 
         text_size = self.GetTextSize()
         text_y = half_length + text_size
         self.draw.Value(0, text_y, text_size)
-        self.draw.Reference(0, -text_y, text_size)
+        if graphics["reference designator"]:
+            self.draw.Reference(0, -text_y, text_size)
+        else:
+            self.module.Reference().SetVisible(False)
 
         extra_reference = pcbnew.PCB_TEXT(self.module)
         extra_reference.SetLayer(pcbnew.F_Fab)

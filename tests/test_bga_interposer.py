@@ -1,5 +1,6 @@
 """Integration tests executed with KiCad's bundled Python interpreter."""
 
+import math
 import os
 import sys
 import tempfile
@@ -183,6 +184,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
                 "silkscreen corners",
                 "silkscreen standoff",
                 "pin 1 dot",
+                "reference designator",
             ],
         }
         for page, names in expected_parameters.items():
@@ -211,7 +213,9 @@ class BGAInterposerWizardTests(unittest.TestCase):
         self.assertTrue(graphics["silkscreen corners"])
         self.assertEqual(pcbnew.FromMM(0.12), graphics["silkscreen standoff"])
         self.assertTrue(graphics["pin 1 dot"])
+        self.assertTrue(graphics["reference designator"])
         self.assertEqual(5, len(self.shapes_on_layer(wizard, pcbnew.F_Fab)))
+        self.assertEqual(5, len(self.shapes_on_layer(wizard, pcbnew.F_CrtYd)))
 
         silk_shapes = self.shapes_on_layer(wizard, pcbnew.F_SilkS)
         self.assertEqual(10, len(silk_shapes))
@@ -233,6 +237,9 @@ class BGAInterposerWizardTests(unittest.TestCase):
             8, len(self.shapes_on_layer(all_chamfered, pcbnew.F_Fab))
         )
         self.assertEqual(
+            8, len(self.shapes_on_layer(all_chamfered, pcbnew.F_CrtYd))
+        )
+        self.assertEqual(
             13, len(self.shapes_on_layer(all_chamfered, pcbnew.F_SilkS))
         )
 
@@ -241,6 +248,9 @@ class BGAInterposerWizardTests(unittest.TestCase):
         )
         self.assertFalse(no_chamfers.AnyErrors(), no_chamfers.GetBuildMessages())
         self.assertEqual(4, len(self.shapes_on_layer(no_chamfers, pcbnew.F_Fab)))
+        self.assertEqual(
+            4, len(self.shapes_on_layer(no_chamfers, pcbnew.F_CrtYd))
+        )
         self.assertEqual(9, len(self.shapes_on_layer(no_chamfers, pcbnew.F_SilkS)))
 
     def test_package_chamfers_must_fit_on_each_edge(self):
@@ -274,6 +284,32 @@ class BGAInterposerWizardTests(unittest.TestCase):
         )
         self.assertFalse(both_off.AnyErrors(), both_off.GetBuildMessages())
         self.assertEqual([], self.shapes_on_layer(both_off, pcbnew.F_SilkS))
+
+    def test_silkscreen_can_be_completely_disabled(self):
+        wizard = self.make_wizard(
+            Package_graphics__silkscreen_corners=False,
+            Package_graphics__pin_1_dot=False,
+            Package_graphics__reference_designator=False,
+        )
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        self.assertEqual([], self.shapes_on_layer(wizard, pcbnew.F_SilkS))
+        self.assertFalse(wizard.module.Reference().IsVisible())
+
+    def test_courtyard_chamfers_preserve_clearance(self):
+        wizard = self.make_wizard()
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        diagonal = [
+            shape
+            for shape in self.shapes_on_layer(wizard, pcbnew.F_CrtYd)
+            if abs(shape.GetEnd().x - shape.GetStart().x)
+            == abs(shape.GetEnd().y - shape.GetStart().y)
+        ]
+        self.assertEqual(1, len(diagonal))
+
+        package_edge_sum = -pcbnew.FromMM(26 - 1)
+        courtyard_edge_sum = diagonal[0].GetStart().x + diagonal[0].GetStart().y
+        clearance = abs(courtyard_edge_sum - package_edge_sum) / math.sqrt(2)
+        self.assertAlmostEqual(pcbnew.FromMM(0.25), clearance, delta=1)
 
     def test_silkscreen_standoff_is_configurable(self):
         wizard = self.make_wizard(Package_graphics__silkscreen_standoff=1)
