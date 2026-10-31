@@ -60,3 +60,8 @@ Content Manager → Manage repositories**:
 ```text
 https://kinderwood.github.io/kicad-automation/kicad/repository.json
 ```
+
+## License
+
+This repository and all tools it contains are licensed under the GNU General
+Public License, version 2 or (at your option) any later version. See `LICENSE`.

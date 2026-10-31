@@ -6,11 +6,18 @@
   "identifier": "com.github.kinderwood.kicad-automation.bga-interposer",
   "type": "plugin",
   "author": {
-    "name": "kinderwood"
+    "name": "kinderwood",
+    "contact": {
+      "web": "https://github.com/kinderwood/kicad-automation"
+    }
   },
   "maintainer": {
-    "name": "kinderwood"
+    "name": "kinderwood",
+    "contact": {
+      "web": "https://github.com/kinderwood/kicad-automation"
+    }
   },
+  "license": "GPL",
   "resources": {
     "homepage": "https://github.com/kinderwood/kicad-automation/tree/main/plugins/bga_interposer"
   },

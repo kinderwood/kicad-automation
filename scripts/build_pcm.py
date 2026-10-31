@@ -71,6 +71,7 @@ def build_plugin(plugin_dir, metadata, base_url, output_dir):
 
     with zipfile.ZipFile(plugin_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         archive.write(plugin_dir / "metadata.json", "metadata.json")
+        archive.write(ROOT / "LICENSE", Path("plugins") / plugin_dir.name / "LICENSE")
         for source in sorted(plugin_dir.rglob("*")):
             if not source.is_file() or source.name == "metadata.json":
                 continue
