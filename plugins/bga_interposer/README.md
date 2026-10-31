@@ -1,9 +1,9 @@
 # BGA Interposer Wizard
 
-A KiCad 9 and 10 footprint wizard for BGA-style interposers with a rectangular
-group of balls omitted from the exact center. It follows the behavior and
-drawing style of KiCad's bundled BGA wizard while adding independent overall
-and center-depopulation row and column controls, symmetric corner depopulation,
+A footprint wizard for BGA-style interposers with a rectangular group of balls
+omitted from the exact center. It follows the behavior and drawing style of
+KiCad's bundled BGA wizard while adding independent overall and
+center-depopulation row and column controls, symmetric corner depopulation,
 optional guide-pin features, and an optional centered board cutout.
 
 The default generates a 20 × 20 full grid at 1 mm pitch with an 8 × 8 center
@@ -91,12 +91,6 @@ there is no annular copper; the layer set lets KiCad apply its normal drilled-ho
 clearance behavior. Their fabrication property remains `None`, as `Mechanical`
 is intended for plated mechanical terminals rather than NPTH tooling features.
 
-## Supported KiCad versions
-
-The PCM package declares compatibility with KiCad 9.0 through 10.0. The test
-matrix covers KiCad 9.0.0, the latest stable KiCad 9.0 patch release, KiCad
-10.0.0, and KiCad 10.0.8.
-
 ## Manual installation
 
 Copy the `bga_interposer` directory into KiCad's per-user scripting plugin
@@ -110,5 +104,4 @@ folder. On Linux this is normally one of:
 Restart KiCad, open the Footprint Editor, choose **Create Footprint from
 Wizard**, and select **BGA Interposer**.
 
-Implementation invariants and compatibility notes are kept in
-[`DESIGN.md`](DESIGN.md).
+Non-obvious implementation decisions are recorded in [`DESIGN.md`](DESIGN.md).

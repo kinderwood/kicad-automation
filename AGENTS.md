@@ -1,16 +1,20 @@
 # Repository guide
 
-This is a multi-tool KiCad automation repository. Keep each distributable tool
-self-contained under `plugins/<tool>/`; do not make repository-level wording or
-automation assume that BGA Interposer is the only tool.
+This repository contains independently versioned KiCad automation tools. Keep
+each distributable tool self-contained under `plugins/<tool>/`.
+
+## Compatibility
+
+Preserve the repository-wide compatibility range documented in `README.md`.
+Continuous integration tests the exact versions 9.0.0, 9.0.9, 10.0.0, and
+10.0.8. Do not narrow the supported range without an explicit project decision.
 
 ## Before changing a tool
 
 - Read the tool's `README.md` and, when present, `DESIGN.md`.
-- Preserve KiCad 9.0 and 10.0 compatibility unless the task explicitly changes
-  the supported range.
-- Treat `AddParam` declaration order as user-interface behavior. Update the
-  exact-order integration test when intentionally changing it.
+- For footprint wizards, treat `AddParam` declaration order as user-interface
+  behavior. Update the exact-order integration test when intentionally changing
+  it.
 - Prefer KiCad layer/editor defaults over new wizard parameters when a library
   convention already supplies the value.
 
@@ -33,8 +37,7 @@ python3 scripts/test_pcm.py "$pcm_dir"
 ```
 
 Do not hand-edit or commit generated `dist/` output. The GitHub Pages workflow
-builds it from source and tests the plugin against KiCad 9.0.0, the latest 9.0
-patch in the matrix, 10.0.0, and 10.0.8.
+builds the PCM repository from source after the compatibility matrix passes.
 
 ## Releases
 

@@ -8,21 +8,23 @@ plugins/<tool>/
   __init__.py
   metadata.json
   README.md
-  DESIGN.md       # only durable implementation rules and non-obvious decisions
+  DESIGN.md       # optional; only non-obvious decisions that need rationale
 tests/
   test_<tool>.py
 ```
 
-Use `plugins/bga_interposer/metadata.json` as a PCM manifest example. Give the
-tool a stable, repository-qualified identifier and declare its actual KiCad
-version range. The PCM builder discovers all plugin manifests automatically;
-do not add a tool-specific packaging branch to the builder unless its layout
+For a concrete PCM manifest example, see
+`plugins/bga_interposer/metadata.json`. Give the tool a stable,
+repository-qualified identifier and use the repository compatibility range from
+the root `README.md`. The PCM builder discovers all plugin manifests
+automatically; do not add a tool-specific packaging branch unless its layout
 truly requires one.
 
 Add the tool to the root README's Tools section. Keep user-facing parameters,
-installation details, and supported KiCad versions in the tool README. Put
-only invariants that guide future implementation in `DESIGN.md`; omit history,
-meeting notes, and explanations that are already obvious from the code.
+installation details, and tool-specific limitations in the tool README. Add a
+`DESIGN.md` only when non-obvious implementation decisions need durable
+rationale; omit history, meeting notes, and facts already clear from the README,
+code, or tests.
 
 Integration tests should load the tool through KiCad's Python environment and
 exercise a generated footprint or other real artifact. Cover any exact UI
