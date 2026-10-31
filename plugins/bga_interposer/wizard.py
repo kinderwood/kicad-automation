@@ -47,6 +47,34 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         )
 
         self.AddParam(
+            "Package graphics",
+            "fab chamfer",
+            self.uMM,
+            1.0,
+            min_value=0,
+        )
+        for name, _x_sign, _y_sign in FEATURE_CORNERS:
+            self.AddParam(
+                "Package graphics",
+                name,
+                self.uBool,
+                name == "top left (A1 corner)",
+            )
+        self.AddParam(
+            "Package graphics", "silk corners enabled", self.uBool, True
+        )
+        self.AddParam(
+            "Package graphics",
+            "silk standoff",
+            self.uMM,
+            0.12,
+            min_value=0,
+        )
+        self.AddParam(
+            "Package graphics", "pin 1 dot enabled", self.uBool, True
+        )
+
+        self.AddParam(
             "Mounting layout",
             "x distance",
             self.uMM,
@@ -63,9 +91,9 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             hint="Positive distance from package center; corner selects the sign",
         )
 
-        self.AddParam("Guide pin hole", "enabled", self.uBool, False)
+        self.AddParam("Guide pin hole", "enabled", self.uBool, True)
         self.AddParam(
-            "Guide pin hole", "top left (A1 corner)", self.uBool, False
+            "Guide pin hole", "top left (A1 corner)", self.uBool, True
         )
         self.AddParam("Guide pin hole", "top right", self.uBool, False)
         self.AddParam("Guide pin hole", "bottom right", self.uBool, False)
@@ -172,6 +200,8 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         pads = self.parameters["Pads"]
         center_depopulation = self.parameters["Center pad depop"]
         center_cutout = self.parameters["Center board cutout"]
+        package = self.parameters["Package"]
+        package_graphics = self.parameters["Package graphics"]
         mounting_layout = self.parameters["Mounting layout"]
         guide_hole = self.parameters["Guide pin hole"]
         guide_slots = self.parameters["Guide pin slots"]
@@ -180,6 +210,36 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         rows = pads["rows"]
         depopulation_columns = center_depopulation["columns"]
         depopulation_rows = center_depopulation["rows"]
+
+        self.CheckParam(
+            "Pads",
+            "size",
+            max_value=pcbnew.ToMils(pads["pitch"]),
+            info="pad diameter cannot exceed pad pitch",
+        )
+
+        chamfered_corners = {
+            name: package_graphics[name] for name, _x_sign, _y_sign in FEATURE_CORNERS
+        }
+        if any(chamfered_corners.values()):
+            edge_limits = []
+            for first, second, edge_length in (
+                ("top left (A1 corner)", "top right", package["width"]),
+                ("bottom left", "bottom right", package["width"]),
+                ("top left (A1 corner)", "bottom left", package["length"]),
+                ("top right", "bottom right", package["length"]),
+            ):
+                chamfer_count = int(chamfered_corners[first]) + int(
+                    chamfered_corners[second]
+                )
+                if chamfer_count:
+                    edge_limits.append(edge_length / chamfer_count)
+            self.CheckParam(
+                "Package graphics",
+                "fab chamfer",
+                max_value=pcbnew.ToMM(min(edge_limits)),
+                info="adjacent corner chamfers must fit on every package edge",
+            )
 
         self.CheckParam(
             "Pads",
@@ -312,7 +372,6 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
                 info="corner radius cannot exceed half the shorter dimension",
             )
 
-            package = self.parameters["Package"]
             if center_cutout["width"] >= package["width"]:
                 self.GetParam("Center board cutout", "width").AddError(
                     "must be smaller than the package width"
@@ -769,6 +828,97 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         )
         self._add_center_board_cutout_on_layer(pcbnew.F_Fab, pcbnew.FromMM(0.1))
 
+    def _package_outline_points(self, half_width, half_length):
+        graphics = self.parameters["Package graphics"]
+        chamfer = graphics["fab chamfer"]
+        top_left = graphics["top left (A1 corner)"] and chamfer
+        top_right = graphics["top right"] and chamfer
+        bottom_right = graphics["bottom right"] and chamfer
+        bottom_left = graphics["bottom left"] and chamfer
+
+        points = [
+            (-half_width + chamfer, -half_length)
+            if top_left
+            else (-half_width, -half_length)
+        ]
+        if top_right:
+            points.extend(
+                [
+                    (half_width - chamfer, -half_length),
+                    (half_width, -half_length + chamfer),
+                ]
+            )
+        else:
+            points.append((half_width, -half_length))
+        if bottom_right:
+            points.extend(
+                [
+                    (half_width, half_length - chamfer),
+                    (half_width - chamfer, half_length),
+                ]
+            )
+        else:
+            points.append((half_width, half_length))
+        if bottom_left:
+            points.extend(
+                [
+                    (-half_width + chamfer, half_length),
+                    (-half_width, half_length - chamfer),
+                ]
+            )
+        else:
+            points.append((-half_width, half_length))
+        if top_left:
+            points.append((-half_width, -half_length + chamfer))
+        points.append(points[0])
+        return points
+
+    def _silkscreen_corner_points(
+        self, corner, x_sign, y_sign, half_width, half_length
+    ):
+        graphics = self.parameters["Package graphics"]
+        standoff = graphics["silk standoff"]
+        outer_half_width = half_width + standoff
+        outer_half_length = half_length + standoff
+        horizontal_run = half_width / 2
+        vertical_run = half_length / 2
+
+        horizontal_inner = (
+            x_sign * (outer_half_width - horizontal_run),
+            y_sign * outer_half_length,
+        )
+        vertical_inner = (
+            x_sign * outer_half_width,
+            y_sign * (outer_half_length - vertical_run),
+        )
+
+        chamfer = graphics["fab chamfer"] if graphics[corner] else 0
+        if not chamfer:
+            return [
+                horizontal_inner,
+                (x_sign * outer_half_width, y_sign * outer_half_length),
+                vertical_inner,
+            ]
+
+        tangent_offset = chamfer + standoff
+        points = [
+            horizontal_inner,
+            (
+                x_sign * (outer_half_width - tangent_offset),
+                y_sign * outer_half_length,
+            ),
+            (
+                x_sign * outer_half_width,
+                y_sign * (outer_half_length - tangent_offset),
+            ),
+            vertical_inner,
+        ]
+        if tangent_offset > horizontal_run:
+            points = points[1:]
+        if tangent_offset > vertical_run:
+            points = points[:-1]
+        return points
+
     def BuildThisFootprint(self):
         self._add_pads()
         self._add_guide_pin_hole()
@@ -780,46 +930,35 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         origin_x, origin_y = self._origin_offset()
         self.draw.TransformTranslate(-origin_x, -origin_y)
 
-        # Fabrication outline, including the pin-1 bevel used by KiCad's BGA wizard.
+        # Fabrication outline with independently selectable corner chamfers.
         self.draw.SetLayer(pcbnew.F_Fab)
-        bevel = min(half_width, pcbnew.FromMM(1))
         self.draw.SetLineThickness(pcbnew.FromMM(0.1))
-        self.draw.BoxWithDiagonalAtCorner(
-            0, 0, half_width * 2, half_length * 2, bevel
-        )
+        self.draw.Polyline(self._package_outline_points(half_width, half_length))
 
         # The functional board cutout and matching fabrication drawing share
         # geometry but retain their layer-standard line widths.
         self._add_center_board_cutout()
 
-        # Sparse silkscreen corners keep clear of the outer balls.
+        # Sparse silkscreen corners follow the fabrication chamfers at the
+        # configured standoff distance.
+        graphics = self.parameters["Package graphics"]
         self.draw.SetLayer(pcbnew.F_SilkS)
         self.draw.SetLineThickness(pcbnew.FromMM(0.12))
-        offset = self.draw.GetLineThickness()
-        line_x = 0.5 * half_width
-        line_y = 0.5 * half_length
-        edge = [
-            [half_width + offset - line_x, -half_length - offset],
-            [half_width + offset, -half_length - offset],
-            [half_width + offset, -half_length - offset + line_y],
-        ]
-        self.draw.Polyline(edge)
-        self.draw.Polyline(edge, mirrorY=0)
-        self.draw.Polyline(edge, mirrorX=0, mirrorY=0)
-
-        pin1_bevel = bevel + offset
-        pin1 = [
-            [-half_width - offset + line_x, -half_length - offset],
-            [-half_width - offset + pin1_bevel, -half_length - offset],
-            [-half_width - offset, -half_length - offset + pin1_bevel],
-            [-half_width - offset, -half_length - offset + line_y],
-        ]
-        if pin1_bevel > line_x:
-            pin1 = pin1[1:]
-        if pin1_bevel > line_y:
-            pin1 = pin1[:-1]
-        self.draw.Polyline(pin1)
-        self.draw.Circle(-half_width, -half_length, pcbnew.FromMM(0.2), filled=True)
+        if graphics["silk corners enabled"]:
+            for corner, x_sign, y_sign in FEATURE_CORNERS:
+                self.draw.Polyline(
+                    self._silkscreen_corner_points(
+                        corner,
+                        x_sign,
+                        y_sign,
+                        half_width,
+                        half_length,
+                    )
+                )
+        if graphics["pin 1 dot enabled"]:
+            self.draw.Circle(
+                -half_width, -half_length, pcbnew.FromMM(0.2), filled=True
+            )
 
         # Courtyard rounded to the 0.1 mm size grid, as in KiCad's wizard.
         margin = package["margin"]

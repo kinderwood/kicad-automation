@@ -56,8 +56,8 @@ def main():
         wizard.BuildFootprint()
         assert not wizard.AnyErrors(), wizard.GetBuildMessages()
         pads = list(wizard.module.Pads())
-        assert len(pads) == 336
-        assert sum(pad.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH for pad in pads) == 0
+        assert len(pads) == 337
+        assert sum(pad.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH for pad in pads) == 1
 
         print(f"KiCad discovered {package_directory} from the PCM layout")
 

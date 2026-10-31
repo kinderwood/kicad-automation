@@ -92,8 +92,13 @@ class BGAInterposerWizardTests(unittest.TestCase):
         self.assertEqual(pcbnew.FromMM(-9.5), min(p.y for p in positions))
         self.assertEqual(pcbnew.FromMM(9.5), max(p.y for p in positions))
 
-        self.assertEqual([], self.guide_pin_holes(wizard))
-        self.assertEqual(336, len(list(wizard.module.Pads())))
+        holes = self.guide_pin_holes(wizard)
+        self.assertEqual(1, len(holes))
+        self.assertEqual(
+            pcbnew.VECTOR2I(pcbnew.FromMM(-11.5), pcbnew.FromMM(-11.5)),
+            holes[0].GetPosition(),
+        )
+        self.assertEqual(337, len(list(wizard.module.Pads())))
         self.assertEqual("mils", wizard.GetParam("Pads", "size").units)
         self.assertEqual(
             [("Pads", "size")],
@@ -104,8 +109,8 @@ class BGAInterposerWizardTests(unittest.TestCase):
             ],
         )
         self.assertEqual(pcbnew.FromMils(20), pads["A1"].GetSize().x)
-        self.assertFalse(wizard.parameters["Guide pin hole"]["enabled"])
-        self.assertFalse(
+        self.assertTrue(wizard.parameters["Guide pin hole"]["enabled"])
+        self.assertTrue(
             wizard.parameters["Guide pin hole"]["top left (A1 corner)"]
         )
         center_cutout = wizard.parameters["Center board cutout"]
@@ -120,6 +125,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
         self.assertEqual(
             [
                 "Package",
+                "Package graphics",
                 "Mounting layout",
                 "Guide pin hole",
                 "Guide pin slots",
@@ -134,6 +140,111 @@ class BGAInterposerWizardTests(unittest.TestCase):
         )
         self.assertIsNotNone(wizard.GetParam("Pads", "corner depop depth"))
         self.assertIsNone(wizard.GetParam("Pads", "corner depopulation depth"))
+
+    def test_package_graphics_defaults_match_existing_style(self):
+        wizard = self.make_wizard()
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        graphics = wizard.parameters["Package graphics"]
+        self.assertEqual(pcbnew.FromMM(1), graphics["fab chamfer"])
+        self.assertTrue(graphics["top left (A1 corner)"])
+        self.assertFalse(graphics["top right"])
+        self.assertFalse(graphics["bottom right"])
+        self.assertFalse(graphics["bottom left"])
+        self.assertTrue(graphics["silk corners enabled"])
+        self.assertEqual(pcbnew.FromMM(0.12), graphics["silk standoff"])
+        self.assertTrue(graphics["pin 1 dot enabled"])
+        self.assertEqual(5, len(self.shapes_on_layer(wizard, pcbnew.F_Fab)))
+
+        silk_shapes = self.shapes_on_layer(wizard, pcbnew.F_SilkS)
+        self.assertEqual(10, len(silk_shapes))
+        self.assertEqual(
+            1,
+            sum(shape.GetShape() == pcbnew.SHAPE_T_CIRCLE for shape in silk_shapes),
+        )
+
+    def test_all_or_no_package_corners_can_be_chamfered(self):
+        all_chamfered = self.make_wizard(
+            Package_graphics__top_right=True,
+            Package_graphics__bottom_right=True,
+            Package_graphics__bottom_left=True,
+        )
+        self.assertFalse(
+            all_chamfered.AnyErrors(), all_chamfered.GetBuildMessages()
+        )
+        self.assertEqual(
+            8, len(self.shapes_on_layer(all_chamfered, pcbnew.F_Fab))
+        )
+        self.assertEqual(
+            13, len(self.shapes_on_layer(all_chamfered, pcbnew.F_SilkS))
+        )
+
+        no_chamfers = self.make_wizard(
+            **{"Package_graphics__top_left_(A1_corner)": False}
+        )
+        self.assertFalse(no_chamfers.AnyErrors(), no_chamfers.GetBuildMessages())
+        self.assertEqual(4, len(self.shapes_on_layer(no_chamfers, pcbnew.F_Fab)))
+        self.assertEqual(9, len(self.shapes_on_layer(no_chamfers, pcbnew.F_SilkS)))
+
+    def test_package_chamfers_must_fit_on_each_edge(self):
+        wizard = self.make_wizard(
+            Package_graphics__top_right=True,
+            Package_graphics__fab_chamfer=14,
+        )
+        self.assertTrue(wizard.AnyErrors())
+        self.assertIn("fit on every package edge", wizard.GetBuildMessages())
+
+    def test_silkscreen_corners_and_pin_1_dot_toggle_independently(self):
+        corners_off = self.make_wizard(
+            Package_graphics__silk_corners_enabled=False
+        )
+        self.assertFalse(corners_off.AnyErrors(), corners_off.GetBuildMessages())
+        silk_shapes = self.shapes_on_layer(corners_off, pcbnew.F_SilkS)
+        self.assertEqual(1, len(silk_shapes))
+        self.assertEqual(pcbnew.SHAPE_T_CIRCLE, silk_shapes[0].GetShape())
+
+        dot_off = self.make_wizard(Package_graphics__pin_1_dot_enabled=False)
+        self.assertFalse(dot_off.AnyErrors(), dot_off.GetBuildMessages())
+        silk_shapes = self.shapes_on_layer(dot_off, pcbnew.F_SilkS)
+        self.assertEqual(9, len(silk_shapes))
+        self.assertFalse(
+            any(shape.GetShape() == pcbnew.SHAPE_T_CIRCLE for shape in silk_shapes)
+        )
+
+        both_off = self.make_wizard(
+            Package_graphics__silk_corners_enabled=False,
+            Package_graphics__pin_1_dot_enabled=False,
+        )
+        self.assertFalse(both_off.AnyErrors(), both_off.GetBuildMessages())
+        self.assertEqual([], self.shapes_on_layer(both_off, pcbnew.F_SilkS))
+
+    def test_silkscreen_standoff_is_configurable(self):
+        wizard = self.make_wizard(Package_graphics__silk_standoff=1)
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        segments = [
+            shape
+            for shape in self.shapes_on_layer(wizard, pcbnew.F_SilkS)
+            if shape.GetShape() == pcbnew.SHAPE_T_SEGMENT
+        ]
+        points = [
+            point
+            for segment in segments
+            for point in (segment.GetStart(), segment.GetEnd())
+        ]
+        self.assertEqual(pcbnew.FromMM(-14), min(point.x for point in points))
+        self.assertEqual(pcbnew.FromMM(14), max(point.x for point in points))
+        self.assertEqual(pcbnew.FromMM(-14), min(point.y for point in points))
+        self.assertEqual(pcbnew.FromMM(14), max(point.y for point in points))
+
+    def test_pad_size_cannot_exceed_pitch(self):
+        near_tangent = self.make_wizard(Pads__size=39)
+        self.assertFalse(near_tangent.AnyErrors(), near_tangent.GetBuildMessages())
+
+        tangent = self.make_wizard(Pads__size=pcbnew.ToMils(pcbnew.FromMM(1)))
+        self.assertFalse(tangent.AnyErrors(), tangent.GetBuildMessages())
+
+        overlapping = self.make_wizard(Pads__size=40)
+        self.assertTrue(overlapping.AnyErrors())
+        self.assertIn("diameter cannot exceed", overlapping.GetBuildMessages())
 
     def test_symmetric_corner_depopulation_depth_four(self):
         wizard = self.make_wizard(Pads__corner_depop_depth=4)
@@ -200,7 +311,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
             plugin.FootprintSave(library, wizard.module)
             loaded = plugin.FootprintLoad(library, wizard.GetValue())
             self.assertIsNotNone(loaded)
-            self.assertEqual(336, len(list(loaded.Pads())))
+            self.assertEqual(337, len(list(loaded.Pads())))
 
     def test_each_guide_pin_hole_corner(self):
         expected_positions = {
@@ -210,7 +321,10 @@ class BGAInterposerWizardTests(unittest.TestCase):
             "bottom_left": (-11.5, 11.5),
         }
         for selected, expected in expected_positions.items():
-            values = {"Guide_pin_hole__enabled": True}
+            values = {
+                "Guide_pin_hole__enabled": True,
+                "Guide_pin_hole__top_left_(A1_corner)": False,
+            }
             values["Guide_pin_hole__" + selected] = True
             with self.subTest(corner=selected):
                 wizard = self.make_wizard(**values)

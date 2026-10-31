@@ -10,15 +10,20 @@ The default generates a 20 × 20 full grid at 1 mm pitch with an 8 × 8 center
 pad depopulation region: 336 electrical pads over the same 19 mm × 19 mm
 pad-center span as a full 20 × 20 grid. Names retain their full-grid locations,
 so an omitted ball does not cause later balls to be renumbered. The default
-26 mm × 26 mm package uses 20 mil pads. The board cutout, guide pin hole, and
-all guide pin slots are disabled by default.
+26 mm × 26 mm package uses 20 mil pads. The board cutout and all guide pin slots
+are disabled by default. The top-left guide pin hole is enabled by default so
+changes on the `Mounting layout` page remain visible while entering offsets.
 
 ## Parameters
 
 - Parameter pages are ordered for entry from a mechanical drawing: `Package`,
-  `Mounting layout`, `Guide pin hole`, `Guide pin slots`, `Pads`, then
-  `Center pad depop` and `Center board cutout`.
+  `Package graphics`, `Mounting layout`, `Guide pin hole`, `Guide pin slots`,
+  `Pads`, `Center pad depop`, and `Center board cutout`.
 - `Package`: body width, body length, and courtyard margin.
+- `Package graphics`: one fabrication chamfer value with an enable checkbox for
+  each corner, a shared silkscreen-corner toggle, configurable silkscreen
+  standoff, and an independent pin-1-dot toggle. Enabled silkscreen corners
+  follow the selected fabrication chamfers.
 - `Mounting layout`: shared positive X/Y distances from package center. Corner
   selection supplies the coordinate signs.
 - `Guide pin hole`: optional round NPTH, exactly one selected corner, hole
@@ -28,7 +33,8 @@ all guide pin slots are disabled by default.
   plus shared width and overall length. Each rotation is counterclockwise from
   a horizontal long axis.
 - `Pads`: metric pitch, pad size in mils, total columns, and total rows. Pad size
-  defaults to 20 mil; all other physical dimensions remain metric.
+  defaults to 20 mil; all other physical dimensions remain metric. Pad diameter
+  may equal the pitch for tangent pads but cannot exceed it.
 - `Pads` also includes `corner depop depth`, the symmetric corner-depopulation
   depth. A depth of 4 removes 4, 3, 2, and 1 pads from successive rows at all
   four corners.
