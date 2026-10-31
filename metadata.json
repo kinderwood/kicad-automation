@@ -1,0 +1,26 @@
+{
+  "$schema": "https://go.kicad.org/pcm/schemas/v1",
+  "name": "Center Void BGA Wizard",
+  "description": "Generate rectangular BGA footprints with a centered rectangular pad void",
+  "description_full": "A KiCad 10 footprint wizard based on KiCad's bundled BGA wizard. Overall rows and columns and centered void rows and columns are independently configurable. Pad designators retain their full-grid locations across the omitted center rectangle.",
+  "identifier": "org.kicad.center-void-bga-wizard",
+  "type": "plugin",
+  "author": {
+    "name": "Center Void BGA contributors"
+  },
+  "maintainer": {
+    "name": "Center Void BGA contributors"
+  },
+  "tags": [
+    "footprint",
+    "wizard",
+    "bga"
+  ],
+  "versions": [
+    {
+      "version": "0.1.0",
+      "status": "stable",
+      "kicad_version": "10.0"
+    }
+  ]
+}
