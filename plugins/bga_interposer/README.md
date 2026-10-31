@@ -38,7 +38,8 @@ changes on the `Guide feat placement` page remain visible while entering offsets
 - `Pads`: metric pitch, pad size in mils, corner depopulation depth, total
   columns, and total rows, in that entry order. Pad size defaults to 20 mil; all
   other physical dimensions remain metric. Pad diameter may equal the pitch for
-  tangent pads but cannot exceed it.
+  tangent pads but cannot exceed it. Electrical lands carry KiCad's `BGA pad`
+  fabrication property.
 - `Pads` also includes `corner depop depth`, the symmetric corner-depopulation
   depth. A depth of 4 removes 4, 3, 2, and 1 pads from successive rows at all
   four corners.
@@ -80,7 +81,8 @@ footprint origin.
 
 The guide pin hole and slots are non-electrical NPTH features with no copper
 layers. Their padstacks contain front and back solder-mask openings only; KiCad's
-normal drilled-hole copper-clearance rules still apply.
+normal drilled-hole copper-clearance rules still apply. Their fabrication
+property remains `None`, as NPTH already identifies their mechanical purpose.
 
 ## Supported KiCad versions
 

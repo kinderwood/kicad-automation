@@ -71,6 +71,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
         ]
 
     def assert_mask_only_npth(self, pad):
+        self.assertEqual(pcbnew.PAD_PROP_NONE, pad.GetProperty())
         self.assertFalse(pad.IsOnLayer(pcbnew.F_Cu))
         self.assertFalse(pad.IsOnLayer(pcbnew.B_Cu))
         self.assertTrue(pad.IsOnLayer(pcbnew.F_Mask))
@@ -117,6 +118,9 @@ class BGAInterposerWizardTests(unittest.TestCase):
             ],
         )
         self.assertEqual(pcbnew.FromMils(20), pads["A1"].GetSize().x)
+        self.assertTrue(
+            all(pad.GetProperty() == pcbnew.PAD_PROP_BGA for pad in pads.values())
+        )
         self.assertTrue(wizard.parameters["Guide pin hole"]["enabled"])
         self.assertTrue(
             wizard.parameters["Guide pin hole"]["top left (A1 corner)"]
@@ -491,6 +495,17 @@ class BGAInterposerWizardTests(unittest.TestCase):
             loaded = plugin.FootprintLoad(library, wizard.GetValue())
             self.assertIsNotNone(loaded)
             self.assertEqual(337, len(list(loaded.Pads())))
+            electrical_pads = [pad for pad in loaded.Pads() if str(pad.GetName())]
+            self.assertTrue(electrical_pads)
+            self.assertTrue(
+                all(
+                    pad.GetProperty() == pcbnew.PAD_PROP_BGA
+                    for pad in electrical_pads
+                )
+            )
+            loaded_holes = self.npth_pads(loaded)
+            self.assertEqual(1, len(loaded_holes))
+            self.assert_mask_only_npth(loaded_holes[0])
 
     def test_each_guide_pin_hole_corner(self):
         expected_positions = {
@@ -637,6 +652,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
             slots = self.guide_pin_slots(loaded)
             self.assertEqual(1, len(slots))
             self.assertEqual(37, slots[0].GetOrientationDegrees())
+            self.assert_mask_only_npth(slots[0])
 
     def test_guide_pin_slot_cannot_share_hole_corner(self):
         wizard = self.make_wizard(

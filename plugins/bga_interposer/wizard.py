@@ -697,6 +697,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         origin_x, origin_y = self._origin_offset()
 
         prototype = PA.PadMaker(self.module).SMTRoundPad(pads["size"])
+        prototype.SetProperty(pcbnew.PAD_PROP_BGA)
         first_x = -((columns - 1) * pitch) / 2
         first_y = -((rows - 1) * pitch) / 2
 
@@ -723,6 +724,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         hole_x, hole_y = self._guide_pin_hole_position()
         origin_x, origin_y = self._origin_offset()
         pad = PA.PadMaker(self.module).NPTHRoundPad(guide_hole["diameter"])
+        pad.SetProperty(pcbnew.PAD_PROP_NONE)
         pad.SetLayerSet(self._npth_layer_set())
         pad.SetPosition(
             pcbnew.VECTOR2I(int(hole_x - origin_x), int(hole_y - origin_y))
@@ -740,6 +742,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             )
             pad.SetShape(pcbnew.PAD_SHAPE_OVAL)
             pad.SetAttribute(pcbnew.PAD_ATTRIB_NPTH)
+            pad.SetProperty(pcbnew.PAD_PROP_NONE)
             pad.SetLayerSet(self._npth_layer_set())
             pad.SetDrillShape(pcbnew.PAD_DRILL_SHAPE_OBLONG)
             pad.SetDrillSize(
