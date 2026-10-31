@@ -17,13 +17,10 @@ changes on the `Mounting layout` page remain visible while entering offsets.
 ## Parameters
 
 - Parameter pages are ordered for entry from a mechanical drawing: `Package`,
-  `Package graphics`, `Mounting layout`, `Guide pin hole`, `Guide pin slots`,
-  `Pads`, `Center pad depop`, and `Center board cutout`.
-- `Package`: body width, body length, and courtyard margin.
-- `Package graphics`: one fabrication chamfer value with an enable checkbox for
-  each corner, a shared silkscreen-corner toggle, configurable silkscreen
-  standoff, and an independent pin-1-dot toggle. Enabled silkscreen corners
-  follow the selected fabrication chamfers.
+  `Mounting layout`, `Guide pin hole`, `Guide pin slots`, `Pads`, `Center pad
+  depop`, `Center board cutout`, and `Package graphics`.
+- `Package`: body width, body length, one physical package chamfer size with an
+  enable checkbox for each corner, and courtyard margin.
 - `Mounting layout`: shared positive X/Y distances from package center. Corner
   selection supplies the coordinate signs.
 - `Guide pin hole`: optional round NPTH, exactly one selected corner, hole
@@ -42,6 +39,9 @@ changes on the `Mounting layout` page remain visible while entering offsets.
 - `Center board cutout`: optional centered rectangular board cutout with
   independent width, length, and corner radius. It defaults to disabled with
   5 mm × 5 mm dimensions and zero corner radius.
+- `Package graphics`: shared silkscreen-corner toggle, configurable silkscreen
+  standoff, and independent pin-1-dot toggle. Enabled silkscreen corners follow
+  the selected package chamfers.
 
 For exactly centered pad depopulation, each depopulation dimension must have the
 same parity as its corresponding outer dimension. For example, 20/8 and 19/7

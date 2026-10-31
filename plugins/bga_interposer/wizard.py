@@ -24,6 +24,13 @@ FEATURE_CORNERS = (
     ("bottom left", -1, 1),
 )
 
+PACKAGE_CHAMFER_PARAMETERS = {
+    "top left (A1 corner)": "chamfer top left (A1)",
+    "top right": "chamfer top right",
+    "bottom right": "chamfer bottom right",
+    "bottom left": "chamfer bottom left",
+}
+
 
 class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
     """Generate a BGA interposer with optional depopulation and cutouts."""
@@ -39,39 +46,24 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         self.AddParam("Package", "length", self.uMM, 26.0, designator="Y")
         self.AddParam(
             "Package",
-            "margin",
-            self.uMM,
-            0.25,
-            min_value=0.2,
-            hint="Courtyard margin",
-        )
-
-        self.AddParam(
-            "Package graphics",
-            "fab chamfer",
+            "chamfer size",
             self.uMM,
             1.0,
             min_value=0,
         )
         for name, _x_sign, _y_sign in FEATURE_CORNERS:
             self.AddParam(
-                "Package graphics",
-                name,
+                "Package",
+                PACKAGE_CHAMFER_PARAMETERS[name],
                 self.uBool,
                 name == "top left (A1 corner)",
             )
         self.AddParam(
-            "Package graphics", "silk corners enabled", self.uBool, True
-        )
-        self.AddParam(
-            "Package graphics",
-            "silk standoff",
+            "Package",
+            "courtyard margin",
             self.uMM,
-            0.12,
-            min_value=0,
-        )
-        self.AddParam(
-            "Package graphics", "pin 1 dot enabled", self.uBool, True
+            0.25,
+            min_value=0.2,
         )
 
         self.AddParam(
@@ -93,12 +85,6 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
 
         self.AddParam("Guide pin hole", "enabled", self.uBool, True)
         self.AddParam(
-            "Guide pin hole", "top left (A1 corner)", self.uBool, True
-        )
-        self.AddParam("Guide pin hole", "top right", self.uBool, False)
-        self.AddParam("Guide pin hole", "bottom right", self.uBool, False)
-        self.AddParam("Guide pin hole", "bottom left", self.uBool, False)
-        self.AddParam(
             "Guide pin hole",
             "diameter",
             self.uMM,
@@ -107,6 +93,12 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             hint="Finished round NPTH diameter",
         )
         self.AddParam(
+            "Guide pin hole", "top left (A1 corner)", self.uBool, True
+        )
+        self.AddParam("Guide pin hole", "top right", self.uBool, False)
+        self.AddParam("Guide pin hole", "bottom right", self.uBool, False)
+        self.AddParam("Guide pin hole", "bottom left", self.uBool, False)
+        self.AddParam(
             "Guide pin hole",
             "origin at guide pin hole",
             self.uBool,
@@ -114,15 +106,6 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             hint="Otherwise the footprint origin is the package center",
         )
 
-        for name, _x_sign, _y_sign in FEATURE_CORNERS:
-            self.AddParam("Guide pin slots", name, self.uBool, False)
-            self.AddParam(
-                "Guide pin slots",
-                "{} rotation".format(name),
-                self.uDegrees,
-                0,
-                hint="Counterclockwise from a horizontal long axis",
-            )
         self.AddParam(
             "Guide pin slots",
             "width",
@@ -139,10 +122,26 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             min_value=0.01,
             hint="Overall finished NPTH slot length",
         )
-        self.AddParam("Pads", "pitch", self.uMM, 1.0, designator="p", min_value=0.01)
+        for name, _x_sign, _y_sign in FEATURE_CORNERS:
+            self.AddParam("Guide pin slots", name, self.uBool, False)
+            self.AddParam(
+                "Guide pin slots",
+                "{} rotation".format(name),
+                self.uDegrees,
+                0,
+                hint="Counterclockwise from a horizontal long axis",
+            )
+
+        self.AddParam(
+            "Pads", "columns", self.uInteger, 20, designator="nx", min_value=3
+        )
+        self.AddParam(
+            "Pads", "rows", self.uInteger, 20, designator="ny", min_value=3
+        )
+        self.AddParam(
+            "Pads", "pitch", self.uMM, 1.0, designator="p", min_value=0.01
+        )
         self.AddParam("Pads", "size", self.uMils, 20, min_value=0.01)
-        self.AddParam("Pads", "columns", self.uInteger, 20, designator="nx", min_value=3)
-        self.AddParam("Pads", "rows", self.uInteger, 20, designator="ny", min_value=3)
         self.AddParam(
             "Pads",
             "corner depop depth",
@@ -196,12 +195,21 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             min_value=0,
         )
 
+        self.AddParam("Package graphics", "silkscreen corners", self.uBool, True)
+        self.AddParam(
+            "Package graphics",
+            "silkscreen standoff",
+            self.uMM,
+            0.12,
+            min_value=0,
+        )
+        self.AddParam("Package graphics", "pin 1 dot", self.uBool, True)
+
     def CheckParameters(self):
         pads = self.parameters["Pads"]
         center_depopulation = self.parameters["Center pad depop"]
         center_cutout = self.parameters["Center board cutout"]
         package = self.parameters["Package"]
-        package_graphics = self.parameters["Package graphics"]
         mounting_layout = self.parameters["Mounting layout"]
         guide_hole = self.parameters["Guide pin hole"]
         guide_slots = self.parameters["Guide pin slots"]
@@ -219,7 +227,8 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         )
 
         chamfered_corners = {
-            name: package_graphics[name] for name, _x_sign, _y_sign in FEATURE_CORNERS
+            name: package[PACKAGE_CHAMFER_PARAMETERS[name]]
+            for name, _x_sign, _y_sign in FEATURE_CORNERS
         }
         if any(chamfered_corners.values()):
             edge_limits = []
@@ -235,8 +244,8 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
                 if chamfer_count:
                     edge_limits.append(edge_length / chamfer_count)
             self.CheckParam(
-                "Package graphics",
-                "fab chamfer",
+                "Package",
+                "chamfer size",
                 max_value=pcbnew.ToMM(min(edge_limits)),
                 info="adjacent corner chamfers must fit on every package edge",
             )
@@ -829,12 +838,19 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         self._add_center_board_cutout_on_layer(pcbnew.F_Fab, pcbnew.FromMM(0.1))
 
     def _package_outline_points(self, half_width, half_length):
-        graphics = self.parameters["Package graphics"]
-        chamfer = graphics["fab chamfer"]
-        top_left = graphics["top left (A1 corner)"] and chamfer
-        top_right = graphics["top right"] and chamfer
-        bottom_right = graphics["bottom right"] and chamfer
-        bottom_left = graphics["bottom left"] and chamfer
+        package = self.parameters["Package"]
+        chamfer = package["chamfer size"]
+        top_left = (
+            package[PACKAGE_CHAMFER_PARAMETERS["top left (A1 corner)"]]
+            and chamfer
+        )
+        top_right = package[PACKAGE_CHAMFER_PARAMETERS["top right"]] and chamfer
+        bottom_right = (
+            package[PACKAGE_CHAMFER_PARAMETERS["bottom right"]] and chamfer
+        )
+        bottom_left = (
+            package[PACKAGE_CHAMFER_PARAMETERS["bottom left"]] and chamfer
+        )
 
         points = [
             (-half_width + chamfer, -half_length)
@@ -877,7 +893,8 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         self, corner, x_sign, y_sign, half_width, half_length
     ):
         graphics = self.parameters["Package graphics"]
-        standoff = graphics["silk standoff"]
+        package = self.parameters["Package"]
+        standoff = graphics["silkscreen standoff"]
         outer_half_width = half_width + standoff
         outer_half_length = half_length + standoff
         horizontal_run = half_width / 2
@@ -892,7 +909,11 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             y_sign * (outer_half_length - vertical_run),
         )
 
-        chamfer = graphics["fab chamfer"] if graphics[corner] else 0
+        chamfer = (
+            package["chamfer size"]
+            if package[PACKAGE_CHAMFER_PARAMETERS[corner]]
+            else 0
+        )
         if not chamfer:
             return [
                 horizontal_inner,
@@ -944,7 +965,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         graphics = self.parameters["Package graphics"]
         self.draw.SetLayer(pcbnew.F_SilkS)
         self.draw.SetLineThickness(pcbnew.FromMM(0.12))
-        if graphics["silk corners enabled"]:
+        if graphics["silkscreen corners"]:
             for corner, x_sign, y_sign in FEATURE_CORNERS:
                 self.draw.Polyline(
                     self._silkscreen_corner_points(
@@ -955,13 +976,13 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
                         half_length,
                     )
                 )
-        if graphics["pin 1 dot enabled"]:
+        if graphics["pin 1 dot"]:
             self.draw.Circle(
                 -half_width, -half_length, pcbnew.FromMM(0.2), filled=True
             )
 
         # Courtyard rounded to the 0.1 mm size grid, as in KiCad's wizard.
-        margin = package["margin"]
+        margin = package["courtyard margin"]
         self.draw.SetLayer(pcbnew.F_CrtYd)
         courtyard_width = pcbnew.PutOnGridMM((half_width + margin) * 2, 0.1)
         courtyard_length = pcbnew.PutOnGridMM((half_length + margin) * 2, 0.1)
