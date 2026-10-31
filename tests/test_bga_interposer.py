@@ -273,24 +273,35 @@ class BGAInterposerWizardTests(unittest.TestCase):
                 )
                 self.assertEqual(pcbnew.PAD_SHAPE_OVAL, slots[0].GetShape())
 
-    def test_guide_pin_slot_rotation(self):
+    def test_guide_pin_slots_have_independent_rotations(self):
         wizard = self.make_wizard(
             Guide_pin_hole__enabled=False,
             Guide_pin_slots__top_right=True,
-            Guide_pin_slots__rotation=90,
+            Guide_pin_slots__top_right_rotation=90,
+            Guide_pin_slots__bottom_right=True,
+            Guide_pin_slots__bottom_right_rotation=30,
         )
         self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
-        self.assertEqual(90, self.guide_pin_slots(wizard)[0].GetOrientationDegrees())
+        rotations_by_y = {
+            pcbnew.ToMM(slot.GetPosition().y): slot.GetOrientationDegrees()
+            for slot in self.guide_pin_slots(wizard)
+        }
+        self.assertEqual({-11.5: 90, 11.5: 30}, rotations_by_y)
 
     def test_guide_pin_slot_round_trips_through_kicad_format(self):
-        wizard = self.make_wizard(Guide_pin_slots__top_right=True)
+        wizard = self.make_wizard(
+            Guide_pin_slots__top_right=True,
+            Guide_pin_slots__top_right_rotation=37,
+        )
         self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
         with tempfile.TemporaryDirectory(suffix=".pretty") as library:
             plugin = pcbnew.PCB_IO_KICAD_SEXPR()
             plugin.FootprintSave(library, wizard.module)
             loaded = plugin.FootprintLoad(library, wizard.GetValue())
             self.assertIsNotNone(loaded)
-            self.assertEqual(1, len(self.guide_pin_slots(loaded)))
+            slots = self.guide_pin_slots(loaded)
+            self.assertEqual(1, len(slots))
+            self.assertEqual(37, slots[0].GetOrientationDegrees())
 
     def test_guide_pin_slot_cannot_share_hole_corner(self):
         wizard = self.make_wizard(
@@ -339,6 +350,20 @@ class BGAInterposerWizardTests(unittest.TestCase):
         )
         self.assertTrue(wizard.AnyErrors())
         self.assertIn("guide pin slots at", wizard.GetBuildMessages())
+
+    def test_crossing_guide_pin_slots_must_not_overlap(self):
+        self.assertEqual(
+            0,
+            BGAInterposerWizard._segments_distance_squared(
+                ((-2, -2), (2, 2)), ((-2, 2), (2, -2))
+            ),
+        )
+        self.assertGreater(
+            BGAInterposerWizard._segments_distance_squared(
+                ((-2, 0), (2, 0)), ((-2, 2), (2, 2))
+            ),
+            0,
+        )
 
     def test_guide_pin_hole_origin_translates_slots(self):
         wizard = self.make_wizard(

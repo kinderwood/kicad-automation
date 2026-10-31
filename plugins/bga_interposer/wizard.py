@@ -88,6 +88,13 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
 
         for name, _x_sign, _y_sign in FEATURE_CORNERS:
             self.AddParam("Guide pin slots", name, self.uBool, False)
+            self.AddParam(
+                "Guide pin slots",
+                "{} rotation".format(name),
+                self.uDegrees,
+                0,
+                hint="Counterclockwise from a horizontal long axis",
+            )
         self.AddParam(
             "Guide pin slots",
             "width",
@@ -104,14 +111,6 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             min_value=0.01,
             hint="Overall finished NPTH slot length",
         )
-        self.AddParam(
-            "Guide pin slots",
-            "rotation",
-            self.uDegrees,
-            0,
-            hint="Counterclockwise from a horizontal long axis",
-        )
-
         self.AddParam("Pads", "pitch", self.uMM, 1.0, designator="p", min_value=0.01)
         self.AddParam("Pads", "size", self.uMM, 0.5, min_value=0.01)
         self.AddParam("Pads", "columns", self.uInteger, 20, designator="nx", min_value=3)
@@ -243,14 +242,14 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
 
         slot_segments = {}
         if guide_slots["length"] >= guide_slots["width"]:
-            rotation = math.radians(guide_slots["rotation"])
             half_segment = (guide_slots["length"] - guide_slots["width"]) / 2
             slot_radius = guide_slots["width"] / 2
-            x_extent = abs(math.cos(rotation)) * half_segment + slot_radius
-            y_extent = abs(math.sin(rotation)) * half_segment + slot_radius
             for corner in slot_corners:
+                rotation = math.radians(self._slot_rotation(corner))
+                x_extent = abs(math.cos(rotation)) * half_segment + slot_radius
+                y_extent = abs(math.sin(rotation)) * half_segment + slot_radius
                 position = self._feature_position(corner)
-                slot_segments[corner] = self._slot_segment(position)
+                slot_segments[corner] = self._slot_segment(corner, position)
                 feature_half_width = max(
                     feature_half_width, abs(position[0]) + x_extent
                 )
@@ -315,7 +314,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         slot_items = list(slot_segments.items())
         for index, (first_corner, first_segment) in enumerate(slot_items):
             for second_corner, second_segment in slot_items[index + 1 :]:
-                if self._parallel_segments_distance_squared(
+                if self._segments_distance_squared(
                     first_segment, second_segment
                 ) < guide_slots["width"] ** 2:
                     message = "guide pin slots at {} and {} overlap".format(
@@ -416,10 +415,13 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         corners = self._selected_corners("Guide pin hole")
         return self._feature_position(corners[0]) if corners else (0, 0)
 
-    def _slot_segment(self, position):
+    def _slot_rotation(self, corner):
+        return self.parameters["Guide pin slots"]["{} rotation".format(corner)]
+
+    def _slot_segment(self, corner, position):
         slots = self.parameters["Guide pin slots"]
         half_segment = (slots["length"] - slots["width"]) / 2
-        rotation = math.radians(slots["rotation"])
+        rotation = math.radians(self._slot_rotation(corner))
         delta_x = math.cos(rotation) * half_segment
         delta_y = math.sin(rotation) * half_segment
         return (
@@ -450,8 +452,45 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         )
         return cls._distance_squared(point, closest)
 
+    @staticmethod
+    def _cross_product(first, second, third):
+        return (second[0] - first[0]) * (third[1] - first[1]) - (
+            second[1] - first[1]
+        ) * (third[0] - first[0])
+
     @classmethod
-    def _parallel_segments_distance_squared(cls, first, second):
+    def _point_on_segment(cls, point, segment):
+        start, end = segment
+        return (
+            cls._cross_product(start, end, point) == 0
+            and min(start[0], end[0]) <= point[0] <= max(start[0], end[0])
+            and min(start[1], end[1]) <= point[1] <= max(start[1], end[1])
+        )
+
+    @classmethod
+    def _segments_intersect(cls, first, second):
+        first_start, first_end = first
+        second_start, second_end = second
+        first_start_side = cls._cross_product(first_start, first_end, second_start)
+        first_end_side = cls._cross_product(first_start, first_end, second_end)
+        second_start_side = cls._cross_product(second_start, second_end, first_start)
+        second_end_side = cls._cross_product(second_start, second_end, first_end)
+        if (
+            first_start_side * first_end_side < 0
+            and second_start_side * second_end_side < 0
+        ):
+            return True
+        return (
+            cls._point_on_segment(second_start, first)
+            or cls._point_on_segment(second_end, first)
+            or cls._point_on_segment(first_start, second)
+            or cls._point_on_segment(first_end, second)
+        )
+
+    @classmethod
+    def _segments_distance_squared(cls, first, second):
+        if cls._segments_intersect(first, second):
+            return 0
         return min(
             cls._point_segment_distance_squared(first[0], second),
             cls._point_segment_distance_squared(first[1], second),
@@ -541,7 +580,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
                 pcbnew.VECTOR2I(int(slots["length"]), int(slots["width"]))
             )
             pad.SetOrientation(
-                pcbnew.EDA_ANGLE(slots["rotation"], pcbnew.DEGREES_T)
+                pcbnew.EDA_ANGLE(self._slot_rotation(corner), pcbnew.DEGREES_T)
             )
             pad.SetPosition(
                 pcbnew.VECTOR2I(int(slot_x - origin_x), int(slot_y - origin_y))

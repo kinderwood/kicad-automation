@@ -23,9 +23,9 @@ Y from package center. Guide pin slots are disabled by default.
   selection supplies the coordinate signs.
 - `Guide pin hole`: optional round NPTH, exactly one selected corner, hole
   diameter, and optional footprint origin at the guide pin hole center.
-- `Guide pin slots`: independent enable checkbox for each corner plus shared
-  width, overall length, and rotation. Rotation is counterclockwise from a
-  horizontal long axis.
+- `Guide pin slots`: independent enable checkbox and rotation for each corner,
+  plus shared width and overall length. Each rotation is counterclockwise from
+  a horizontal long axis.
 - `Pads`: pitch, ball/pad size, total columns, and total rows.
 - `Pads` also includes a symmetric corner-depopulation depth. A depth of 4
   removes 4, 3, 2, and 1 pads from successive rows at all four corners.
