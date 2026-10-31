@@ -23,7 +23,7 @@ changes on the `Mounting layout` page remain visible while entering offsets.
   field in the sequence documented below.
 - Parameter pages are ordered for entry from a mechanical drawing: `Package`,
   `Mounting layout`, `Guide pin hole`, `Guide pin slots`, `Pads`, `Center pad
-  depop`, `Center board cutout`, and `Package graphics`.
+  depop`, `Center board cutout`, and `Silkscreen`.
 - `Package`: body width, body length, one physical package chamfer size with an
   enable checkbox for each corner, and courtyard margin. The courtyard follows
   the selected package chamfers while preserving clearance at diagonal edges.
@@ -35,9 +35,10 @@ changes on the `Mounting layout` page remain visible while entering offsets.
 - `Guide pin slots`: independent enable checkbox and rotation for each corner,
   plus shared width and overall length. Each rotation is counterclockwise from
   a horizontal long axis.
-- `Pads`: metric pitch, pad size in mils, total columns, and total rows. Pad size
-  defaults to 20 mil; all other physical dimensions remain metric. Pad diameter
-  may equal the pitch for tangent pads but cannot exceed it.
+- `Pads`: metric pitch, pad size in mils, corner depopulation depth, total
+  columns, and total rows, in that entry order. Pad size defaults to 20 mil; all
+  other physical dimensions remain metric. Pad diameter may equal the pitch for
+  tangent pads but cannot exceed it.
 - `Pads` also includes `corner depop depth`, the symmetric corner-depopulation
   depth. A depth of 4 removes 4, 3, 2, and 1 pads from successive rows at all
   four corners.
@@ -45,10 +46,18 @@ changes on the `Mounting layout` page remain visible while entering offsets.
 - `Center board cutout`: optional centered rectangular board cutout with
   independent width, length, and corner radius. It defaults to disabled with
   5 mm × 5 mm dimensions and zero corner radius.
-- `Package graphics`: shared silkscreen-corner toggle, configurable silkscreen
-  standoff, and independent pin-1-dot and reference-designator toggles. Enabled
-  silkscreen corners follow the selected package chamfers. Turning off all three
-  silkscreen elements produces no visible silkscreen.
+- `Silkscreen`: shared corner toggle and corner offset; configurable pin-1-dot
+  enable, radial offset, and diameter; and an independent `ref des` toggle. The
+  dot offset is measured diagonally outward from the top-left package vertex or,
+  when that corner is chamfered, from the chamfer midpoint. Enabled silkscreen
+  corners follow the selected package chamfers. Turning off corners, the pin-1
+  dot, and `ref des` produces no visible silkscreen.
+
+Graphic line widths are copied from the active Footprint Editor defaults when
+the footprint is generated: silkscreen, fabrication, courtyard, and board-cutout
+lines each use their corresponding layer setting. Headless generation uses
+KiCad's native defaults. Generated footprint items store those resolved widths;
+they do not change retroactively when editor preferences are changed later.
 
 For exactly centered pad depopulation, each depopulation dimension must have the
 same parity as its corresponding outer dimension. For example, 20/8 and 19/7

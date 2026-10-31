@@ -136,12 +136,6 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             )
 
         self.AddParam(
-            "Pads", "columns", self.uInteger, 20, designator="nx", min_value=3
-        )
-        self.AddParam(
-            "Pads", "rows", self.uInteger, 20, designator="ny", min_value=3
-        )
-        self.AddParam(
             "Pads", "pitch", self.uMM, 1.0, designator="p", min_value=0.01
         )
         self.AddParam("Pads", "size", self.uMils, 20, min_value=0.01)
@@ -152,6 +146,12 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             0,
             min_value=0,
             hint="Symmetric triangular corner removal; 4 removes 4, 3, 2, 1 pads",
+        )
+        self.AddParam(
+            "Pads", "columns", self.uInteger, 20, designator="nx", min_value=3
+        )
+        self.AddParam(
+            "Pads", "rows", self.uInteger, 20, designator="ny", min_value=3
         )
 
         self.AddParam(
@@ -198,18 +198,27 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             min_value=0,
         )
 
-        self.AddParam("Package graphics", "silkscreen corners", self.uBool, True)
+        self.AddParam("Silkscreen", "corners", self.uBool, True)
         self.AddParam(
-            "Package graphics",
-            "silkscreen standoff",
+            "Silkscreen",
+            "corner offset",
             self.uMM,
             0.12,
             min_value=0,
         )
-        self.AddParam("Package graphics", "pin 1 dot", self.uBool, True)
+        self.AddParam("Silkscreen", "pin 1 dot", self.uBool, True)
         self.AddParam(
-            "Package graphics", "reference designator", self.uBool, True
+            "Silkscreen",
+            "pin 1 dot offset",
+            self.uMM,
+            0.7,
+            min_value=0,
+            hint="Radial distance outward from the top-left package vertex or chamfer midpoint",
         )
+        self.AddParam(
+            "Silkscreen", "pin 1 dot diameter", self.uMM, 0.4, min_value=0.01
+        )
+        self.AddParam("Silkscreen", "ref des", self.uBool, True)
 
     def CheckParameters(self):
         pads = self.parameters["Pads"]
@@ -839,9 +848,19 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         if not self.parameters["Center board cutout"]["enabled"]:
             return
         self._add_center_board_cutout_on_layer(
-            pcbnew.Edge_Cuts, pcbnew.FromMM(0.05)
+            pcbnew.Edge_Cuts, self._line_width(pcbnew.Edge_Cuts)
         )
-        self._add_center_board_cutout_on_layer(pcbnew.F_Fab, pcbnew.FromMM(0.1))
+        self._add_center_board_cutout_on_layer(
+            pcbnew.F_Fab, self._line_width(pcbnew.F_Fab)
+        )
+
+    @staticmethod
+    def _line_width(layer):
+        """Return the active editor default, or KiCad's native fallback."""
+        board = pcbnew.GetBoard()
+        if board is None:
+            board = pcbnew.BOARD()
+        return board.GetDesignSettings().GetLineThickness(layer)
 
     def _package_outline_points(
         self, half_width, half_length, chamfer_size=None
@@ -904,11 +923,11 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
     def _silkscreen_corner_points(
         self, corner, x_sign, y_sign, half_width, half_length
     ):
-        graphics = self.parameters["Package graphics"]
+        silkscreen = self.parameters["Silkscreen"]
         package = self.parameters["Package"]
-        standoff = graphics["silkscreen standoff"]
-        outer_half_width = half_width + standoff
-        outer_half_length = half_length + standoff
+        corner_offset = silkscreen["corner offset"]
+        outer_half_width = half_width + corner_offset
+        outer_half_length = half_length + corner_offset
         horizontal_run = half_width / 2
         vertical_run = half_length / 2
 
@@ -933,7 +952,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
                 vertical_inner,
             ]
 
-        tangent_offset = chamfer + standoff
+        tangent_offset = chamfer + corner_offset
         points = [
             horizontal_inner,
             (
@@ -952,6 +971,18 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             points = points[:-1]
         return points
 
+    def _pin_1_dot_position(self, half_width, half_length):
+        package = self.parameters["Package"]
+        silkscreen = self.parameters["Silkscreen"]
+        chamfer = 0
+        if package[PACKAGE_CHAMFER_PARAMETERS["top left (A1 corner)"]]:
+            chamfer = package["chamfer size"]
+
+        anchor_x = -half_width + chamfer / 2
+        anchor_y = -half_length + chamfer / 2
+        offset_component = silkscreen["pin 1 dot offset"] / math.sqrt(2)
+        return anchor_x - offset_component, anchor_y - offset_component
+
     def BuildThisFootprint(self):
         self._add_pads()
         self._add_guide_pin_hole()
@@ -965,7 +996,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
 
         # Fabrication outline with independently selectable corner chamfers.
         self.draw.SetLayer(pcbnew.F_Fab)
-        self.draw.SetLineThickness(pcbnew.FromMM(0.1))
+        self.draw.SetLineThickness(self._line_width(pcbnew.F_Fab))
         self.draw.Polyline(self._package_outline_points(half_width, half_length))
 
         # The functional board cutout and matching fabrication drawing share
@@ -973,11 +1004,11 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         self._add_center_board_cutout()
 
         # Sparse silkscreen corners follow the fabrication chamfers at the
-        # configured standoff distance.
-        graphics = self.parameters["Package graphics"]
+        # configured offset distance.
+        silkscreen = self.parameters["Silkscreen"]
         self.draw.SetLayer(pcbnew.F_SilkS)
-        self.draw.SetLineThickness(pcbnew.FromMM(0.12))
-        if graphics["silkscreen corners"]:
+        self.draw.SetLineThickness(self._line_width(pcbnew.F_SilkS))
+        if silkscreen["corners"]:
             for corner, x_sign, y_sign in FEATURE_CORNERS:
                 self.draw.Polyline(
                     self._silkscreen_corner_points(
@@ -988,9 +1019,15 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
                         half_length,
                     )
                 )
-        if graphics["pin 1 dot"]:
+        if silkscreen["pin 1 dot"]:
+            pin_1_dot_x, pin_1_dot_y = self._pin_1_dot_position(
+                half_width, half_length
+            )
             self.draw.Circle(
-                -half_width, -half_length, pcbnew.FromMM(0.2), filled=True
+                pin_1_dot_x,
+                pin_1_dot_y,
+                int(silkscreen["pin 1 dot diameter"] / 2),
+                filled=True,
             )
 
         # Courtyard dimensions are rounded to the 0.1 mm size grid, as in
@@ -1014,7 +1051,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
                 + y_margin
                 - math.sqrt(2) * effective_margin
             )
-        self.draw.SetLineThickness(pcbnew.FromMM(0.05))
+        self.draw.SetLineThickness(self._line_width(pcbnew.F_CrtYd))
         self.draw.Polyline(
             self._package_outline_points(
                 courtyard_half_width,
@@ -1026,7 +1063,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         text_size = self.GetTextSize()
         text_y = half_length + text_size
         self.draw.Value(0, text_y, text_size)
-        if graphics["reference designator"]:
+        if silkscreen["ref des"]:
             self.draw.Reference(0, -text_y, text_size)
         else:
             self.module.Reference().SetVisible(False)
