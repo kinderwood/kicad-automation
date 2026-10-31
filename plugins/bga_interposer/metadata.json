@@ -2,7 +2,7 @@
   "$schema": "https://go.kicad.org/pcm/schemas/v1",
   "name": "BGA Interposer Wizard",
   "description": "Generate BGA interposer footprints with depopulation, board cutouts, and guide features",
-  "description_full": "A KiCad 9 and 10 footprint wizard for BGA-style interposers, based on KiCad's bundled BGA wizard. Overall rows and columns and center-depopulation rows and columns are independently configurable, with optional symmetric corner depopulation. The package supports independently selected corner chamfers, which are followed by the courtyard. Silkscreen controls provide configurable corner offset, pin-1-dot placement and diameter, and corner, pin-1-dot, and reference-designator toggles. Graphic line widths inherit the active Footprint Editor layer defaults. An optional centered rectangular board cutout supports independent width, length, and corner radius and produces matching Edge.Cuts and F.Fab geometry. Pad size is entered in mils and checked against pitch while the interposer geometry remains metric. Electrical lands carry KiCad's BGA fabrication property. Optional mask-only NPTH guide features include one round guide pin hole and independently selectable and rotatable oblong guide pin slots. The footprint origin can be the package center or guide pin hole center. Pad designators retain their full-grid locations across omitted positions.",
+  "description_full": "A KiCad 9 and 10 footprint wizard for BGA-style interposers, based on KiCad's bundled BGA wizard. Overall rows and columns and center-depopulation rows and columns are independently configurable, with optional symmetric corner depopulation. The package supports independently selected corner chamfers, which are followed by the courtyard. Silkscreen controls provide guarded corner offset and pin-1-dot geometry plus corner, pin-1-dot, and reference-designator toggles. Graphic line widths inherit the active Footprint Editor layer defaults. An optional centered rectangular board cutout supports independent width, length, and corner radius and produces matching Edge.Cuts and F.Fab geometry. Pad size is entered in mils and checked against pitch while the interposer geometry remains metric. Electrical lands carry KiCad's BGA fabrication property, with optional solder paste for soldered or pogo-contact use. Optional NPTH guide features include one round guide pin hole and independently selectable and rotatable oblong guide pin slots. The footprint origin can be the package center or guide pin hole center. Pad designators retain their full-grid locations across omitted positions.",
   "identifier": "com.github.kinderwood.kicad-automation.bga-interposer",
   "type": "plugin",
   "author": {
@@ -28,7 +28,7 @@
   ],
   "versions": [
     {
-      "version": "0.13.0",
+      "version": "0.14.0",
       "status": "stable",
       "kicad_version": "9.0",
       "kicad_version_max": "10.0"

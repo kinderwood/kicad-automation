@@ -139,6 +139,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             "Pads", "pitch", self.uMM, 1.0, designator="p", min_value=0.01
         )
         self.AddParam("Pads", "size", self.uMils, 20, min_value=0.01)
+        self.AddParam("Pads", "solder paste", self.uBool, True)
         self.AddParam(
             "Pads",
             "corner depop depth",
@@ -225,6 +226,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         center_depopulation = self.parameters["Center pad depop"]
         center_cutout = self.parameters["Center board cutout"]
         package = self.parameters["Package"]
+        silkscreen = self.parameters["Silkscreen"]
         guide_hole = self.parameters["Guide pin hole"]
         guide_slots = self.parameters["Guide pin slots"]
 
@@ -244,7 +246,10 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             name: package[PACKAGE_CHAMFER_PARAMETERS[name]]
             for name, _x_sign, _y_sign in FEATURE_CORNERS
         }
-        if any(chamfered_corners.values()):
+        has_chamfered_corners = bool(
+            package["chamfer size"] and any(chamfered_corners.values())
+        )
+        if has_chamfered_corners:
             edge_limits = []
             for first, second, edge_length in (
                 ("top left (A1 corner)", "top right", package["width"]),
@@ -262,6 +267,76 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
                 "chamfer size",
                 max_value=pcbnew.ToMM(min(edge_limits)),
                 info="adjacent corner chamfers must fit on every package edge",
+            )
+
+        silk_line_width = self._line_width(pcbnew.F_SilkS)
+        silk_half_width = silk_line_width / 2
+        if silkscreen["corners"]:
+            minimum_corner_offset = silk_half_width
+            if has_chamfered_corners:
+                minimum_corner_offset = max(
+                    minimum_corner_offset, silk_line_width / math.sqrt(2)
+                )
+
+            half_width = package["width"] / 2
+            half_length = package["length"] / 2
+            margin = package["courtyard margin"]
+            courtyard_half_width = (
+                pcbnew.PutOnGridMM((half_width + margin) * 2, 0.1) / 2
+            )
+            courtyard_half_length = (
+                pcbnew.PutOnGridMM((half_length + margin) * 2, 0.1) / 2
+            )
+            maximum_corner_offset = min(
+                courtyard_half_width - half_width,
+                courtyard_half_length - half_length,
+            ) - silk_half_width
+
+            if has_chamfered_corners:
+                maximum_corner_offset = min(
+                    maximum_corner_offset,
+                    package["width"] / 4 - package["chamfer size"],
+                    package["length"] / 4 - package["chamfer size"],
+                )
+
+            self.CheckParam(
+                "Silkscreen",
+                "corner offset",
+                min_value=pcbnew.ToMM(minimum_corner_offset),
+                max_value=pcbnew.ToMM(maximum_corner_offset),
+                info="corner marks must clear the package and fit inside the courtyard",
+            )
+
+        if silkscreen["pin 1 dot"]:
+            dot_radius = silkscreen["pin 1 dot diameter"] / 2
+            minimum_dot_offset = dot_radius
+            if silkscreen["corners"]:
+                if (
+                    package["chamfer size"]
+                    and chamfered_corners["top left (A1 corner)"]
+                ):
+                    corner_mark_offset = silkscreen["corner offset"] / math.sqrt(2)
+                else:
+                    corner_mark_offset = silkscreen["corner offset"] * math.sqrt(2)
+                minimum_dot_offset = max(
+                    minimum_dot_offset,
+                    corner_mark_offset + dot_radius + silk_half_width,
+                )
+
+            self.CheckParam(
+                "Silkscreen",
+                "pin 1 dot offset",
+                min_value=pcbnew.ToMM(minimum_dot_offset),
+                max_value=pcbnew.ToMM(
+                    min(package["width"], package["length"]) / 2
+                ),
+                info="pin 1 dot must remain outside the package and corner mark",
+            )
+            self.CheckParam(
+                "Silkscreen",
+                "pin 1 dot diameter",
+                max_value=pcbnew.ToMM(2 * silkscreen["pin 1 dot offset"]),
+                info="pin 1 dot must remain outside the package outline",
             )
 
         self.CheckParam(
@@ -698,6 +773,10 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
 
         prototype = PA.PadMaker(self.module).SMTRoundPad(pads["size"])
         prototype.SetProperty(pcbnew.PAD_PROP_BGA)
+        if not pads["solder paste"]:
+            layers = prototype.GetLayerSet()
+            layers.RemoveLayer(pcbnew.F_Paste)
+            prototype.SetLayerSet(layers)
         first_x = -((columns - 1) * pitch) / 2
         first_y = -((rows - 1) * pitch) / 2
 
@@ -758,8 +837,10 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
 
     @staticmethod
     def _npth_layer_set():
-        """Return mask-only layers for non-electrical guide features."""
-        layers = pcbnew.LSET()
+        """Return KiCad's standard all-copper-and-mask NPTH layer set."""
+        # The pad and drill are the same size, so this creates no annular
+        # copper. Official KiCad library NPTH footprints use *.Cu + *.Mask.
+        layers = pcbnew.LSET(pcbnew.LSET.AllCuMask())
         layers.AddLayer(pcbnew.F_Mask)
         layers.AddLayer(pcbnew.B_Mask)
         return layers
@@ -1092,4 +1173,11 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         extra_reference.SetText("${REFERENCE}")
         self.module.Add(extra_reference)
 
+        if hasattr(self.module, "SetLibDescription"):
+            self.module.SetLibDescription(
+                "BGA interposer with centered pad depopulation and optional "
+                "guide features"
+            )
+        if hasattr(self.module, "SetKeywords"):
+            self.module.SetKeywords("BGA interposer land grid array")
         self.module.SetAttributes(pcbnew.FP_SMD)

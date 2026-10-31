@@ -35,11 +35,13 @@ changes on the `Guide feat placement` page remain visible while entering offsets
 - `Guide pin slots`: independent enable checkbox and rotation for each corner,
   plus shared width and overall length. Each rotation is counterclockwise from
   a horizontal long axis.
-- `Pads`: metric pitch, pad size in mils, corner depopulation depth, total
-  columns, and total rows, in that entry order. Pad size defaults to 20 mil; all
-  other physical dimensions remain metric. Pad diameter may equal the pitch for
-  tangent pads but cannot exceed it. Electrical lands carry KiCad's `BGA pad`
-  fabrication property.
+- `Pads`: metric pitch, pad size in mils, optional solder paste, corner
+  depopulation depth, total columns, and total rows, in that entry order. Pad
+  size defaults to 20 mil; all other physical dimensions remain metric. Pad
+  diameter may equal the pitch for tangent pads but cannot exceed it. Electrical
+  lands always have front copper and mask and carry KiCad's `BGA pad`
+  fabrication property. Turn off solder paste for pogo-contact footprints;
+  leave it on for soldered interposers.
 - `Pads` also includes `corner depop depth`, the symmetric corner-depopulation
   depth. A depth of 4 removes 4, 3, 2, and 1 pads from successive rows at all
   four corners.
@@ -51,7 +53,11 @@ changes on the `Guide feat placement` page remain visible while entering offsets
   enable, radial offset, and diameter; and an independent `ref des` toggle. The
   dot offset is measured diagonally outward from the top-left package vertex or,
   when that corner is chamfered, from the chamfer midpoint. Enabled silkscreen
-  corners follow the selected package chamfers. Turning off corners, the pin-1
+  corners follow the selected package chamfers. Following KiCad's bundled BGA
+  wizard, each sparse corner leg spans one quarter of its full package edge;
+  this is a drawing convention rather than another package dimension. Corner
+  strokes must clear the package and fit inside the courtyard, and the dot must
+  clear both the package and the corner mark. Turning off corners, the pin-1
   dot, and `ref des` produces no visible silkscreen.
 
 Graphic line widths are copied from the active Footprint Editor defaults when
@@ -79,10 +85,11 @@ the origin translates the entire footprint without changing the relative
 package, pad, outline, or courtyard geometry. Slots cannot be selected as the
 footprint origin.
 
-The guide pin hole and slots are non-electrical NPTH features with no copper
-layers. Their padstacks contain front and back solder-mask openings only; KiCad's
-normal drilled-hole copper-clearance rules still apply. Their fabrication
-property remains `None`, as NPTH already identifies their mechanical purpose.
+The guide pin hole and slots are non-electrical NPTH features using KiCad's
+standard `*.Cu` and `*.Mask` layer set. Pad size exactly equals drill size, so
+there is no annular copper; the layer set lets KiCad apply its normal drilled-hole
+clearance behavior. Their fabrication property remains `None`, as `Mechanical`
+is intended for plated mechanical terminals rather than NPTH tooling features.
 
 ## Supported KiCad versions
 
@@ -102,3 +109,6 @@ folder. On Linux this is normally one of:
 
 Restart KiCad, open the Footprint Editor, choose **Create Footprint from
 Wizard**, and select **BGA Interposer**.
+
+Implementation invariants and compatibility notes are kept in
+[`DESIGN.md`](DESIGN.md).

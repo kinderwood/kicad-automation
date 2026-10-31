@@ -70,12 +70,13 @@ class BGAInterposerWizardTests(unittest.TestCase):
             if isinstance(item, pcbnew.PCB_SHAPE) and item.GetLayer() == layer
         ]
 
-    def assert_mask_only_npth(self, pad):
+    def assert_standard_npth(self, pad):
         self.assertEqual(pcbnew.PAD_PROP_NONE, pad.GetProperty())
-        self.assertFalse(pad.IsOnLayer(pcbnew.F_Cu))
-        self.assertFalse(pad.IsOnLayer(pcbnew.B_Cu))
+        self.assertTrue(pad.IsOnLayer(pcbnew.F_Cu))
+        self.assertTrue(pad.IsOnLayer(pcbnew.B_Cu))
         self.assertTrue(pad.IsOnLayer(pcbnew.F_Mask))
         self.assertTrue(pad.IsOnLayer(pcbnew.B_Mask))
+        self.assertEqual(pad.GetSize(), pad.GetDrillSize())
 
     def test_default_20_by_20_with_8_by_8_center_depopulation(self):
         wizard = self.make_wizard()
@@ -106,7 +107,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
             pcbnew.VECTOR2I(pcbnew.FromMM(-11.5), pcbnew.FromMM(-11.5)),
             holes[0].GetPosition(),
         )
-        self.assert_mask_only_npth(holes[0])
+        self.assert_standard_npth(holes[0])
         self.assertEqual(337, len(list(wizard.module.Pads())))
         self.assertEqual("mils", wizard.GetParam("Pads", "size").units)
         self.assertEqual(
@@ -118,9 +119,19 @@ class BGAInterposerWizardTests(unittest.TestCase):
             ],
         )
         self.assertEqual(pcbnew.FromMils(20), pads["A1"].GetSize().x)
+        self.assertTrue(wizard.parameters["Pads"]["solder paste"])
+        self.assertTrue(all(pad.IsOnLayer(pcbnew.F_Paste) for pad in pads.values()))
         self.assertTrue(
             all(pad.GetProperty() == pcbnew.PAD_PROP_BGA for pad in pads.values())
         )
+        self.assertEqual(
+            "BGA interposer with centered pad depopulation and optional guide features",
+            wizard.module.GetLibDescription(),
+        )
+        self.assertEqual(
+            "BGA interposer land grid array", wizard.module.GetKeywords()
+        )
+        self.assertEqual(pcbnew.FP_SMD, wizard.module.GetAttributes())
         self.assertTrue(wizard.parameters["Guide pin hole"]["enabled"])
         self.assertTrue(
             wizard.parameters["Guide pin hole"]["top left (A1 corner)"]
@@ -183,7 +194,14 @@ class BGAInterposerWizardTests(unittest.TestCase):
                 "bottom left",
                 "bottom left rotation",
             ],
-            "Pads": ["pitch", "size", "corner depop depth", "columns", "rows"],
+            "Pads": [
+                "pitch",
+                "size",
+                "solder paste",
+                "corner depop depth",
+                "columns",
+                "rows",
+            ],
             "Center pad depop": ["columns", "rows"],
             "Center board cutout": [
                 "enabled",
@@ -250,7 +268,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
 
     def test_pin_1_dot_geometry_is_configurable(self):
         chamfered = self.make_wizard(
-            Silkscreen__pin_1_dot_offset=0,
+            Silkscreen__pin_1_dot_offset=0.7,
             Silkscreen__pin_1_dot_diameter=1,
         )
         self.assertFalse(chamfered.AnyErrors(), chamfered.GetBuildMessages())
@@ -259,8 +277,13 @@ class BGAInterposerWizardTests(unittest.TestCase):
             for shape in self.shapes_on_layer(chamfered, pcbnew.F_SilkS)
             if shape.GetShape() == pcbnew.SHAPE_T_CIRCLE
         )
-        self.assertEqual(pcbnew.FromMM(-12.5), chamfered_dot.GetCenter().x)
-        self.assertEqual(pcbnew.FromMM(-12.5), chamfered_dot.GetCenter().y)
+        expected_chamfered_center = pcbnew.FromMM(-12.5 - 0.7 / math.sqrt(2))
+        self.assertAlmostEqual(
+            expected_chamfered_center, chamfered_dot.GetCenter().x, delta=1
+        )
+        self.assertAlmostEqual(
+            expected_chamfered_center, chamfered_dot.GetCenter().y, delta=1
+        )
         self.assertEqual(
             pcbnew.FromMM(1), chamfered_dot.GetBoundingBox().GetWidth()
         )
@@ -268,7 +291,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
         square_corner = self.make_wizard(
             **{
                 "Package__chamfer_top_left_(A1)": False,
-                "Silkscreen__pin_1_dot_offset": 0,
+                "Silkscreen__pin_1_dot_offset": 0.7,
             }
         )
         self.assertFalse(
@@ -279,8 +302,25 @@ class BGAInterposerWizardTests(unittest.TestCase):
             for shape in self.shapes_on_layer(square_corner, pcbnew.F_SilkS)
             if shape.GetShape() == pcbnew.SHAPE_T_CIRCLE
         )
-        self.assertEqual(pcbnew.FromMM(-13), square_corner_dot.GetCenter().x)
-        self.assertEqual(pcbnew.FromMM(-13), square_corner_dot.GetCenter().y)
+        expected_square_center = pcbnew.FromMM(-13 - 0.7 / math.sqrt(2))
+        self.assertAlmostEqual(
+            expected_square_center, square_corner_dot.GetCenter().x, delta=1
+        )
+        self.assertAlmostEqual(
+            expected_square_center, square_corner_dot.GetCenter().y, delta=1
+        )
+
+    def test_pin_1_dot_must_clear_package_and_corner_mark(self):
+        inside_corner_mark = self.make_wizard(Silkscreen__pin_1_dot_offset=0.2)
+        self.assertTrue(inside_corner_mark.AnyErrors())
+        self.assertIn(
+            "outside the package and corner mark",
+            inside_corner_mark.GetBuildMessages(),
+        )
+
+        oversized = self.make_wizard(Silkscreen__pin_1_dot_diameter=100)
+        self.assertTrue(oversized.AnyErrors())
+        self.assertIn("outside the package outline", oversized.GetBuildMessages())
 
     def test_graphic_line_widths_follow_active_editor_defaults(self):
         widths = {
@@ -401,7 +441,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
         self.assertAlmostEqual(pcbnew.FromMM(0.25), clearance, delta=1)
 
     def test_silkscreen_corner_offset_is_configurable(self):
-        wizard = self.make_wizard(Silkscreen__corner_offset=1)
+        wizard = self.make_wizard(Silkscreen__corner_offset=0.15)
         self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
         segments = [
             shape
@@ -413,10 +453,39 @@ class BGAInterposerWizardTests(unittest.TestCase):
             for segment in segments
             for point in (segment.GetStart(), segment.GetEnd())
         ]
-        self.assertEqual(pcbnew.FromMM(-14), min(point.x for point in points))
-        self.assertEqual(pcbnew.FromMM(14), max(point.x for point in points))
-        self.assertEqual(pcbnew.FromMM(-14), min(point.y for point in points))
-        self.assertEqual(pcbnew.FromMM(14), max(point.y for point in points))
+        self.assertEqual(pcbnew.FromMM(-13.15), min(point.x for point in points))
+        self.assertEqual(pcbnew.FromMM(13.15), max(point.x for point in points))
+        self.assertEqual(pcbnew.FromMM(-13.15), min(point.y for point in points))
+        self.assertEqual(pcbnew.FromMM(13.15), max(point.y for point in points))
+
+        clips_package = self.make_wizard(Silkscreen__corner_offset=0.01)
+        self.assertTrue(clips_package.AnyErrors())
+        self.assertIn("clear the package", clips_package.GetBuildMessages())
+
+        exceeds_courtyard = self.make_wizard(Silkscreen__corner_offset=0.21)
+        self.assertTrue(exceeds_courtyard.AnyErrors())
+        self.assertIn("fit inside the courtyard", exceeds_courtyard.GetBuildMessages())
+
+    def test_solder_paste_can_be_disabled_for_pogo_use(self):
+        wizard = self.make_wizard(Pads__solder_paste=False)
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        pads = self.pads_by_name(wizard)
+        self.assertTrue(pads)
+        for pad in pads.values():
+            self.assertTrue(pad.IsOnLayer(pcbnew.F_Cu))
+            self.assertTrue(pad.IsOnLayer(pcbnew.F_Mask))
+            self.assertFalse(pad.IsOnLayer(pcbnew.F_Paste))
+            self.assertEqual(pcbnew.PAD_PROP_BGA, pad.GetProperty())
+
+        with tempfile.TemporaryDirectory(suffix=".pretty") as library:
+            plugin = pcbnew.PCB_IO_KICAD_SEXPR()
+            plugin.FootprintSave(library, wizard.module)
+            loaded = plugin.FootprintLoad(library, wizard.GetValue())
+            loaded_pads = [pad for pad in loaded.Pads() if str(pad.GetName())]
+            self.assertTrue(loaded_pads)
+            self.assertTrue(
+                all(not pad.IsOnLayer(pcbnew.F_Paste) for pad in loaded_pads)
+            )
 
     def test_pad_size_cannot_exceed_pitch(self):
         near_tangent = self.make_wizard(Pads__size=39)
@@ -505,7 +574,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
             )
             loaded_holes = self.npth_pads(loaded)
             self.assertEqual(1, len(loaded_holes))
-            self.assert_mask_only_npth(loaded_holes[0])
+            self.assert_standard_npth(loaded_holes[0])
 
     def test_each_guide_pin_hole_corner(self):
         expected_positions = {
@@ -621,7 +690,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
                     slots[0].GetDrillSize(),
                 )
                 self.assertEqual(pcbnew.PAD_SHAPE_OVAL, slots[0].GetShape())
-                self.assert_mask_only_npth(slots[0])
+                self.assert_standard_npth(slots[0])
 
     def test_guide_pin_slots_have_independent_rotations(self):
         wizard = self.make_wizard(
@@ -652,7 +721,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
             slots = self.guide_pin_slots(loaded)
             self.assertEqual(1, len(slots))
             self.assertEqual(37, slots[0].GetOrientationDegrees())
-            self.assert_mask_only_npth(slots[0])
+            self.assert_standard_npth(slots[0])
 
     def test_guide_pin_slot_cannot_share_hole_corner(self):
         wizard = self.make_wizard(

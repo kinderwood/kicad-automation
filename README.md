@@ -17,12 +17,22 @@ KiCad 9.0 through 10.0.
 See [`plugins/bga_interposer/README.md`](plugins/bga_interposer/README.md) for
 parameters and manual installation instructions.
 
+## Documentation
+
+- [`AGENTS.md`](AGENTS.md) contains the concise repository workflow and release
+  checks for future development sessions.
+- [`docs/adding-tools.md`](docs/adding-tools.md) describes the minimal structure
+  for adding another tool.
+- Each tool owns its user guide and any durable implementation notes. For this
+  wizard, see [`plugins/bga_interposer/DESIGN.md`](plugins/bga_interposer/DESIGN.md).
+
 ## Repository layout
 
 ```text
 plugins/                 KiCad plugins and footprint wizards
 scripts/                 Build, packaging, and test automation
 tests/                   KiCad API integration tests
+docs/                    Lightweight contributor guidance
 .github/workflows/       Continuous delivery workflows
 ```
 
