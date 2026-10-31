@@ -1,4 +1,4 @@
-name: Publish KiCad plugin repository
+name: Publish KiCad automation repository
 
 on:
   push:

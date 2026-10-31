@@ -1,8 +1,8 @@
-"""Centered-void BGA footprint wizard for KiCad 10.
+"""BGA interposer footprint wizard for KiCad 10.
 
 The drawing and parameter conventions intentionally follow KiCad's bundled
 ``bga_wizard.py``.  Pad names retain their full-grid row and column locations,
-so removing the center does not renumber the surrounding balls.
+so omitting the center opening does not renumber the surrounding balls.
 """
 
 from __future__ import division
@@ -16,14 +16,14 @@ import PadArray as PA
 BGA_ROW_ALPHABET = "ABCDEFGHJKLMNPRTUVWY"
 
 
-class CenterVoidBGAWizard(FootprintWizardBase.FootprintWizard):
-    """Generate a BGA grid with a rectangular group of center balls omitted."""
+class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
+    """Generate a BGA-style interposer with a centered rectangular opening."""
 
     def GetName(self):
-        return "BGA, Center Void"
+        return "BGA Interposer"
 
     def GetDescription(self):
-        return "Ball Grid Array with a centered rectangular pad void"
+        return "BGA-style interposer with a centered rectangular opening"
 
     def GenerateParameterList(self):
         self.AddParam("Pads", "pitch", self.uMM, 1.0, designator="p", min_value=0.01)
@@ -32,20 +32,20 @@ class CenterVoidBGAWizard(FootprintWizardBase.FootprintWizard):
         self.AddParam("Pads", "rows", self.uInteger, 20, designator="ny", min_value=3)
 
         self.AddParam(
-            "Center void",
+            "Center opening",
             "columns",
             self.uInteger,
             8,
-            designator="vx",
+            designator="ox",
             min_value=0,
             hint="Number of omitted pad columns in the centered rectangle",
         )
         self.AddParam(
-            "Center void",
+            "Center opening",
             "rows",
             self.uInteger,
             8,
-            designator="vy",
+            designator="oy",
             min_value=0,
             hint="Number of omitted pad rows in the centered rectangle",
         )
@@ -63,36 +63,36 @@ class CenterVoidBGAWizard(FootprintWizardBase.FootprintWizard):
 
     def CheckParameters(self):
         pads = self.parameters["Pads"]
-        void = self.parameters["Center void"]
+        opening = self.parameters["Center opening"]
 
         columns = pads["columns"]
         rows = pads["rows"]
-        void_columns = void["columns"]
-        void_rows = void["rows"]
+        opening_columns = opening["columns"]
+        opening_rows = opening["rows"]
 
-        # A non-empty internal void must leave at least one row/column on every
+        # A non-empty opening must leave at least one row/column on every
         # side. Matching parity is what puts its geometric center at (0, 0).
-        self.CheckParam("Center void", "columns", max_value=max(0, columns - 2))
-        self.CheckParam("Center void", "rows", max_value=max(0, rows - 2))
+        self.CheckParam("Center opening", "columns", max_value=max(0, columns - 2))
+        self.CheckParam("Center opening", "rows", max_value=max(0, rows - 2))
 
-        void_columns_param = self.GetParam("Center void", "columns")
-        void_rows_param = self.GetParam("Center void", "rows")
+        opening_columns_param = self.GetParam("Center opening", "columns")
+        opening_rows_param = self.GetParam("Center opening", "rows")
 
-        if (void_columns == 0) != (void_rows == 0):
-            message = "both void dimensions must be zero, or both must be positive"
-            void_columns_param.AddError(message)
-            void_rows_param.AddError(message)
+        if (opening_columns == 0) != (opening_rows == 0):
+            message = "both opening dimensions must be zero, or both must be positive"
+            opening_columns_param.AddError(message)
+            opening_rows_param.AddError(message)
 
-        if void_columns and (columns - void_columns) % 2:
-            void_columns_param.AddError(
-                "outer and void column counts must have matching parity",
-                "required for a void centered at the origin",
+        if opening_columns and (columns - opening_columns) % 2:
+            opening_columns_param.AddError(
+                "outer and opening column counts must have matching parity",
+                "required for an opening centered at the origin",
             )
 
-        if void_rows and (rows - void_rows) % 2:
-            void_rows_param.AddError(
-                "outer and void row counts must have matching parity",
-                "required for a void centered at the origin",
+        if opening_rows and (rows - opening_rows) % 2:
+            opening_rows_param.AddError(
+                "outer and opening row counts must have matching parity",
+                "required for an opening centered at the origin",
             )
 
         minimum_width = pcbnew.ToMM(pads["pitch"] * columns)
@@ -112,19 +112,19 @@ class CenterVoidBGAWizard(FootprintWizardBase.FootprintWizard):
 
     def GetValue(self):
         pads = self.parameters["Pads"]
-        void = self.parameters["Center void"]
+        opening = self.parameters["Center opening"]
         package = self.parameters["Package"]
-        pin_count = pads["rows"] * pads["columns"] - void["rows"] * void["columns"]
+        pin_count = pads["rows"] * pads["columns"] - opening["rows"] * opening["columns"]
 
         return (
-            "BGA-{pins}_{columns}x{rows}_Void{void_columns}x{void_rows}_"
+            "BGA-Interposer-{pins}_{columns}x{rows}_Opening{opening_columns}x{opening_rows}_"
             "{width:g}x{length:g}mm_P{pitch:g}mm"
         ).format(
             pins=pin_count,
             columns=pads["columns"],
             rows=pads["rows"],
-            void_columns=void["columns"],
-            void_rows=void["rows"],
+            opening_columns=opening["columns"],
+            opening_rows=opening["rows"],
             width=pcbnew.ToMM(package["width"]),
             length=pcbnew.ToMM(package["length"]),
             pitch=pcbnew.ToMM(pads["pitch"]),
@@ -142,19 +142,19 @@ class CenterVoidBGAWizard(FootprintWizardBase.FootprintWizard):
         return result
 
     @staticmethod
-    def _inside_void(column, row, columns, rows, void_columns, void_rows):
-        if not void_columns or not void_rows:
+    def _inside_opening(column, row, columns, rows, opening_columns, opening_rows):
+        if not opening_columns or not opening_rows:
             return False
-        first_column = (columns - void_columns) // 2
-        first_row = (rows - void_rows) // 2
+        first_column = (columns - opening_columns) // 2
+        first_row = (rows - opening_rows) // 2
         return (
-            first_column <= column < first_column + void_columns
-            and first_row <= row < first_row + void_rows
+            first_column <= column < first_column + opening_columns
+            and first_row <= row < first_row + opening_rows
         )
 
     def _add_pads(self):
         pads = self.parameters["Pads"]
-        void = self.parameters["Center void"]
+        opening = self.parameters["Center opening"]
         columns = pads["columns"]
         rows = pads["rows"]
         pitch = pads["pitch"]
@@ -165,13 +165,13 @@ class CenterVoidBGAWizard(FootprintWizardBase.FootprintWizard):
 
         for row in range(rows):
             for column in range(columns):
-                if self._inside_void(
+                if self._inside_opening(
                     column,
                     row,
                     columns,
                     rows,
-                    void["columns"],
-                    void["rows"],
+                    opening["columns"],
+                    opening["rows"],
                 ):
                     continue
 
