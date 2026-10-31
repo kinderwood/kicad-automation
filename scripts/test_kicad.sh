@@ -1,19 +1,31 @@
 #!/bin/sh
 set -eu
 
-appdir=${KICAD_APPDIR:-/workspace/shared/kicad-10.0.8/AppDir}
-plugin_dir="$appdir/share/kicad/scripting/plugins"
+if [ "${KICAD_USE_SYSTEM:-0}" = "1" ]; then
+    plugin_dir=${KICAD_WIZARD_DIR:-/usr/share/kicad/scripting/plugins}
+
+    run_kicad_python() {
+        python3 "$@"
+    }
+else
+    appdir=${KICAD_APPDIR:-/workspace/shared/kicad-10.0.8/AppDir}
+    plugin_dir="$appdir/share/kicad/scripting/plugins"
+
+    run_kicad_python() {
+        "$appdir/AppRun" python3.11 "$@"
+    }
+fi
 
 KICAD_WIZARD_DIR="$plugin_dir" \
-    "$appdir/AppRun" python3.11 -m unittest discover -s tests -v
+    run_kicad_python -m unittest discover -s tests -v
 
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' EXIT
 
-python3 scripts/build_pcm.py \
+plugin_archive=$(python3 scripts/build_pcm.py \
     --base-url https://example.test/kicad \
-    --output-dir "$test_root/dist"
+    --output-dir "$test_root/dist")
 
-"$appdir/AppRun" python3.11 scripts/test_kicad_loader.py \
-    "$test_root/dist/bga-interposer-0.3.0.zip" \
+run_kicad_python scripts/test_kicad_loader.py \
+    "$plugin_archive" \
     --builtin-plugins "$plugin_dir"

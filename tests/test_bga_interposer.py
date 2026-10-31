@@ -35,11 +35,28 @@ class BGAInterposerWizardTests(unittest.TestCase):
         }
 
     @staticmethod
-    def mounting_holes(wizard):
+    def npth_pads(wizard_or_footprint):
+        footprint = getattr(wizard_or_footprint, "module", wizard_or_footprint)
         return [
             pad
-            for pad in wizard.module.Pads()
+            for pad in footprint.Pads()
             if pad.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH
+        ]
+
+    @classmethod
+    def guide_pin_holes(cls, wizard):
+        return [
+            pad
+            for pad in cls.npth_pads(wizard)
+            if pad.GetDrillShape() == pcbnew.PAD_DRILL_SHAPE_CIRCLE
+        ]
+
+    @classmethod
+    def guide_pin_slots(cls, wizard):
+        return [
+            pad
+            for pad in cls.npth_pads(wizard)
+            if pad.GetDrillShape() == pcbnew.PAD_DRILL_SHAPE_OBLONG
         ]
 
     def test_default_20_by_20_with_8_by_8_opening(self):
@@ -64,7 +81,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
         self.assertEqual(pcbnew.FromMM(-9.5), min(p.y for p in positions))
         self.assertEqual(pcbnew.FromMM(9.5), max(p.y for p in positions))
 
-        holes = self.mounting_holes(wizard)
+        holes = self.guide_pin_holes(wizard)
         self.assertEqual(1, len(holes))
         self.assertEqual(
             pcbnew.VECTOR2I(pcbnew.FromMM(-11.5), pcbnew.FromMM(-11.5)),
@@ -79,7 +96,14 @@ class BGAInterposerWizardTests(unittest.TestCase):
     def test_parameter_pages_follow_drawing_entry_order(self):
         wizard = BGAInterposerWizard()
         self.assertEqual(
-            ["Package", "Mounting features", "Pads", "Center opening"],
+            [
+                "Package",
+                "Mounting layout",
+                "Guide pin hole",
+                "Guide pin slots",
+                "Pads",
+                "Center opening",
+            ],
             [
                 wizard.GetParameterPageName(index)
                 for index in range(wizard.GetNumParameterPages())
@@ -120,11 +144,11 @@ class BGAInterposerWizardTests(unittest.TestCase):
         self.assertTrue(wizard.AnyErrors())
         self.assertIn("opposing corner cuts", wizard.GetBuildMessages())
 
-    def test_corner_depopulation_can_clear_mounting_hole(self):
+    def test_corner_depopulation_can_clear_guide_pin_hole(self):
         wizard = self.make_wizard(
             Pads__corner_depopulation_depth=3,
-            Mounting_features__x_distance=9.5,
-            Mounting_features__y_distance=9.5,
+            Mounting_layout__x_distance=9.5,
+            Mounting_layout__y_distance=9.5,
         )
         self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
         self.assertNotIn("A1", self.pads_by_name(wizard))
@@ -137,7 +161,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
             Center_opening__rows=4,
             Package__width=18,
             Package__length=14,
-            Mounting_features__enable_round_hole=False,
+            Guide_pin_hole__enabled=False,
         )
         self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
         self.assertEqual(228, len(list(wizard.module.Pads())))
@@ -151,7 +175,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
             self.assertIsNotNone(loaded)
             self.assertEqual(337, len(list(loaded.Pads())))
 
-    def test_each_mounting_hole_corner(self):
+    def test_each_guide_pin_hole_corner(self):
         expected_positions = {
             "top_left_(A1_corner)": (-11.5, -11.5),
             "top_right": (11.5, -11.5),
@@ -159,12 +183,12 @@ class BGAInterposerWizardTests(unittest.TestCase):
             "bottom_left": (-11.5, 11.5),
         }
         for selected, expected in expected_positions.items():
-            values = {"Mounting_features__top_left_(A1_corner)": False}
-            values["Mounting_features__" + selected] = True
+            values = {"Guide_pin_hole__top_left_(A1_corner)": False}
+            values["Guide_pin_hole__" + selected] = True
             with self.subTest(corner=selected):
                 wizard = self.make_wizard(**values)
                 self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
-                hole = self.mounting_holes(wizard)[0]
+                hole = self.guide_pin_holes(wizard)[0]
                 self.assertEqual(
                     pcbnew.VECTOR2I(
                         pcbnew.FromMM(expected[0]), pcbnew.FromMM(expected[1])
@@ -172,52 +196,160 @@ class BGAInterposerWizardTests(unittest.TestCase):
                     hole.GetPosition(),
                 )
 
-    def test_round_hole_can_be_the_footprint_origin(self):
-        wizard = self.make_wizard(Mounting_features__origin_at_round_hole=True)
+    def test_guide_pin_hole_can_be_the_footprint_origin(self):
+        wizard = self.make_wizard(Guide_pin_hole__origin_at_guide_pin_hole=True)
         self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
         self.assertEqual(
-            pcbnew.VECTOR2I(0, 0), self.mounting_holes(wizard)[0].GetPosition()
+            pcbnew.VECTOR2I(0, 0), self.guide_pin_holes(wizard)[0].GetPosition()
         )
         self.assertEqual(
             pcbnew.VECTOR2I(pcbnew.FromMM(2), pcbnew.FromMM(2)),
             self.pads_by_name(wizard)["A1"].GetPosition(),
         )
 
-    def test_round_hole_can_be_disabled(self):
+    def test_guide_pin_hole_can_be_disabled(self):
         wizard = self.make_wizard(
-            Mounting_features__enable_round_hole=False,
+            Guide_pin_hole__enabled=False,
             Package__width=20,
             Package__length=20,
         )
         self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
-        self.assertEqual([], self.mounting_holes(wizard))
+        self.assertEqual([], self.guide_pin_holes(wizard))
         self.assertEqual(336, len(list(wizard.module.Pads())))
 
-    def test_multiple_mounting_hole_corners_are_rejected(self):
-        wizard = self.make_wizard(Mounting_features__top_right=True)
+    def test_multiple_guide_pin_hole_corners_are_rejected(self):
+        wizard = self.make_wizard(Guide_pin_hole__top_right=True)
         self.assertTrue(wizard.AnyErrors())
         self.assertIn("select exactly one corner", wizard.GetBuildMessages())
 
-    def test_mounting_hole_must_fit_inside_package(self):
+    def test_guide_pin_hole_must_fit_inside_package(self):
         wizard = self.make_wizard(Package__width=25)
         self.assertTrue(wizard.AnyErrors())
-        self.assertIn("complete mounting hole", wizard.GetBuildMessages())
+        self.assertIn("guide pin features", wizard.GetBuildMessages())
 
-    def test_mounting_hole_must_not_overlap_bga_pad(self):
+    def test_guide_pin_hole_must_not_overlap_bga_pad(self):
         wizard = self.make_wizard(
-            Mounting_features__x_distance=9.5,
-            Mounting_features__y_distance=9.5,
+            Mounting_layout__x_distance=9.5,
+            Mounting_layout__y_distance=9.5,
         )
         self.assertTrue(wizard.AnyErrors())
         self.assertIn("overlaps BGA pad A1", wizard.GetBuildMessages())
 
-    def test_mounting_hole_origin_requires_enabled_hole(self):
+    def test_guide_pin_hole_origin_requires_enabled_hole(self):
         wizard = self.make_wizard(
-            Mounting_features__enable_round_hole=False,
-            Mounting_features__origin_at_round_hole=True,
+            Guide_pin_hole__enabled=False,
+            Guide_pin_hole__origin_at_guide_pin_hole=True,
         )
         self.assertTrue(wizard.AnyErrors())
-        self.assertIn("requires the round hole", wizard.GetBuildMessages())
+        self.assertIn("requires the guide pin hole", wizard.GetBuildMessages())
+
+    def test_guide_pin_slots_are_optional_in_each_corner(self):
+        expected_positions = {
+            "top_left_(A1_corner)": (-11.5, -11.5),
+            "top_right": (11.5, -11.5),
+            "bottom_right": (11.5, 11.5),
+            "bottom_left": (-11.5, 11.5),
+        }
+        for selected, expected in expected_positions.items():
+            with self.subTest(corner=selected):
+                wizard = self.make_wizard(
+                    **{
+                        "Guide_pin_hole__enabled": False,
+                        "Guide_pin_slots__" + selected: True,
+                    }
+                )
+                self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+                slots = self.guide_pin_slots(wizard)
+                self.assertEqual(1, len(slots))
+                self.assertEqual(
+                    pcbnew.VECTOR2I(
+                        pcbnew.FromMM(expected[0]), pcbnew.FromMM(expected[1])
+                    ),
+                    slots[0].GetPosition(),
+                )
+                self.assertEqual(
+                    pcbnew.VECTOR2I(pcbnew.FromMM(3), pcbnew.FromMM(2.5)),
+                    slots[0].GetDrillSize(),
+                )
+                self.assertEqual(pcbnew.PAD_SHAPE_OVAL, slots[0].GetShape())
+
+    def test_guide_pin_slot_rotation(self):
+        wizard = self.make_wizard(
+            Guide_pin_hole__enabled=False,
+            Guide_pin_slots__top_right=True,
+            Guide_pin_slots__rotation=90,
+        )
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        self.assertEqual(90, self.guide_pin_slots(wizard)[0].GetOrientationDegrees())
+
+    def test_guide_pin_slot_round_trips_through_kicad_format(self):
+        wizard = self.make_wizard(Guide_pin_slots__top_right=True)
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        with tempfile.TemporaryDirectory(suffix=".pretty") as library:
+            plugin = pcbnew.PCB_IO_KICAD_SEXPR()
+            plugin.FootprintSave(library, wizard.module)
+            loaded = plugin.FootprintLoad(library, wizard.GetValue())
+            self.assertIsNotNone(loaded)
+            self.assertEqual(1, len(self.guide_pin_slots(loaded)))
+
+    def test_guide_pin_slot_cannot_share_hole_corner(self):
+        wizard = self.make_wizard(
+            **{"Guide_pin_slots__top_left_(A1_corner)": True}
+        )
+        self.assertTrue(wizard.AnyErrors())
+        self.assertIn("cannot occupy the same corner", wizard.GetBuildMessages())
+
+    def test_guide_pin_slot_length_must_cover_width(self):
+        wizard = self.make_wizard(
+            Guide_pin_slots__top_right=True,
+            Guide_pin_slots__length=2,
+        )
+        self.assertTrue(wizard.AnyErrors())
+        self.assertIn("at least its width", wizard.GetBuildMessages())
+
+    def test_inactive_guide_pin_slot_dimensions_do_not_block_preview(self):
+        wizard = self.make_wizard(Guide_pin_slots__length=2)
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+
+    def test_guide_pin_slot_must_fit_inside_package(self):
+        wizard = self.make_wizard(
+            Guide_pin_slots__top_right=True,
+            Guide_pin_slots__length=4,
+        )
+        self.assertTrue(wizard.AnyErrors())
+        self.assertIn("guide pin features", wizard.GetBuildMessages())
+
+    def test_guide_pin_slot_must_not_overlap_bga_pad(self):
+        wizard = self.make_wizard(
+            Guide_pin_hole__enabled=False,
+            Guide_pin_slots__top_right=True,
+            Mounting_layout__x_distance=9.5,
+            Mounting_layout__y_distance=9.5,
+        )
+        self.assertTrue(wizard.AnyErrors())
+        self.assertIn("guide pin slot at top right overlaps BGA pad", wizard.GetBuildMessages())
+
+    def test_guide_pin_slots_must_not_overlap_each_other(self):
+        wizard = self.make_wizard(
+            Guide_pin_hole__enabled=False,
+            Guide_pin_slots__top_right=True,
+            Guide_pin_slots__bottom_right=True,
+            Mounting_layout__x_distance=0.5,
+            Mounting_layout__y_distance=0.5,
+        )
+        self.assertTrue(wizard.AnyErrors())
+        self.assertIn("guide pin slots at", wizard.GetBuildMessages())
+
+    def test_guide_pin_hole_origin_translates_slots(self):
+        wizard = self.make_wizard(
+            Guide_pin_hole__origin_at_guide_pin_hole=True,
+            Guide_pin_slots__top_right=True,
+        )
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        self.assertEqual(
+            pcbnew.VECTOR2I(pcbnew.FromMM(23), 0),
+            self.guide_pin_slots(wizard)[0].GetPosition(),
+        )
 
     def test_parity_mismatch_is_rejected(self):
         wizard = self.make_wizard(Center_opening__columns=7)

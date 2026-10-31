@@ -9,9 +9,9 @@ metadata, and tool-specific documentation.
 ### BGA Interposer Wizard
 
 Generates BGA-style interposer footprints with independently configurable grid
-and centered-opening dimensions, symmetric corner depopulation, plus an optional
-corner mounting hole and selectable package-center or hole-center origin. The
-wizard targets KiCad 10.
+and centered-opening dimensions, symmetric corner depopulation, plus optional
+guide pin hole and slot features. The origin can be the package center or guide
+pin hole center. The wizard supports KiCad 9.0 through 10.0.
 
 See [`plugins/bga_interposer/README.md`](plugins/bga_interposer/README.md) for
 parameters and manual installation instructions.
@@ -29,7 +29,7 @@ Each PCM-distributed plugin contains a `metadata.json` file in its plugin
 directory. The repository builder discovers those manifests, packages every
 plugin, and publishes a combined catalogue.
 
-## Test with KiCad 10.0.8
+## Test with KiCad
 
 The integration suite uses KiCad's bundled Python interpreter and `pcbnew` API:
 
@@ -39,6 +39,9 @@ scripts/test_kicad.sh
 
 Override `KICAD_APPDIR` if KiCad is installed somewhere other than
 `/workspace/shared/kicad-10.0.8/AppDir`.
+
+The continuous-integration matrix covers KiCad 9.0.0, the latest stable 9.0
+patch release, 10.0.0, and 10.0.8.
 
 ## Build the KiCad plugin repository
 

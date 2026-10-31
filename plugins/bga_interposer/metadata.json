@@ -1,8 +1,8 @@
 {
   "$schema": "https://go.kicad.org/pcm/schemas/v1",
   "name": "BGA Interposer Wizard",
-  "description": "Generate BGA interposer footprints with configurable center and corner depopulation",
-  "description_full": "A KiCad 10 footprint wizard for BGA-style interposers, based on KiCad's bundled BGA wizard. Overall rows and columns and center-opening rows and columns are independently configurable, with optional symmetric corner depopulation. An optional round NPTH can be placed in any package corner, with the footprint origin at either package center or hole center. Pad designators retain their full-grid locations across omitted positions.",
+  "description": "Generate BGA interposer footprints with configurable depopulation and guide features",
+  "description_full": "A KiCad 9 and 10 footprint wizard for BGA-style interposers, based on KiCad's bundled BGA wizard. Overall rows and columns and center-opening rows and columns are independently configurable, with optional symmetric corner depopulation. Optional NPTH guide features include one round guide pin hole and independently selectable oblong guide pin slots. The footprint origin can be the package center or guide pin hole center. Pad designators retain their full-grid locations across omitted positions.",
   "identifier": "com.github.kinderwood.kicad-automation.bga-interposer",
   "type": "plugin",
   "author": {
@@ -28,9 +28,10 @@
   ],
   "versions": [
     {
-      "version": "0.3.0",
+      "version": "0.4.0",
       "status": "stable",
-      "kicad_version": "10.0"
+      "kicad_version": "9.0",
+      "kicad_version_max": "10.0"
     }
   ]
 }
