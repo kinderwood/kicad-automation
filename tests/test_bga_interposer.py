@@ -70,6 +70,12 @@ class BGAInterposerWizardTests(unittest.TestCase):
             if isinstance(item, pcbnew.PCB_SHAPE) and item.GetLayer() == layer
         ]
 
+    def assert_mask_only_npth(self, pad):
+        self.assertFalse(pad.IsOnLayer(pcbnew.F_Cu))
+        self.assertFalse(pad.IsOnLayer(pcbnew.B_Cu))
+        self.assertTrue(pad.IsOnLayer(pcbnew.F_Mask))
+        self.assertTrue(pad.IsOnLayer(pcbnew.B_Mask))
+
     def test_default_20_by_20_with_8_by_8_center_depopulation(self):
         wizard = self.make_wizard()
         self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
@@ -99,6 +105,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
             pcbnew.VECTOR2I(pcbnew.FromMM(-11.5), pcbnew.FromMM(-11.5)),
             holes[0].GetPosition(),
         )
+        self.assert_mask_only_npth(holes[0])
         self.assertEqual(337, len(list(wizard.module.Pads())))
         self.assertEqual("mils", wizard.GetParam("Pads", "size").units)
         self.assertEqual(
@@ -126,7 +133,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
         self.assertEqual(
             [
                 "Package",
-                "Mounting layout",
+                "Guide feat placement",
                 "Guide pin hole",
                 "Guide pin slots",
                 "Pads",
@@ -150,7 +157,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
                 "chamfer bottom left",
                 "courtyard margin",
             ],
-            "Mounting layout": ["x distance", "y distance"],
+            "Guide feat placement": ["x offset", "y offset"],
             "Guide pin hole": [
                 "enabled",
                 "diameter",
@@ -455,8 +462,8 @@ class BGAInterposerWizardTests(unittest.TestCase):
     def test_corner_depopulation_can_clear_guide_pin_hole(self):
         wizard = self.make_wizard(
             Pads__corner_depop_depth=3,
-            Mounting_layout__x_distance=9.5,
-            Mounting_layout__y_distance=9.5,
+            Guide_feat_placement__x_offset=9.5,
+            Guide_feat_placement__y_offset=9.5,
             Guide_pin_hole__enabled=True,
             **{"Guide_pin_hole__top_left_(A1_corner)": True},
         )
@@ -554,8 +561,8 @@ class BGAInterposerWizardTests(unittest.TestCase):
 
     def test_guide_pin_hole_must_not_overlap_bga_pad(self):
         wizard = self.make_wizard(
-            Mounting_layout__x_distance=9.5,
-            Mounting_layout__y_distance=9.5,
+            Guide_feat_placement__x_offset=9.5,
+            Guide_feat_placement__y_offset=9.5,
             Guide_pin_hole__enabled=True,
             **{"Guide_pin_hole__top_left_(A1_corner)": True},
         )
@@ -599,6 +606,7 @@ class BGAInterposerWizardTests(unittest.TestCase):
                     slots[0].GetDrillSize(),
                 )
                 self.assertEqual(pcbnew.PAD_SHAPE_OVAL, slots[0].GetShape())
+                self.assert_mask_only_npth(slots[0])
 
     def test_guide_pin_slots_have_independent_rotations(self):
         wizard = self.make_wizard(
@@ -665,8 +673,8 @@ class BGAInterposerWizardTests(unittest.TestCase):
         wizard = self.make_wizard(
             Guide_pin_hole__enabled=False,
             Guide_pin_slots__top_right=True,
-            Mounting_layout__x_distance=9.5,
-            Mounting_layout__y_distance=9.5,
+            Guide_feat_placement__x_offset=9.5,
+            Guide_feat_placement__y_offset=9.5,
         )
         self.assertTrue(wizard.AnyErrors())
         self.assertIn("guide pin slot at top right overlaps BGA pad", wizard.GetBuildMessages())
@@ -676,8 +684,8 @@ class BGAInterposerWizardTests(unittest.TestCase):
             Guide_pin_hole__enabled=False,
             Guide_pin_slots__top_right=True,
             Guide_pin_slots__bottom_right=True,
-            Mounting_layout__x_distance=0.5,
-            Mounting_layout__y_distance=0.5,
+            Guide_feat_placement__x_offset=0.5,
+            Guide_feat_placement__y_offset=0.5,
         )
         self.assertTrue(wizard.AnyErrors())
         self.assertIn("guide pin slots at", wizard.GetBuildMessages())

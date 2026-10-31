@@ -12,7 +12,7 @@ pad-center span as a full 20 × 20 grid. Names retain their full-grid locations,
 so an omitted ball does not cause later balls to be renumbered. The default
 26 mm × 26 mm package uses 20 mil pads. The board cutout and all guide pin slots
 are disabled by default. The top-left guide pin hole is enabled by default so
-changes on the `Mounting layout` page remain visible while entering offsets.
+changes on the `Guide feat placement` page remain visible while entering offsets.
 
 ## Parameters
 
@@ -22,16 +22,16 @@ changes on the `Mounting layout` page remain visible while entering offsets.
   in the wizard controls the UI, and an integration test locks every page and
   field in the sequence documented below.
 - Parameter pages are ordered for entry from a mechanical drawing: `Package`,
-  `Mounting layout`, `Guide pin hole`, `Guide pin slots`, `Pads`, `Center pad
+  `Guide feat placement`, `Guide pin hole`, `Guide pin slots`, `Pads`, `Center pad
   depop`, `Center board cutout`, and `Silkscreen`.
 - `Package`: body width, body length, one physical package chamfer size with an
   enable checkbox for each corner, and courtyard margin. The courtyard follows
   the selected package chamfers while preserving clearance at diagonal edges.
-- `Mounting layout`: shared positive X/Y distances from package center. Corner
-  selection supplies the coordinate signs.
+- `Guide feat placement`: shared positive X/Y offsets from package center.
+  Corner selection supplies the coordinate signs.
 - `Guide pin hole`: optional round NPTH, exactly one selected corner, hole
   diameter, and optional footprint origin at the guide pin hole center. The
-  feature and all corner selections default to off.
+  feature and its top-left corner selection default to on.
 - `Guide pin slots`: independent enable checkbox and rotation for each corner,
   plus shared width and overall length. Each rotation is counterclockwise from
   a horizontal long axis.
@@ -77,6 +77,10 @@ feature must remain inside the package. Choosing the guide pin hole center as
 the origin translates the entire footprint without changing the relative
 package, pad, outline, or courtyard geometry. Slots cannot be selected as the
 footprint origin.
+
+The guide pin hole and slots are non-electrical NPTH features with no copper
+layers. Their padstacks contain front and back solder-mask openings only; KiCad's
+normal drilled-hole copper-clearance rules still apply.
 
 ## Supported KiCad versions
 

@@ -70,20 +70,20 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         )
 
         self.AddParam(
-            "Mounting layout",
-            "x distance",
+            "Guide feat placement",
+            "x offset",
             self.uMM,
             11.5,
             min_value=0.01,
-            hint="Positive distance from package center; corner selects the sign",
+            hint="Positive offset magnitude from package center; corner selects the sign",
         )
         self.AddParam(
-            "Mounting layout",
-            "y distance",
+            "Guide feat placement",
+            "y offset",
             self.uMM,
             11.5,
             min_value=0.01,
-            hint="Positive distance from package center; corner selects the sign",
+            hint="Positive offset magnitude from package center; corner selects the sign",
         )
 
         self.AddParam("Guide pin hole", "enabled", self.uBool, True)
@@ -225,7 +225,6 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         center_depopulation = self.parameters["Center pad depop"]
         center_cutout = self.parameters["Center board cutout"]
         package = self.parameters["Package"]
-        mounting_layout = self.parameters["Mounting layout"]
         guide_hole = self.parameters["Guide pin hole"]
         guide_slots = self.parameters["Guide pin slots"]
 
@@ -430,8 +429,12 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             for pad_name, pad_position in retained_pads:
                 if self._distance_squared(guide_hole_position, pad_position) < clearance**2:
                     message = "guide pin hole overlaps BGA pad {}".format(pad_name)
-                    self.GetParam("Mounting layout", "x distance").AddError(message)
-                    self.GetParam("Mounting layout", "y distance").AddError(message)
+                    self.GetParam(
+                        "Guide feat placement", "x offset"
+                    ).AddError(message)
+                    self.GetParam(
+                        "Guide feat placement", "y offset"
+                    ).AddError(message)
                     self.GetParam("Guide pin hole", "diameter").AddError(message)
                     break
 
@@ -564,12 +567,12 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         ]
 
     def _feature_position(self, corner):
-        mounting_layout = self.parameters["Mounting layout"]
+        guide_feature_placement = self.parameters["Guide feat placement"]
         for name, x_sign, y_sign in FEATURE_CORNERS:
             if name == corner:
                 return (
-                    x_sign * mounting_layout["x distance"],
-                    y_sign * mounting_layout["y distance"],
+                    x_sign * guide_feature_placement["x offset"],
+                    y_sign * guide_feature_placement["y offset"],
                 )
         raise ValueError("unknown feature corner: {}".format(corner))
 
@@ -720,6 +723,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         hole_x, hole_y = self._guide_pin_hole_position()
         origin_x, origin_y = self._origin_offset()
         pad = PA.PadMaker(self.module).NPTHRoundPad(guide_hole["diameter"])
+        pad.SetLayerSet(self._npth_layer_set())
         pad.SetPosition(
             pcbnew.VECTOR2I(int(hole_x - origin_x), int(hole_y - origin_y))
         )
@@ -736,7 +740,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             )
             pad.SetShape(pcbnew.PAD_SHAPE_OVAL)
             pad.SetAttribute(pcbnew.PAD_ATTRIB_NPTH)
-            pad.SetLayerSet(pad.UnplatedHoleMask())
+            pad.SetLayerSet(self._npth_layer_set())
             pad.SetDrillShape(pcbnew.PAD_DRILL_SHAPE_OBLONG)
             pad.SetDrillSize(
                 pcbnew.VECTOR2I(int(slots["length"]), int(slots["width"]))
@@ -748,6 +752,14 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
                 pcbnew.VECTOR2I(int(slot_x - origin_x), int(slot_y - origin_y))
             )
             self.module.Add(pad)
+
+    @staticmethod
+    def _npth_layer_set():
+        """Return mask-only layers for non-electrical guide features."""
+        layers = pcbnew.LSET()
+        layers.AddLayer(pcbnew.F_Mask)
+        layers.AddLayer(pcbnew.B_Mask)
+        return layers
 
     def _add_cutout_line(self, layer, line_width, start, end):
         line = pcbnew.PCB_SHAPE(self.module)
