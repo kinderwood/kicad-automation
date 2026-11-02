@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 import pcbnew
+import wx
 
 
 def simulate_pcm_install(archive_path, install_root):
@@ -38,11 +39,29 @@ def main():
         package_directory, third_party_plugins = simulate_pcm_install(
             args.archive, Path(temporary)
         )
-        pcbnew.LoadPlugins(
-            str(args.builtin_plugins),
-            "",
-            str(third_party_plugins),
-        )
+        # KiCad's real editor supplies a wx application while loading actions.
+        # Headless pcbnew does not, and calling the native register method in
+        # that state leaves an invalid application handle.  Substitute only the
+        # registration boundary so this test proves that the installed module
+        # requests registration without pretending to be a complete editor.
+        class PackagedApplication:
+            def GetAppName(self):
+                return "org.kicad.KiCad"
+
+        registered = []
+        original_get_app = wx.GetApp
+        original_register = pcbnew.ActionPlugin.register
+        wx.GetApp = PackagedApplication
+        pcbnew.ActionPlugin.register = lambda plugin: registered.append(plugin)
+        try:
+            pcbnew.LoadPlugins(
+                str(args.builtin_plugins),
+                "",
+                str(third_party_plugins),
+            )
+        finally:
+            wx.GetApp = original_get_app
+            pcbnew.ActionPlugin.register = original_register
 
         if package_directory not in pcbnew.KICAD_PLUGINS:
             raise AssertionError(
@@ -63,6 +82,9 @@ def main():
             # invoking Run would require the editor's active GUI/board context.
             plugin = getattr(module, "PLUGIN", None)
             assert isinstance(plugin, pcbnew.ActionPlugin), package_directory
+            assert plugin in registered, (
+                f"{package_directory} was imported but did not register its action"
+            )
             assert plugin.GetName() not in ("", "Undefined Action plugin")
             assert plugin.GetDescription()
             assert plugin.GetCategoryName() != "Undefined"

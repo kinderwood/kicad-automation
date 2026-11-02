@@ -1,6 +1,6 @@
 # GPPO RF Transition Designer
 
-Independent librarian authoring ActionPlugin, version **0.1.0 testing**. Supports
+Independent librarian authoring ActionPlugin, version **0.1.1 testing**. Supports
 the repository's KiCad **9.0.0 through 10.0.8** range. Exact runtime results and
 scope are recorded in the repository's
 `docs/connector-interposer-implementation.md`.

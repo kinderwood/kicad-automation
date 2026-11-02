@@ -1,7 +1,7 @@
 """Connector to Interposer Workflow: read-only library consumption and project instances."""
 import os
 
-__version__ = '0.2.0'
+__version__ = '0.2.1'
 PLUGIN = None
 # Core modules are also usable in a plain Python interpreter and isolated workers.
 if not os.environ.get('CONNECTOR_INTERPOSER_WORKFLOW_WORKER'):
@@ -14,10 +14,10 @@ if not os.environ.get('CONNECTOR_INTERPOSER_WORKFLOW_WORKER'):
         PLUGIN = ConnectorToInterposerWorkflowPlugin()
         import wx
         # PCB Editor discovers actions before its first board/frame exists.
-        # Native pcbnew identifies its wx application independently of that board;
-        # plain Python and standalone wx applications must not register actions.
+        # Tested packaged builds can expose different application names, while
+        # headless imports have no wx application registration context.
         app = wx.GetApp()
-        if app is not None and app.GetAppName().casefold() == 'pcbnew':
+        if app is not None:
             PLUGIN.register()
 
 __all__ = ['PLUGIN', '__version__']

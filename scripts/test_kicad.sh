@@ -23,12 +23,16 @@ KICAD_WIZARD_DIR="$plugin_dir" \
 
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' EXIT
+mkdir -p "$test_root/config" "$test_root/data" "$test_root/cache"
 
 python3 scripts/build_pcm.py \
     --base-url https://example.test/kicad \
     --output-dir "$test_root/dist" > "$test_root/archives.txt"
 
 while IFS= read -r plugin_archive; do
+    XDG_CONFIG_HOME="$test_root/config" \
+    XDG_DATA_HOME="$test_root/data" \
+    XDG_CACHE_HOME="$test_root/cache" \
     run_kicad_python scripts/test_kicad_loader.py \
         "$plugin_archive" \
         --builtin-plugins "$plugin_dir"

@@ -1,8 +1,8 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.2.0 and the
-separate GPPO RF Transition Designer remains version 0.1.0; both have `testing`
+are authorized. Connector to Interposer Workflow is version 0.2.1 and the
+separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
 
@@ -69,6 +69,14 @@ resolution explicitly finds the corresponding AppRun and verifies its version.
 Native application registration happens before an active board exists;
 headless imports remain safe. Endpoint menu interaction on 9.0.0/10.0.0 and
 Windows/macOS interaction remain unconfirmed.
+
+The 0.2.1 Workflow and 0.1.1 RF releases remove an application-name check that
+prevented registration in some packaged KiCad builds. Clean-profile GUI tests
+installed their PCM archives under KiCad's `3rdparty/plugins` hierarchy and
+confirmed both menu entries and Workflow invocation in 9.0.9.1 and 10.0.8.
+The packaged-loader regression also uses a non-`pcbnew` application name and
+requires each action to call `register()`. Fedora RPM and Flatpak behavior
+remains a user-environment check after the updated packages are installed.
 
 Machine evidence is retained in the accompanying acceptance bundle:
 `matrix/summary.json`, runtime identity/commit records, test and loader logs,
