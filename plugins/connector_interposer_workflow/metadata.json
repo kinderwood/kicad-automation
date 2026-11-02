@@ -2,7 +2,7 @@
   "$schema": "https://go.kicad.org/pcm/schemas/v1",
   "name": "Connector to Interposer Workflow",
   "description": "Validate workbook connectivity and reconcile approved connector artifacts in a project copy",
-  "description_full": "Native KiCad workflow for authoritative workbook import, source-row inspection, copper-layer permissions, independent gang placement, approved read-only connector and interposer selection, optional RF artifact selection, DXF circle anchors, optional managed board outlines, deterministic schematic and BOM generation, reviewed reconciliation and journal recovery. Applies to a separate controlled project copy. The validated connector profile currently has one signal contact and one ground/shield contact. Footprint and RF authoring remain separate librarian tools. Broader connector profiles, live-editor recovery, generic magnetic picking and fabrication/EM qualification are outside the validated scope.",
+  "description_full": "Native KiCad workflow for authoritative workbook import, source-row inspection, copper-layer permissions, independent gang placement, approved read-only connector, interposer, mounting-hole and symbol selection from loaded KiCad libraries, optional RF artifact selection, DXF circle anchors, optional managed board outlines, deterministic schematic and BOM generation, reviewed reconciliation and journal recovery. Applies to a separate controlled project copy. The validated connector profile currently has one signal contact and one ground/shield contact. Footprint and RF authoring remain separate librarian tools. Broader connector profiles, live-editor recovery, generic magnetic picking and fabrication/EM qualification are outside the validated scope.",
   "identifier": "com.github.kinderwood.kicad-automation.connector-to-interposer-workflow",
   "type": "plugin",
   "author": {"name": "kinderwood", "contact": {"web": "https://github.com/kinderwood/kicad-automation"}},
@@ -10,5 +10,5 @@
   "license": "GPL",
   "resources": {"homepage": "https://github.com/kinderwood/kicad-automation/tree/main/plugins/connector_interposer_workflow"},
   "tags": ["connector", "interposer", "workflow", "gppo"],
-  "versions": [{"version": "0.2.1", "status": "testing", "kicad_version": "9.0", "kicad_version_max": "10.0"}]
+  "versions": [{"version": "0.2.2", "status": "testing", "kicad_version": "9.0", "kicad_version_max": "10.0"}]
 }

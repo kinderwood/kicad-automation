@@ -5,6 +5,7 @@ from pathlib import Path
 import wx
 import wx.grid as grid
 from .controller import HEADERS, PAGES, WorkflowController, library_id
+from .core.library_catalog import KiCadLibraryCatalog
 
 
 class ReadOnlyTable(grid.GridTableBase):
@@ -124,6 +125,208 @@ class OutlinePreview(wx.Panel):
             dc.DrawLines([wx.Point(round(25+(x-min(xs))*scale), round(25+(y-min(ys))*scale)) for x, y in line])
 
 
+class PartPreview(wx.Panel):
+    def __init__(self, parent):
+        super().__init__(parent, size=(300, 260))
+        self.items = ()
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.Bind(wx.EVT_PAINT, self.paint)
+
+    def show_footprint(self, footprint):
+        self.items = tuple((pad.position[0], pad.position[1], pad.size[0], pad.size[1], pad.number)
+                           for pad in footprint.pads)
+        self.Refresh()
+
+    def show_symbol(self, symbol):
+        self.items = tuple((pin[1], pin[2], .8, .8, pin[0]) for pin in symbol.pin_numbers)
+        self.Refresh()
+
+    def clear(self):
+        self.items = ()
+        self.Refresh()
+
+    def paint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        dc.SetBackground(wx.Brush(wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW)))
+        dc.Clear()
+        if not self.items:
+            dc.DrawText('Select a part to preview its pads or pins.', 12, 12)
+            return
+        width, height = self.GetClientSize()
+        left = min(x-w/2 for x, y, w, h, label in self.items)
+        right = max(x+w/2 for x, y, w, h, label in self.items)
+        top = min(y-h/2 for x, y, w, h, label in self.items)
+        bottom = max(y+h/2 for x, y, w, h, label in self.items)
+        scale = min((width-50)/max(right-left, 1), (height-50)/max(bottom-top, 1))
+        dc.SetPen(wx.Pen(wx.Colour(20, 115, 150), 1))
+        dc.SetBrush(wx.Brush(wx.Colour(120, 190, 210)))
+        for x, y, w, h, label in self.items:
+            px = round(25+(x-w/2-left)*scale)
+            py = round(25+(y-h/2-top)*scale)
+            dc.DrawRectangle(px, py, max(2, round(w*scale)), max(2, round(h*scale)))
+
+
+class LibraryPartPickerDialog(wx.Dialog):
+    """Native browser over KiCad's loaded project and global libraries."""
+    def __init__(self, parent, catalog, title, current_id='', allow_mechanical=False):
+        super().__init__(parent, title=title, size=(1000, 650),
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        self.catalog, self.current_id, self.allow_mechanical = catalog, current_id, allow_mechanical
+        self.library_entries = catalog.libraries()
+        self.loaded_parts, self.filtered_parts = (), ()
+        self.selection = None
+        outer = wx.BoxSizer(wx.VERTICAL)
+        outer.Add(wx.StaticText(self, label='Choose a read-only part from the libraries currently loaded by KiCad.'), 0, wx.ALL, 10)
+        self.search = wx.SearchCtrl(self)
+        self.search.SetDescriptiveText('Filter parts in the selected library')
+        self.search.Bind(wx.EVT_TEXT, self._filter)
+        outer.Add(self.search, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        body = wx.BoxSizer(wx.HORIZONTAL)
+        self.libraries = wx.ListBox(self, choices=[f'{entry.nickname}  [{entry.scope}]' for entry in self.library_entries])
+        self.parts = wx.ListBox(self)
+        self.libraries.Bind(wx.EVT_LISTBOX, self._load_library)
+        self.parts.Bind(wx.EVT_LISTBOX, self._select_part)
+        self.parts.Bind(wx.EVT_LISTBOX_DCLICK, self._accept_double_click)
+        body.Add(self.libraries, 1, wx.EXPAND | wx.RIGHT, 8)
+        body.Add(self.parts, 1, wx.EXPAND | wx.RIGHT, 8)
+        detail = wx.BoxSizer(wx.VERTICAL)
+        self.preview = PartPreview(self)
+        detail.Add(self.preview, 1, wx.EXPAND | wx.BOTTOM, 8)
+        self.details = wx.StaticText(self, label='')
+        self.details.Wrap(300)
+        detail.Add(self.details, 0, wx.EXPAND)
+        body.Add(detail, 1, wx.EXPAND)
+        outer.Add(body, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
+        self.status = wx.StaticText(self, label='')
+        self.status.Wrap(900)
+        outer.Add(self.status, 0, wx.EXPAND | wx.ALL, 10)
+        buttons = wx.StdDialogButtonSizer()
+        self.ok = wx.Button(self, wx.ID_OK)
+        self.ok.Enable(False)
+        buttons.AddButton(self.ok)
+        buttons.AddButton(wx.Button(self, wx.ID_CANCEL))
+        buttons.Realize()
+        outer.Add(buttons, 0, wx.ALIGN_RIGHT | wx.ALL, 10)
+        self.SetSizer(outer)
+        self.SetMinSize((820, 520))
+        if self.library_entries:
+            current_nickname = current_id.split(':', 1)[0] if ':' in current_id else ''
+            index = next((i for i, entry in enumerate(self.library_entries) if entry.nickname == current_nickname), 0)
+            self.libraries.SetSelection(index)
+            self._load_library(None)
+        else:
+            self.status.SetLabel('No supported native libraries are loaded in this project.')
+
+    def _load_library(self, event):
+        index = self.libraries.GetSelection()
+        if index == wx.NOT_FOUND:
+            return
+        self.selection = None
+        self.ok.Enable(False)
+        self.preview.clear()
+        self.details.SetLabel('')
+        self.status.SetLabel('Loading ' + self.library_entries[index].nickname + '…')
+        try:
+            self.loaded_parts = self.catalog.parts(self.library_entries[index].nickname)
+            self.status.SetLabel(f'{len(self.loaded_parts)} parts loaded from {self.library_entries[index].scope.lower()} libraries.')
+            self._filter(None)
+            if self.current_id:
+                match = next((i for i, part in enumerate(self.filtered_parts) if part.library_id == self.current_id), None)
+                if match is not None:
+                    self.parts.SetSelection(match)
+                    self._select_part(None)
+        except Exception as error:
+            self.loaded_parts = self.filtered_parts = ()
+            self.parts.Set([])
+            self.status.SetLabel(str(error))
+
+    def _filter(self, event):
+        query = self.search.GetValue().casefold()
+        self.filtered_parts = tuple(part for part in self.loaded_parts
+                                    if not query or query in part.name.casefold() or query in part.library_id.casefold())
+        self.parts.Set([part.name for part in self.filtered_parts])
+
+    def _select_part(self, event):
+        index = self.parts.GetSelection()
+        if index == wx.NOT_FOUND:
+            return
+        part = self.filtered_parts[index]
+        try:
+            if self.catalog.kind == 'footprint':
+                from .core.libraries import read_footprint
+                approved = read_footprint(part.path, part.library_id, allow_mechanical=self.allow_mechanical)
+                self.preview.show_footprint(approved)
+                description = f'{len(approved.pad_numbers)} electrical pads'
+                digest = approved.sha256
+            else:
+                from .core.libraries import read_symbol
+                approved = read_symbol(part.path, part.library_id)
+                self.preview.show_symbol(approved)
+                description = f'{len(approved.pin_numbers)} pins'
+                digest = approved.sha256
+            self.selection = {'path': str(part.path), 'library_id': part.library_id, 'sha256': digest}
+            self.details.SetLabel(f'{part.library_id}\n{part.scope} library\n{description}\nSHA-256 {digest[:16]}…')
+            self.status.SetLabel('Compatible read-only library part selected.')
+            self.ok.Enable(True)
+        except Exception as error:
+            self.selection = None
+            self.preview.clear()
+            self.details.SetLabel(part.library_id)
+            self.status.SetLabel(str(error))
+            self.ok.Enable(False)
+
+    def _accept_double_click(self, event):
+        self._select_part(event)
+        if self.selection:
+            self.EndModal(wx.ID_OK)
+
+
+class LibrarySelectionCtrl(wx.Panel):
+    """Display a library-qualified identity while retaining its pinned source internally."""
+    def __init__(self, parent, owner, label, kind, allow_mechanical=False, on_change=None):
+        super().__init__(parent)
+        self.owner, self.label, self.kind = owner, label, kind
+        self.allow_mechanical, self.on_change = allow_mechanical, on_change
+        self.selection = {}
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        self.display = wx.TextCtrl(self, style=wx.TE_READONLY)
+        row.Add(self.display, 1, wx.EXPAND)
+        button = wx.Button(self, label='Choose from KiCad libraries…')
+        button.Bind(wx.EVT_BUTTON, owner.guard(self.choose))
+        row.Add(button, 0, wx.LEFT, 8)
+        self.SetSizer(row)
+
+    def choose(self, event):
+        if self.owner.pcbnew is None or self.owner.controller.board_path is None:
+            raise ValueError('Open and save the PCB before choosing library parts')
+        catalog = KiCadLibraryCatalog(self.owner.pcbnew, self.owner.controller.board_path.parent, self.kind)
+        with LibraryPartPickerDialog(self.owner, catalog, self.label,
+                                     self.selection.get('library_id', ''), self.allow_mechanical) as dialog:
+            if dialog.ShowModal() == wx.ID_OK and dialog.selection:
+                self.set_selection(dialog.selection)
+                if self.on_change:
+                    self.on_change()
+
+    def set_selection(self, selection):
+        self.selection = dict(selection or {})
+        self.display.ChangeValue(self.selection.get('library_id', ''))
+
+    def GetValue(self):
+        return self.selection.get('path', '')
+
+    def GetLibraryId(self):
+        return self.selection.get('library_id', '')
+
+    def GetSelectionSpec(self):
+        return dict(self.selection)
+
+    def ChangeValue(self, value):
+        if isinstance(value, dict):
+            self.set_selection(value)
+        else:
+            self.set_selection({'path': str(value), 'library_id': library_id(value) if value else ''})
+
+
 class WorkflowDialog(wx.Dialog):
     def __init__(self, parent=None, controller=None, pcbnew_module=None):
         super().__init__(parent, title='Connector to Interposer Workflow', size=(1140, 800),
@@ -205,6 +408,19 @@ class WorkflowDialog(wx.Dialog):
             row.Add(self.button(parent, 'Browse…', choose), 0, wx.LEFT, 8)
         parent.GetSizer().Add(row, 0, wx.EXPAND | wx.ALL, 8)
         return control
+
+    def library_field(self, parent, label, kind, allow_mechanical=False, on_change=None):
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        row.Add(wx.StaticText(parent, label=label), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
+        control = LibrarySelectionCtrl(parent, self, 'Choose ' + label.casefold(), kind,
+                                       allow_mechanical, on_change or self.library_changed)
+        row.Add(control, 1, wx.EXPAND)
+        parent.GetSizer().Add(row, 0, wx.EXPAND | wx.ALL, 8)
+        return control
+
+    def library_changed(self):
+        self.controller.changed()
+        self.refresh()
 
     def input_changed(self, event):
         self.controller.changed()
@@ -338,13 +554,12 @@ class WorkflowDialog(wx.Dialog):
         self.validation = wx.ListCtrl(panel, style=wx.LC_REPORT)
         for col, (name, width) in enumerate((('Severity', 80), ('Source row', 85), ('Code', 150), ('Details', 600))): self.validation.InsertColumn(col, name, width=width)
         panel.GetSizer().Add(self.validation, 1, wx.EXPAND | wx.ALL, 8)
-        self.interposer_path = self.field(panel, 'Approved interposer footprint', picker=True)
+        self.interposer_path = self.library_field(panel, 'Approved interposer footprint', 'footprint')
         self.interposer_ref = self.field(panel, 'Interposer reference', 'U1')
         self.interposer_x = self.field(panel, 'Interposer X (mm)', '0')
         self.interposer_y = self.field(panel, 'Interposer Y (mm)', '0')
         self.interposer_rotation = self.field(panel, 'Interposer orientation (degrees)', '0')
-        self.connector_symbol = self.field(panel, 'Approved two-pin connector symbol library', picker=True)
-        self.connector_symbol_id = self.field(panel, 'Connector symbol library ID', 'Connector:Conn_Coaxial')
+        self.connector_symbol = self.library_field(panel, 'Approved two-pin connector symbol', 'symbol')
         row = wx.BoxSizer(wx.HORIZONTAL)
         row.Add(self.button(panel, 'Accept library selections', self.accept_libraries), 0, wx.RIGHT, 8)
         row.Add(self.button(panel, 'Run validation', self.validate))
@@ -354,11 +569,15 @@ class WorkflowDialog(wx.Dialog):
         path, ref = self.interposer_path.GetValue().strip(), self.interposer_ref.GetValue().strip()
         if not path or not ref: raise ValueError('Select an approved interposer footprint and reference')
         from .core.libraries import read_footprint
-        approved = read_footprint(path, library_id(path))
+        interposer_spec = self.interposer_path.GetSelectionSpec()
+        approved = read_footprint(path, interposer_spec['library_id'], interposer_spec.get('sha256'))
         self.controller.config['interposers'][ref] = {'path': str(Path(path).resolve()), 'sha256': approved.sha256, 'library_id': approved.library_id, 'approved': True, 'pose': [float(self.interposer_x.GetValue()), float(self.interposer_y.GetValue()), float(self.interposer_rotation.GetValue())]}
         from .core.libraries import read_symbol
-        symbol = read_symbol(self.connector_symbol.GetValue(), self.connector_symbol_id.GetValue())
-        self.controller.config['connector_symbol'] = {'path': self.connector_symbol.GetValue(), 'library_id': self.connector_symbol_id.GetValue(), 'sha256': symbol.sha256}
+        symbol_spec = self.connector_symbol.GetSelectionSpec()
+        if not symbol_spec.get('path') or not symbol_spec.get('library_id'):
+            raise ValueError('Select an approved two-pin connector symbol')
+        symbol = read_symbol(symbol_spec['path'], symbol_spec['library_id'], symbol_spec.get('sha256'))
+        self.controller.config['connector_symbol'] = {'path': symbol_spec['path'], 'library_id': symbol_spec['library_id'], 'sha256': symbol.sha256}
         self.controller.changed()
 
     def validate(self, event):
@@ -385,9 +604,10 @@ class WorkflowDialog(wx.Dialog):
         body = wx.BoxSizer(wx.HORIZONTAL)
         form = wx.Panel(panel)
         form.SetSizer(wx.BoxSizer(wx.VERTICAL))
-        self.gang_fields = {}
+        self.gang_fields = {'part_id': self.library_field(form, 'Approved connector footprint', 'footprint',
+                                                         on_change=self.gang_library_changed)}
         for key, label, value, picker in (
-            ('part_id', 'Approved connector footprint', '', True), ('mpn', 'Project BOM MPN override (if absent)', '', False), ('row_lengths', 'Row lengths', '4', False),
+            ('mpn', 'Project BOM MPN override (if absent)', '', False), ('row_lengths', 'Row lengths', '4', False),
             ('pitch_x', 'Horizontal pitch', '2.54', False), ('pitch_y', 'Vertical pitch', '2.54', False),
             ('row_offsets', 'Per-row offsets', '', False), ('numbering', 'Explicit location traversal', '', False),
             ('rotation', 'Orientation (degrees)', '0', False), ('rf_artifact', 'Approved RF artifact', '', True),
@@ -412,12 +632,18 @@ class WorkflowDialog(wx.Dialog):
         row.Add(self.button(panel, 'Copy settings to selected gangs…', self.copy_gang), 0, wx.RIGHT, 8)
         row.Add(self.button(panel, 'Per-location RF assignments…', self.rf_assignments))
         panel.GetSizer().Add(row, 0, wx.ALL, 8)
-        for control in self.gang_fields.values(): control.Bind(wx.EVT_TEXT, self.gang_draft_changed)
+        for control in self.gang_fields.values():
+            if not isinstance(control, LibrarySelectionCtrl): control.Bind(wx.EVT_TEXT, self.gang_draft_changed)
         self.mirror.Bind(wx.EVT_CHECKBOX, self.gang_draft_changed)
         self.gang_units.Bind(wx.EVT_CHOICE, self.gang_draft_changed)
         self.gang_side.Bind(wx.EVT_CHOICE, self.gang_draft_changed)
 
-    def gang_draft_changed(self, event):
+    def gang_library_changed(self):
+        if not self._loading_gang:
+            self.store_gang()
+            self.refresh_gang_list()
+
+    def gang_draft_changed(self, event=None):
         if not self._loading_gang:
             self.controller.config.setdefault('drafts', {})[self.current_gang or ''] = {key: control.GetValue() for key, control in self.gang_fields.items()}
             self.controller.changed()
@@ -427,7 +653,7 @@ class WorkflowDialog(wx.Dialog):
             except Exception as error:
                 self.pattern_view.show(self.current_gang or '', error=str(error))
             self.refresh()
-        event.Skip()
+        if event is not None: event.Skip()
 
     def refresh_gangs(self):
         self.refresh_gang_list()
@@ -450,7 +676,8 @@ class WorkflowDialog(wx.Dialog):
             except ValueError:
                 status = 'Invalid pattern'
             index = self.gang_list.InsertItem(self.gang_list.GetItemCount(), name)
-            for col, value in enumerate((count, Path(settings.get('part_id', '')).stem, ' × '.join(map(str, settings['row_lengths'])), 'Accepted' if settings.get('anchor_accepted') else 'Required', status), 1): self.gang_list.SetItem(index, col, str(value))
+            part_name = settings.get('library_id') or Path(settings.get('part_id', '')).stem
+            for col, value in enumerate((count, part_name, ' × '.join(map(str, settings['row_lengths'])), 'Accepted' if settings.get('anchor_accepted') else 'Required', status), 1): self.gang_list.SetItem(index, col, str(value))
 
     def select_dashboard_gang(self, event):
         name = self.gang_list.GetItemText(event.GetIndex())
@@ -472,6 +699,10 @@ class WorkflowDialog(wx.Dialog):
         values['mirror'] = self.mirror.GetValue()
         values['units'] = self.gang_units.GetStringSelection()
         values['side'] = 'B' if self.gang_side.GetSelection() == 1 else 'F'
+        part = self.gang_fields['part_id'].GetSelectionSpec()
+        if part:
+            values['library_id'] = part.get('library_id', '')
+            values['part_sha256'] = part.get('sha256', '')
         self.controller.set_gang(self.current_gang, values)
 
     def select_gang(self, event):
@@ -484,7 +715,11 @@ class WorkflowDialog(wx.Dialog):
                 value = self.controller.config.get('drafts', {}).get(self.current_gang, {}).get(key, values.get(key, ''))
                 if isinstance(value, list): value = ', '.join(map(str, value))
                 elif isinstance(value, dict): value = ', '.join(f'{k}:{v}' for k, v in value.items())
-                control.ChangeValue(str(value))
+                if isinstance(control, LibrarySelectionCtrl):
+                    control.set_selection({'path': values.get('part_id', ''), 'library_id': values.get('library_id', ''),
+                                           'sha256': values.get('part_sha256', '')})
+                else:
+                    control.ChangeValue(str(value))
             self.approved_mpn.SetLabel('Approved library MPN: ' + (values.get('approved_mpn') or 'unavailable'))
             self.gang_fields['mpn'].Enable(not bool(values.get('approved_mpn')))
             self.mirror.SetValue(values['mirror'])
@@ -570,7 +805,7 @@ class WorkflowDialog(wx.Dialog):
         self.mechanical_list = wx.ListCtrl(panel, style=wx.LC_REPORT, size=(-1, 140))
         for col, (name, width) in enumerate((('Physical key', 120), ('Center X (mm)', 130), ('Center Y (mm)', 130), ('Source circle UUID', 280), ('Source text UUID', 280))): self.mechanical_list.InsertColumn(col, name, width=width)
         panel.GetSizer().Add(self.mechanical_list, 0, wx.EXPAND | wx.ALL, 8)
-        self.hole_path = self.field(panel, 'Approved mounting-hole footprint (optional)', picker=True)
+        self.hole_path = self.library_field(panel, 'Approved mounting-hole footprint (optional)', 'footprint', allow_mechanical=True)
         self.hole_ref = self.field(panel, 'Mounting-hole reference', 'H1')
         panel.GetSizer().Add(self.button(panel, 'Add mounting hole at this anchor', self.add_hole), 0, wx.ALL, 8)
 
@@ -630,7 +865,10 @@ class WorkflowDialog(wx.Dialog):
     def add_hole(self, event):
         from .core.libraries import read_footprint
         path = self.hole_path.GetValue()
-        part = read_footprint(path, library_id(path), allow_mechanical=True)
+        selection = self.hole_path.GetSelectionSpec()
+        if not path or not selection.get('library_id'):
+            raise ValueError('Select a mounting-hole footprint from KiCad libraries')
+        part = read_footprint(path, selection['library_id'], selection.get('sha256'), allow_mechanical=True)
         reference = self.hole_ref.GetValue().strip()
         if not reference: raise ValueError('Mounting-hole reference is required')
         holes = self.controller.config['mounting_holes']
@@ -810,12 +1048,11 @@ class WorkflowDialog(wx.Dialog):
                 self.update_mapping(table)
             except Exception as error: self.status.SetLabel('Saved workbook requires attention: ' + str(error))
         symbol = cfg.get('connector_symbol', {})
-        self.connector_symbol.ChangeValue(symbol.get('path', ''))
-        self.connector_symbol_id.ChangeValue(symbol.get('library_id', 'Connector:Conn_Coaxial'))
+        self.connector_symbol.set_selection(symbol)
         if cfg.get('interposers'):
             ref, part = next(iter(cfg['interposers'].items()))
             self.interposer_ref.ChangeValue(ref)
-            self.interposer_path.ChangeValue(part.get('path', ''))
+            self.interposer_path.set_selection(part)
             pose = part.get('pose', [0, 0, 0])
             self.interposer_x.ChangeValue(str(pose[0]))
             self.interposer_y.ChangeValue(str(pose[1]))

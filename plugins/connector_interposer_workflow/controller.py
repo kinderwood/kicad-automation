@@ -353,7 +353,7 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
         cfg, records = controller.config, controller.table.records
         symbol_spec = cfg.get('connector_symbol', {})
         if not symbol_spec.get('path') or not symbol_spec.get('library_id'):
-            raise ValueError('Select the approved two-pin connector symbol library and library ID')
+            raise ValueError('Select the approved two-pin connector symbol from the loaded KiCad libraries')
         symbol_path = controller.resolve_path(symbol_spec['path'], symbol_spec.get('sha256'), 'symbols', '.kicad_sym')
         symbol = read_symbol(symbol_path, symbol_spec['library_id'], symbol_spec.get('sha256'))
         gang_parts, interposer_parts = {}, {}

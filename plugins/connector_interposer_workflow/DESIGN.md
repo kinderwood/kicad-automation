@@ -20,8 +20,10 @@ participate in preview freshness. The backend maintains object and generated
 file ownership independently of native group membership. Groups express loose
 placement behavior; they do not authorize takeover of designer content.
 
-Library parts are immutable read inputs. Project snapshots preserve exact
-selected revisions, not newly authored variants. RF payloads are declarative;
+Library parts are immutable read inputs selected by their loaded KiCad library
+identities. The UI resolves global, project and nested library tables, while
+project snapshots preserve exact selected revisions rather than newly authored
+variants. RF payloads are declarative;
 opaque recipes are retained as provenance and never executed. Per-location
 artifact overrides accommodate different signal layers within the same gang;
 the workflow rejects incompatible saved signal-layer roles rather than

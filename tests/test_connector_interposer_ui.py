@@ -118,13 +118,43 @@ class NativeDialogTests(unittest.TestCase):
         cls.app = wx.GetApp() or wx.App(False)
 
     def test_native_page_hierarchy_and_full_10000_row_popup(self):
-        from plugins.connector_interposer_workflow.ui import WorkflowDialog, DataDialog
+        from plugins.connector_interposer_workflow.ui import (WorkflowDialog, DataDialog,
+                                                               LibraryPartPickerDialog,
+                                                               LibrarySelectionCtrl)
+        from plugins.connector_interposer_workflow.core.library_catalog import LibraryEntry, LibraryPart
         from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
         from plugins.connector_interposer_workflow.core.model import HEADERS
         dialog = WorkflowDialog()
         self.assertEqual(tuple(dialog.book.GetPageText(i) for i in range(dialog.book.GetPageCount())), PAGES)
         self.assertFalse(dialog.view_button.IsEnabled())
         self.assertFalse(dialog.apply_button.IsEnabled())
+        self.assertIsInstance(dialog.interposer_path, LibrarySelectionCtrl)
+        self.assertIsInstance(dialog.connector_symbol, LibrarySelectionCtrl)
+        self.assertIsInstance(dialog.gang_fields['part_id'], LibrarySelectionCtrl)
+        self.assertIsInstance(dialog.hole_path, LibrarySelectionCtrl)
+        self.assertIsInstance(dialog.gang_fields['rf_artifact'], self.wx.TextCtrl)
+        self.assertNotIsInstance(dialog.gang_fields['rf_artifact'], LibrarySelectionCtrl)
+        dialog.gang_fields['part_id'].set_selection({
+            'path': '/internal/Approved.pretty/GPPO.kicad_mod',
+            'library_id': 'Approved:GPPO',
+            'sha256': 'a' * 64,
+        })
+        self.assertEqual(dialog.gang_fields['part_id'].display.GetValue(), 'Approved:GPPO')
+        self.assertEqual(dialog.gang_fields['part_id'].GetValue(),
+                         '/internal/Approved.pretty/GPPO.kicad_mod')
+        footprint = Path(__file__).resolve().parents[1] / 'examples/gppo_demo/library/Example.pretty/GPPO_B012_L13_01_EXPERIMENTAL.kicad_mod'
+        class Catalog:
+            kind = 'footprint'
+            def libraries(self):
+                return (LibraryEntry('Example', 'fp_lib_table', footprint.parent, 'Project'),)
+            def parts(self, nickname):
+                return (LibraryPart('Example:GPPO_B012_L13_01_EXPERIMENTAL', footprint, 'Project'),)
+        picker = LibraryPartPickerDialog(dialog, Catalog(), 'Choose connector',
+                                         'Example:GPPO_B012_L13_01_EXPERIMENTAL')
+        self.assertEqual(picker.selection['library_id'],
+                         'Example:GPPO_B012_L13_01_EXPERIMENTAL')
+        self.assertTrue(picker.ok.IsEnabled())
+        picker.Destroy()
         rows = (HEADERS,) + tuple((f'S{i}', 'RF', 'U1', f'A{i}', 'J101', str(i), 'L1') for i in range(1, 10001))
         table = parse_sheet(Worksheet('Signals', rows))
         popup = DataDialog(dialog, table)

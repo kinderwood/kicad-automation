@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.2.1**, testing release. The package targets KiCad 9.0.0 through
+Version **0.2.2**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -35,12 +35,13 @@ an already-open source board does not update the output copy.
 2. **Layer rules:** map architecture layer names to enabled board copper layers
    and review netclass permissions. New combinations start allowed; existing
    restrictions survive subsequent imports and stackup additions.
-3. **Validation:** select the approved interposer footprint and its reference,
-   placement, and an approved standalone two-pin connector symbol from a
-   `.kicad_sym` library. Supply the symbol's `Library:Symbol` ID. The selected
+3. **Validation:** select the approved interposer footprint and an approved
+   standalone two-pin connector symbol from KiCad's loaded project or global
+   libraries, then enter the interposer reference and placement. The selected
    interposer's electrical pad universe is authoritative; unused pads become
    ground. Literal external connector references such as `J101-1` are retained.
-4. **Gangs:** select a gang, its approved `.kicad_mod`, pattern, units, pitches,
+4. **Gangs:** select a gang, its approved footprint from KiCad's loaded
+   libraries, pattern, units, pitches,
    row offsets, numbering, orientation and explicit pattern mirror. Each gang
    keeps independent settings. Library MPN metadata is displayed read-only; when
    absent, a project BOM MPN override is available. A missing MPN is reported as
@@ -58,7 +59,8 @@ an already-open source board does not update the output copy.
    previewed before application. Missing, extra, duplicate or ambiguous circles block Review.
    Capture a selected native circle center or enter numeric location-1
    coordinates, then explicitly accept the anchor. Mounting holes use approved
-   footprints and are board-only, excluded from BOM and position files.
+   footprints selected from the loaded KiCad libraries and are board-only,
+   excluded from BOM and position files.
 6. **Board Outline:** explicitly enable this optional feature and capture
    imported outer-boundary segments and optional center-cutout segments
    separately. Review validates exact closure, intersections and ownership.
@@ -85,6 +87,16 @@ instance UUIDs and immutable artifact pins are stored separately in the project.
 Existing unowned schematics or conflicting library-table aliases are blocking
 conflicts. Native annotation must preserve existing tool references; resetting
 annotation can change mechanical identities and is not an accepted update path.
+
+The library picker displays `LibraryNickname:PartName` identities and resolves
+KiCad 9 and 10 global, project and nested library tables using KiCad's own path
+variable expansion. Project entries take precedence over global entries. The
+workflow retains the resolved source and content hash internally so a selected
+library revision remains deterministic without exposing filesystem paths as the
+primary user interface. RF transition artifacts remain separate immutable
+catalog files in this release. This release browses native `.pretty` footprint
+libraries and `.kicad_sym` symbol libraries; database, legacy and other
+non-native library types are not offered.
 
 ## Limits of this testing release
 

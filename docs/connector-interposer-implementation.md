@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.2.1 and the
+are authorized. Connector to Interposer Workflow is version 0.2.2 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -35,6 +35,13 @@ a fresh preview. No generator code is executed from a saved artifact.
 | 5 | Artifact instantiation and reconciliation | Implemented; native round trips and A/B electrical reconciliation |
 | 6 | Recovery, real runtime/loader/PCM checks and worked example | Bounded software checks pass; physical DRC/manufacturing acceptance fails |
 
+The 0.2.2 Workflow replaces connector, interposer, mounting-hole and symbol
+file-path controls with native wx selectors over KiCad's loaded global and
+project libraries. KiCad 10 nested tables and project-over-global precedence
+are resolved with KiCad's own path-variable expansion. The selected
+`LibraryNickname:PartName` is user-facing; exact source paths and hashes remain
+internal deterministic pins. RF artifact catalog selection is unchanged.
+
 Completion requires integration and observed behavior, not only unit-test or
 file-format acceptance. Stage 0 evidence and its pass/fail/blocked matrix remain
 in the implementation-plan and feasibility-report Pages. New verification
@@ -44,10 +51,10 @@ results below record their exact runtime and scope.
 
 | Actual native version | Environment | Tests | Skips | Real PCM loader |
 |---|---|---:|---:|---|
-| 9.0.0 | Official OCI binaries, Debian 12 userspace through PRoot | 124 PASS | 0 | All 3 packages PASS |
-| 9.0.9 | Extracted official AppImage | 124 PASS | 0 | All 3 packages PASS |
-| 10.0.0 | Extracted official AppImage | 124 PASS | 0 | All 3 packages PASS |
-| 10.0.8 | Extracted official AppImage | 124 PASS | 0 | All 3 packages PASS |
+| 9.0.0 | Official OCI binaries, Debian 12 userspace through PRoot | 126 PASS | 0 | All 3 packages PASS |
+| 9.0.9 | Extracted official AppImage | 126 PASS | 0 | All 3 packages PASS |
+| 10.0.0 | Extracted official AppImage | 126 PASS | 0 | All 3 packages PASS |
+| 10.0.8 | Extracted official AppImage | 126 PASS | 0 | All 3 packages PASS |
 
 All runs used the same source hashes, checked before and after the matrix.
 The tests include existing BGA regression coverage, pure/core and native PCB
@@ -63,7 +70,9 @@ Additional actual PCB Editor checks use the selected 9.0.9.1 AppImage and
 native Plugins menu. Compare executes through the embedded-editor worker path
 on both selected versions; the relocated 9 project returns zero changes and
 zero conflicts. RF Designer opens from the native menu on both versions; on
-10.0.8 it reopens the saved RF-L2 recipe and validated preview.
+10.0.8 it reopens the saved RF-L2 recipe and validated preview. The 0.2.2
+library-selector dialog and compatible-part acceptance also pass native wx
+checks on Xvfb in 9.0.9.1 and 10.0.8.
 The editor's Python executable differs from its bundled runtime, so worker
 resolution explicitly finds the corresponding AppRun and verifies its version.
 Native application registration happens before an active board exists;
