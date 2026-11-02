@@ -10,9 +10,9 @@ import uuid
 import zipfile
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'plugins'))
-from gppo_interposer_workflow.core import *
-from gppo_interposer_workflow.core.outline import Segment, validate_outline
-from gppo_interposer_workflow.core.sexpr import loads, dumps
+from connector_interposer_workflow.core import *
+from connector_interposer_workflow.core.outline import Segment, validate_outline
+from connector_interposer_workflow.core.sexpr import loads, dumps
 
 
 def rectangle(x,y,w,h):

@@ -10,7 +10,7 @@ class ProjectConfig:
     project_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     schema_version: int = CONFIG_VERSION
     workbook: dict = field(default_factory=dict)
-    gppo_symbol: dict = field(default_factory=dict)
+    connector_symbol: dict = field(default_factory=dict)
     mounting_holes: list = field(default_factory=list)
     presentation: str = 'labels'
     output_dir: str = ''

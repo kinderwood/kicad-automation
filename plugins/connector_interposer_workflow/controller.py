@@ -34,7 +34,7 @@ class WorkflowController:
     """Persist drafts separately from accepted backend state and invalidate every preview."""
     def __init__(self, board_path=None, backend=None, dispatch=None):
         self.board_path = Path(board_path).resolve() if board_path else None
-        self.config_path = self.board_path.with_suffix('.gppo-workflow.json') if self.board_path else None
+        self.config_path = self.board_path.with_suffix('.connector-interposer-workflow.json') if self.board_path else None
         self.backend = backend
         self.dispatch = dispatch or (lambda fn, *args: fn(*args))
         self.config = {"schema_version": 1, "project_id": str(uuid.uuid4()), "workbook": {}, "layer_mapping": {}, "layer_rules": {},
@@ -75,7 +75,7 @@ class WorkflowController:
                 data = path.read_bytes()
                 if hashlib.sha256(data).hexdigest() != self.workbook_sha256:
                     raise ValueError('Workbook changed since parsing; reload it before saving or comparing')
-                relative = '.gppo-inputs/' + self.workbook_sha256 + path.suffix.lower()
+                relative = '.connector-interposer-inputs/' + self.workbook_sha256 + path.suffix.lower()
                 snapshot = self.config_path.parent / relative
                 snapshot.parent.mkdir(exist_ok=True)
                 snapshot.write_bytes(data)
@@ -190,7 +190,7 @@ class WorkflowController:
             for name in self.gang_names():
                 gang = self.gang(name)
                 if not gang['part_id']:
-                    issues.append(Issue('part_missing', f'{name}: select an approved GPPO footprint'))
+                    issues.append(Issue('part_missing', f'{name}: select an approved connector footprint'))
                 if not gang.get('approved_mpn') and not gang.get('mpn'):
                     issues.append(Issue('mpn_missing', f'{name}: approved part has no MPN; optionally supply a project BOM override', severity='warning'))
                 if not gang.get('anchor_accepted'):
@@ -207,7 +207,7 @@ class WorkflowController:
 
     def resolve_path(self, path, checksum=None, kind='footprints', suffix='.kicad_mod'):
         if self.board_path and checksum:
-            pinned = self.board_path.parent / '.gppo-pinned' / kind / (checksum + suffix)
+            pinned = self.board_path.parent / '.connector-interposer-pinned' / kind / (checksum + suffix)
             if pinned.is_file(): return str(pinned)
         candidate = Path(path)
         if not candidate.is_absolute() and self.board_path:
@@ -219,12 +219,12 @@ class WorkflowController:
         digest = hashlib.sha256(json.dumps(relevant, sort_keys=True).encode())
         paths = [self.board_path, Path(self.config['workbook'].get('path', ''))]
         if self.board_path:
-            paths.extend(self.board_path.with_suffix(suffix) for suffix in ('.kicad_pro', '.gppo-instances.json'))
+            paths.extend(self.board_path.with_suffix(suffix) for suffix in ('.kicad_pro', '.connector-interposer-instances.json'))
         paths.extend(Path(g[key]) for g in self.config['gangs'].values() for key in ('part_id', 'rf_artifact') if g.get(key))
         paths.extend(Path(path) for g in self.config['gangs'].values() for path in g.get('rf_artifacts', {}).values() if path)
         paths.extend(Path(v['path']) for v in self.config['interposers'].values() if v.get('path'))
         paths.extend(Path(v['path']) for v in self.config.get('mounting_holes', []) if v.get('path'))
-        symbol = self.config.get('gppo_symbol', {})
+        symbol = self.config.get('connector_symbol', {})
         if symbol.get('path'): paths.append(Path(symbol['path']))
         for path in paths:
             if path and path.is_file():
@@ -249,7 +249,7 @@ class WorkflowController:
             else:
                 self.busy = False
                 self.dispatch(complete, result)
-        threading.Thread(target=run, daemon=True, name='gppo-analysis').start()
+        threading.Thread(target=run, daemon=True, name='connector-interposer-analysis').start()
 
     def cancel(self):
         self.cancelled.set()
@@ -316,9 +316,9 @@ class NativeProcessBackend:
         package_dir = Path(__file__).resolve().parent
         script = '''import importlib.util, json, pathlib, sys
 root=pathlib.Path(sys.argv[1])
-spec=importlib.util.spec_from_file_location("gppo_worker",root/"__init__.py",submodule_search_locations=[str(root)])
+spec=importlib.util.spec_from_file_location("connector_interposer_worker",root/"__init__.py",submodule_search_locations=[str(root)])
 module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
-from gppo_worker.backend import NativeBackend
+from connector_interposer_worker.backend import NativeBackend
 request=json.loads(pathlib.Path(sys.argv[2]).read_text())
 backend=NativeBackend()
 operation=request.pop("operation")
@@ -330,8 +330,8 @@ elif operation=="inspect": result=backend.inspect_graphics(**request)
 else: raise ValueError("Unknown worker operation")
 pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
 '''
-        environment = dict(os.environ, GPPO_WORKFLOW_WORKER='1')
-        with tempfile.TemporaryDirectory(prefix='gppo-native-') as temporary:
+        environment = dict(os.environ, CONNECTOR_INTERPOSER_WORKFLOW_WORKER='1')
+        with tempfile.TemporaryDirectory(prefix='connector-interposer-native-') as temporary:
             source, result = Path(temporary)/'request.json', Path(temporary)/'result.json'
             source.write_text(json.dumps(request), encoding='utf-8')
             process = subprocess.run(self.python + ['-c', script, str(package_dir), str(source), str(result)],
@@ -351,9 +351,9 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
         if not controller.board_path or not controller.board_path.exists():
             raise ValueError('Save the source PCB before comparing')
         cfg, records = controller.config, controller.table.records
-        symbol_spec = cfg.get('gppo_symbol', {})
+        symbol_spec = cfg.get('connector_symbol', {})
         if not symbol_spec.get('path') or not symbol_spec.get('library_id'):
-            raise ValueError('Select the approved two-pin GPPO symbol library and library ID')
+            raise ValueError('Select the approved two-pin connector symbol library and library ID')
         symbol_path = controller.resolve_path(symbol_spec['path'], symbol_spec.get('sha256'), 'symbols', '.kicad_sym')
         symbol = read_symbol(symbol_path, symbol_spec['library_id'], symbol_spec.get('sha256'))
         gang_parts, interposer_parts = {}, {}
@@ -391,7 +391,7 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
             settings = controller.gang(record.connector)
             part = gang_parts[record.connector]
             x, y = controller.pattern(record.connector)[record.connector_pin]
-            instance = {'kind': 'gppo', 'gang': record.connector,
+            instance = {'kind': 'connector', 'gang': record.connector,
                 'footprint': dict(part.footprint.pin(), approved=True, source_library_id=settings.get('library_id') or library_id(settings['part_id'])),
                 'pose': [x, y, settings['rotation']], 'pads': {'1': record.signal, '2': 'GND'},
                 'symbol_path': bundle.paths[record.key], 'symbol_fields': symbol_fields(record.key), 'netclass': record.netclass,
@@ -428,14 +428,14 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
         footprint_table = loads(project_files['fp-lib-table'])
         for entry in children(footprint_table, 'lib'):
             nickname = child(entry, 'name')[1]
-            child(entry, 'uri')[1] = '${KIPRJMOD}/.gppo-pinned/' + nickname + '.pretty'
+            child(entry, 'uri')[1] = '${KIPRJMOD}/.connector-interposer-pinned/' + nickname + '.pretty'
         project_files['fp-lib-table'] = dumps(footprint_table) + '\n'
         for table_name in ('sym-lib-table', 'fp-lib-table'):
             if table_name in project_files:
                 table_path = controller.board_path.parent / table_name
                 project_files[table_name] = dumps(loads(merge_library_table(table_path.read_text() if table_path.exists() else None, project_files[table_name]))) + '\n'
-        project_files[name + '-gppo-bom.csv'] = bundle.bom_csv()
-        project_files['.gppo-pinned/symbols/' + symbol.sha256 + '.kicad_sym'] = Path(symbol_path).read_text()
+        project_files[name + '-connector-bom.csv'] = bundle.bom_csv()
+        project_files['.connector-interposer-pinned/symbols/' + symbol.sha256 + '.kicad_sym'] = Path(symbol_path).read_text()
         from .core.project import merge_project_settings
         project_path = controller.board_path.with_suffix('.kicad_pro')
         project = json.loads(project_path.read_text()) if project_path.exists() else {}

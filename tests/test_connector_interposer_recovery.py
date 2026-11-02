@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins"))
-from gppo_interposer_workflow.recovery import RecoveryError, apply_files, file_hash, recover
+from connector_interposer_workflow.recovery import RecoveryError, apply_files, file_hash, recover
 
 
 class RecoveryTests(unittest.TestCase):
@@ -17,7 +17,7 @@ class RecoveryTests(unittest.TestCase):
 import os,sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from gppo_interposer_workflow.recovery import apply_files,file_hash
+from connector_interposer_workflow.recovery import apply_files,file_hash
 root=Path(sys.argv[2]); boundary=int(sys.argv[3])
 files={name: ('after '+name).encode() for name in ('board.kicad_pcb','board.kicad_pro','instances.json')}
 expected={name:file_hash(root/name) for name in files}
@@ -33,9 +33,9 @@ apply_files(root,files,expected,closed_project=True,boundary=stop)
                 for name, data in before.items():
                     (root/name).write_bytes(data)
                 child = subprocess.run([sys.executable,"-c",script,plugin_dir,directory,str(boundary)],
-                                       env=dict(os.environ, GPPO_WORKFLOW_WORKER="1"), capture_output=True)
+                                       env=dict(os.environ, CONNECTOR_INTERPOSER_WORKFLOW_WORKER="1"), capture_output=True)
                 self.assertEqual(77, child.returncode, child.stderr.decode())
-                journal = next(root.glob(".gppo-recovery/*/journal.json"))
+                journal = next(root.glob(".connector-interposer-recovery/*/journal.json"))
                 recover(journal, closed_project=True)
                 self.assertEqual(before, {name: (root/name).read_bytes() for name in before})
 
@@ -52,7 +52,7 @@ apply_files(root,files,expected,closed_project=True,boundary=stop)
                         raise RuntimeError("interrupted")
                 with self.assertRaises(RuntimeError):
                     apply_files(root, files, expected, closed_project=True, boundary=crash)
-                journal = next(root.glob(".gppo-recovery/*/journal.json"))
+                journal = next(root.glob(".connector-interposer-recovery/*/journal.json"))
                 with self.assertRaises(RuntimeError):
                     recover(journal, closed_project=True, boundary=lambda index: (_ for _ in ()).throw(RuntimeError()) if index == 1 else None)
                 self.assertEqual("RESTORED", recover(journal, closed_project=True)["status"])

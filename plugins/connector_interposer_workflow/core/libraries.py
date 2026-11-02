@@ -89,7 +89,7 @@ def read_symbol(path, library_id, expected_sha256=None):
     if symbol is None:
         raise ValueError(f"Approved symbol {library_id} was not found")
     if child(symbol, 'extends'):
-        raise ValueError("Select a resolved standalone approved GPPO symbol")
+        raise ValueError("Select a resolved standalone approved connector symbol")
     pins = []
     for sub in children(symbol, 'symbol'):
         for pin in children(sub, 'pin'):
@@ -99,5 +99,5 @@ def read_symbol(path, library_id, expected_sha256=None):
                 raise ValueError("Malformed symbol pin")
             pins.append((number[1], float(at[1]), float(at[2]), float(at[3])))
     if len(pins) != 2 or len({p[0] for p in pins}) != 2:
-        raise ValueError("Approved GPPO symbol must expose exactly two distinct pins")
+        raise ValueError("Approved connector symbol must expose exactly two distinct pins")
     return ApprovedSymbol(library_id, symbol, checksum, tuple(pins))

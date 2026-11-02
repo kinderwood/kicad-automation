@@ -21,10 +21,10 @@ import pcbnew as p
 from gppo_rf_transition.model import (default_recipe, load_artifact as author_load,
                                      make_artifact, publish_bundle)
 from gppo_rf_transition.native import read_base_part
-from gppo_interposer_workflow.artifacts import (ArtifactError, load_artifact,
+from connector_interposer_workflow.artifacts import (ArtifactError, load_artifact,
                                                 validate_artifact)
-from gppo_interposer_workflow.backend import NativeBackend, board_items, uuid_of
-from gppo_interposer_workflow.core.workbook import parse_sheet, read_workbook
+from connector_interposer_workflow.backend import NativeBackend, board_items, uuid_of
+from connector_interposer_workflow.core.workbook import parse_sheet, read_workbook
 
 DEMO = ROOT / "examples" / "gppo_demo"
 SOURCE = DEMO / "library" / "Example.pretty" / "GPPO_B012_L13_01_EXPERIMENTAL.kicad_mod"
@@ -57,7 +57,7 @@ def demo_artifacts():
     return result
 
 
-class GPPOArtifactContractTests(unittest.TestCase):
+class ConnectorInterposerArtifactContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.artifacts = demo_artifacts()
@@ -107,7 +107,7 @@ class GPPOArtifactContractTests(unittest.TestCase):
             validate_artifact(artifact, layers=LAYERS,
                               part_sha256=selection["sha256"], netclass=row.netclass)
             instances[row.key] = {
-                "gang": row.connector, "kind": "gppo", "footprint": deepcopy(selection),
+                "gang": row.connector, "kind": "connector", "footprint": deepcopy(selection),
                 "pose": [pos["x_mm"], pos["y_mm"], pos["orientation_degrees"]],
                 "pads": {"1": row.signal, "2": "GND"},
                 "netclass": row.netclass, "signal_layer": LAYER_MAP[row.layer],

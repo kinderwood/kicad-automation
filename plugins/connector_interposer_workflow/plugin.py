@@ -4,9 +4,9 @@ import pcbnew
 import wx
 
 
-class GPPOInterposerWorkflowPlugin(pcbnew.ActionPlugin):
+class ConnectorToInterposerWorkflowPlugin(pcbnew.ActionPlugin):
     def defaults(self):
-        self.name = 'GPPO Interposer Workflow'
+        self.name = 'Connector to Interposer Workflow'
         self.category = 'PCB automation'
         self.description = 'Select approved parts, validate connectivity and reconcile a staged project copy'
         self.show_toolbar_button = False

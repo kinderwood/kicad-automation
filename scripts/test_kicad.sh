@@ -10,8 +10,8 @@ if [ "${KICAD_USE_SYSTEM:-0}" = "1" ]; then
 else
     appdir=${KICAD_APPDIR:-/workspace/shared/kicad-10.0.8/AppDir}
     plugin_dir="$appdir/share/kicad/scripting/plugins"
-    GPPO_TEST_APP_RUN="$appdir/AppRun"
-    export GPPO_TEST_APP_RUN
+    KICAD_TEST_APP_RUN="$appdir/AppRun"
+    export KICAD_TEST_APP_RUN
 
     run_kicad_python() {
         "$appdir/AppRun" python3.11 "$@"

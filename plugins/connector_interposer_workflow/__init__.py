@@ -1,17 +1,17 @@
-"""GPPO Interposer Workflow: read-only library consumption and project instances."""
+"""Connector to Interposer Workflow: read-only library consumption and project instances."""
 import os
 
-__version__ = '0.1.0'
+__version__ = '0.2.0'
 PLUGIN = None
 # Core modules are also usable in a plain Python interpreter and isolated workers.
-if not os.environ.get('GPPO_WORKFLOW_WORKER'):
+if not os.environ.get('CONNECTOR_INTERPOSER_WORKFLOW_WORKER'):
     try:
         import pcbnew
     except ImportError:
         pass
     else:
-        from .plugin import GPPOInterposerWorkflowPlugin
-        PLUGIN = GPPOInterposerWorkflowPlugin()
+        from .plugin import ConnectorToInterposerWorkflowPlugin
+        PLUGIN = ConnectorToInterposerWorkflowPlugin()
         import wx
         # PCB Editor discovers actions before its first board/frame exists.
         # Native pcbnew identifies its wx application independently of that board;

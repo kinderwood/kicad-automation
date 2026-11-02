@@ -18,7 +18,7 @@ from .recovery import apply_files, file_hash, require_closed
 
 
 def _project_hashes(root):
-    ignored = {".git", ".gppo-recovery", "__pycache__"}
+    ignored = {".git", ".connector-interposer-recovery", "__pycache__"}
     result = {}
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
@@ -249,7 +249,7 @@ class NativeBackend:
             if native["errors"]:
                 raise BackendError("Unresolved native mechanical associations: " + "; ".join(native["errors"]))
             physical = {x["key"] for x in native["locations"]}
-            installed = {key for key, spec in instances.items() if spec.get("kind", "gppo") == "gppo"}
+            installed = {key for key, spec in instances.items() if spec.get("kind", "connector") == "connector"}
             if physical != installed:
                 raise BackendError("Workbook and complete native mechanical populations differ")
             if sorted(native["locations"], key=lambda x: x["key"]) != sorted(mechanical["locations"], key=lambda x: x["key"]):
@@ -277,7 +277,7 @@ class NativeBackend:
             pads = {x.GetNumber() for x in fp.Pads() if x.GetNumber()}
             if set(spec.get("pads", {})) - pads:
                 raise BackendError("Assignment references a missing approved footprint pad: " + key)
-            if spec.get("kind", "gppo") == "interposer" and set(spec.get("pads", {})) != pads:
+            if spec.get("kind", "connector") == "interposer" and set(spec.get("pads", {})) != pads:
                 raise BackendError("Interposer assignments must cover the complete pad universe")
             pose = spec.get("pose", [])
             if len(pose) != 3 or any(not math.isfinite(v) for v in pose):
@@ -370,7 +370,7 @@ class NativeBackend:
         for name, content in desired.get("project_files", {}).items():
             path = Path(name)
             if path.is_absolute() or ".." in path.parts or not path.parts or path.suffix in (".kicad_pcb", ".lck") or any(
-                    part in (".git", ".gppo-recovery") for part in path.parts) or name.endswith((".gppo-instances.json", ".gppo-report.json")):
+                    part in (".git", ".connector-interposer-recovery") for part in path.parts) or name.endswith((".connector-interposer-instances.json", ".connector-interposer-report.json")):
                 raise BackendError("Generated project file path is unsafe or reserved")
             if not isinstance(content, str):
                 raise BackendError("Generated project files must contain UTF-8 text")
@@ -380,13 +380,13 @@ class NativeBackend:
     def preview(self, board_path, desired, registry=None):
         path = Path(board_path).resolve()
         if registry is None:
-            ledger = path.with_suffix(".gppo-instances.json")
+            ledger = path.with_suffix(".connector-interposer-instances.json")
             registry = json.loads(ledger.read_text()) if ledger.is_file() else None
-        registry = copy.deepcopy(registry or {"schema": "gppo.instances/1.0", "instances": {}, "expected": {}})
+        registry = copy.deepcopy(registry or {"schema": "connector-interposer.instances/1.0", "instances": {}, "expected": {}})
         desired = json.loads(canonical(desired))
         for spec in desired.get("instances", {}).values():
             selection = spec["footprint"]
-            pinned = path.parent/".gppo-pinned"/"footprints"/(selection["sha256"] + ".kicad_mod")
+            pinned = path.parent/".connector-interposer-pinned"/"footprints"/(selection["sha256"] + ".kicad_mod")
             if pinned.exists() and file_hash(pinned) != selection["sha256"]:
                 raise BackendError("Pinned approved footprint snapshot integrity failure")
             if file_hash(pinned) == selection["sha256"]:
@@ -395,7 +395,7 @@ class NativeBackend:
                 selection["path"] = str(path.parent/selection["path"])
             if spec.get("rf"):
                 artifact = spec["rf"]["artifact"]
-                rf_pin = path.parent/".gppo-pinned"/"rf"/(artifact["hashes"]["artifact"] + ".json")
+                rf_pin = path.parent/".connector-interposer-pinned"/"rf"/(artifact["hashes"]["artifact"] + ".json")
                 if rf_pin.exists() and json.loads(rf_pin.read_text()) != artifact:
                     raise BackendError("Pinned RF artifact snapshot integrity failure")
         board = self._load(path)
@@ -624,7 +624,7 @@ class NativeBackend:
     def _materialize(self, board, desired, registry):
         p = self.p
         old = registry.get("instances", {})
-        result = {"schema": "gppo.instances/1.0", "instances": {}, "groups": {},
+        result = {"schema": "connector-interposer.instances/1.0", "instances": {}, "groups": {},
                   "expected": {}, "tombstones": copy.deepcopy(registry.get("tombstones", {}))}
         owned = set(registry.get("expected", {}))
         for key in sorted(set(old) - set(desired.get("instances", {}))):
@@ -863,7 +863,7 @@ class NativeBackend:
         registry = self._materialize(board, preview["desired"], preview["registry"])
         expected = registry["expected"]
         foreign = {k: v for k, v in before.items() if k not in preview["registry"].get("expected", {})}
-        with tempfile.TemporaryDirectory(prefix="gppo-native-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="connector-interposer-native-") as temporary:
             candidate = Path(temporary) / source.name
             # Native clearance/fill/class evaluation must use the reviewed
             # project settings, not a default temporary project.
@@ -890,7 +890,7 @@ class NativeBackend:
             actual = board_state(checked, self.p)
             resolved_classes = {}
             for spec in preview["desired"].get("instances", {}).values():
-                if spec.get("netclass") and spec.get("kind", "gppo") == "gppo":
+                if spec.get("netclass") and spec.get("kind", "connector") == "connector":
                     ground = spec.get("rf", {}).get("nets", {}).get("ground", "GND")
                     for name in set(spec.get("pads", {}).values()) - {ground}:
                         net = self._net(checked, name)
@@ -909,17 +909,17 @@ class NativeBackend:
                 raise BackendError("Source project changed while staging; nothing applied")
             # Read source files only; do not copy live lock files or prior recovery.
             shutil.copytree(source.parent, target, dirs_exist_ok=True,
-                            ignore=shutil.ignore_patterns("*.lck", "~*.lck", ".gppo-recovery", ".git", "__pycache__"))
+                            ignore=shutil.ignore_patterns("*.lck", "~*.lck", ".connector-interposer-recovery", ".git", "__pycache__"))
             if _project_hashes(source.parent) != preview["source_project"] or _project_hashes(target) != preview["source_project"]:
                 raise BackendError("Source project changed while copying; discard the incomplete output copy")
             require_closed(target, True)
-            report = {"schema": "gppo.reconciliation/1.0", "status": "APPLIED", "token": preview["token"],
+            report = {"schema": "connector-interposer.reconciliation/1.0", "status": "APPLIED", "token": preview["token"],
                       "changes": preview["changes"], "conflicts": [],
                       "validation": {"native_reload": "passed", "owned_geometry_nets_groups": "passed",
                                      "foreign_objects_preserved": "passed", "netclasses": resolved_classes,
                                      "manufacturing_qualification": "not performed"}}
-            ledger = source.stem + ".gppo-instances.json"
-            report_name = source.stem + ".gppo-report.json"
+            ledger = source.stem + ".connector-interposer-instances.json"
+            report_name = source.stem + ".connector-interposer-report.json"
             files = {source.name: candidate.read_bytes(), ledger: canonical(registry), report_name: canonical(report)}
             files.update({name: content.encode("utf-8") for name, content in preview["desired"].get("project_files", {}).items()})
             files.update({name: None for name in set(preview["registry"].get("generated_files", {})) - set(preview["desired"].get("project_files", {}))})
@@ -929,16 +929,16 @@ class NativeBackend:
                 selected_bytes = Path(selection["path"]).read_bytes()
                 if hashlib.sha256(selected_bytes).hexdigest() != selection["sha256"]:
                     raise BackendError("Approved library revision changed during staging")
-                files[".gppo-pinned/footprints/" + selection["sha256"] + ".kicad_mod"] = selected_bytes
+                files[".connector-interposer-pinned/footprints/" + selection["sha256"] + ".kicad_mod"] = selected_bytes
                 library_id = selection.get("library_id", "")
                 if ":" in library_id:
                     nickname, name = library_id.split(":", 1)
                     if any(c in nickname + name for c in ("/", "\\")) or nickname in (".", "..") or name in (".", ".."):
                         raise BackendError("Unsafe library identity for pinned project table")
-                    files[".gppo-pinned/" + nickname + ".pretty/" + name + ".kicad_mod"] = selected_bytes
+                    files[".connector-interposer-pinned/" + nickname + ".pretty/" + name + ".kicad_mod"] = selected_bytes
                 if spec.get("rf"):
                     artifact = spec["rf"]["artifact"]
-                    files[".gppo-pinned/rf/" + artifact["hashes"]["artifact"] + ".json"] = canonical(artifact)
+                    files[".connector-interposer-pinned/rf/" + artifact["hashes"]["artifact"] + ".json"] = canonical(artifact)
             hashes = {name: file_hash(target / name) for name in files}
             transaction = apply_files(target, files, hashes, closed_project=True)
         return {"status": "APPLIED", "board_path": str(target / source.name),

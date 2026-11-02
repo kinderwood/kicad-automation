@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins"))
-from gppo_interposer_workflow.artifacts import ArtifactError, canonical, pin_artifact, sha256, validate_artifact
+from connector_interposer_workflow.artifacts import ArtifactError, canonical, pin_artifact, sha256, validate_artifact
 
 
 def artifact_fixture(part_sha256="a"*64):

@@ -126,7 +126,7 @@ class OutlinePreview(wx.Panel):
 
 class WorkflowDialog(wx.Dialog):
     def __init__(self, parent=None, controller=None, pcbnew_module=None):
-        super().__init__(parent, title='GPPO Interposer Workflow', size=(1140, 800),
+        super().__init__(parent, title='Connector to Interposer Workflow', size=(1140, 800),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.pcbnew = pcbnew_module
         self.controller = controller or WorkflowController(dispatch=wx.CallAfter)
@@ -343,8 +343,8 @@ class WorkflowDialog(wx.Dialog):
         self.interposer_x = self.field(panel, 'Interposer X (mm)', '0')
         self.interposer_y = self.field(panel, 'Interposer Y (mm)', '0')
         self.interposer_rotation = self.field(panel, 'Interposer orientation (degrees)', '0')
-        self.gppo_symbol = self.field(panel, 'Approved two-pin GPPO symbol library', picker=True)
-        self.gppo_symbol_id = self.field(panel, 'GPPO symbol library ID', 'Connector:Conn_Coaxial')
+        self.connector_symbol = self.field(panel, 'Approved two-pin connector symbol library', picker=True)
+        self.connector_symbol_id = self.field(panel, 'Connector symbol library ID', 'Connector:Conn_Coaxial')
         row = wx.BoxSizer(wx.HORIZONTAL)
         row.Add(self.button(panel, 'Accept library selections', self.accept_libraries), 0, wx.RIGHT, 8)
         row.Add(self.button(panel, 'Run validation', self.validate))
@@ -357,8 +357,8 @@ class WorkflowDialog(wx.Dialog):
         approved = read_footprint(path, library_id(path))
         self.controller.config['interposers'][ref] = {'path': str(Path(path).resolve()), 'sha256': approved.sha256, 'library_id': approved.library_id, 'approved': True, 'pose': [float(self.interposer_x.GetValue()), float(self.interposer_y.GetValue()), float(self.interposer_rotation.GetValue())]}
         from .core.libraries import read_symbol
-        symbol = read_symbol(self.gppo_symbol.GetValue(), self.gppo_symbol_id.GetValue())
-        self.controller.config['gppo_symbol'] = {'path': self.gppo_symbol.GetValue(), 'library_id': self.gppo_symbol_id.GetValue(), 'sha256': symbol.sha256}
+        symbol = read_symbol(self.connector_symbol.GetValue(), self.connector_symbol_id.GetValue())
+        self.controller.config['connector_symbol'] = {'path': self.connector_symbol.GetValue(), 'library_id': self.connector_symbol_id.GetValue(), 'sha256': symbol.sha256}
         self.controller.changed()
 
     def validate(self, event):
@@ -387,7 +387,7 @@ class WorkflowDialog(wx.Dialog):
         form.SetSizer(wx.BoxSizer(wx.VERTICAL))
         self.gang_fields = {}
         for key, label, value, picker in (
-            ('part_id', 'Approved GPPO footprint', '', True), ('mpn', 'Project BOM MPN override (if absent)', '', False), ('row_lengths', 'Row lengths', '4', False),
+            ('part_id', 'Approved connector footprint', '', True), ('mpn', 'Project BOM MPN override (if absent)', '', False), ('row_lengths', 'Row lengths', '4', False),
             ('pitch_x', 'Horizontal pitch', '2.54', False), ('pitch_y', 'Vertical pitch', '2.54', False),
             ('row_offsets', 'Per-row offsets', '', False), ('numbering', 'Explicit location traversal', '', False),
             ('rotation', 'Orientation (degrees)', '0', False), ('rf_artifact', 'Approved RF artifact', '', True),
@@ -809,9 +809,9 @@ class WorkflowDialog(wx.Dialog):
                 self.sheet.SetStringSelection(table.worksheet)
                 self.update_mapping(table)
             except Exception as error: self.status.SetLabel('Saved workbook requires attention: ' + str(error))
-        symbol = cfg.get('gppo_symbol', {})
-        self.gppo_symbol.ChangeValue(symbol.get('path', ''))
-        self.gppo_symbol_id.ChangeValue(symbol.get('library_id', 'Connector:Conn_Coaxial'))
+        symbol = cfg.get('connector_symbol', {})
+        self.connector_symbol.ChangeValue(symbol.get('path', ''))
+        self.connector_symbol_id.ChangeValue(symbol.get('library_id', 'Connector:Conn_Coaxial'))
         if cfg.get('interposers'):
             ref, part = next(iter(cfg['interposers'].items()))
             self.interposer_ref.ChangeValue(ref)

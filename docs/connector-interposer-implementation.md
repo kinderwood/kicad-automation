@@ -1,15 +1,19 @@
-# GPPO implementation and acceptance
+# Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. The GPPO packages are version 0.1.0 with `testing` status;
-publication does not imply manufacturing or RF qualification. The existing
+are authorized. Connector to Interposer Workflow is version 0.2.0 and the
+separate GPPO RF Transition Designer remains version 0.1.0; both have `testing`
+status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
 
 ## Boundaries
 
-Librarians author GPPO and interposer footprints and RF matching artifacts.
-Workflow selects read-only approved artifacts and configures placed instances.
-It does not invoke authoring tools, create footprints, or edit library recipes.
+Librarians author connector and interposer footprints and RF matching artifacts.
+The workflow selects read-only approved artifacts and configures placed
+instances. Its validated connector profile currently consists of one signal
+contact and one ground/shield contact; DC and multi-contact connector profiles
+remain future work. It does not invoke authoring tools, create footprints, or
+edit library recipes.
 Project-local schematic generation represents the selected footprint pad
 definitions and workbook connectivity. RF authoring is a separate distributable
 plugin with its own native dialog and saved artifact contract.

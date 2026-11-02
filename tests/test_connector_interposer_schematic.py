@@ -14,14 +14,14 @@ import uuid
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'plugins'))
-from gppo_interposer_workflow.core import SignalRecord, read_footprint, read_symbol
-from gppo_interposer_workflow.core.sexpr import loads, children, child
-from gppo_interposer_workflow.schematic import PartSelection, generate_schematic, merge_library_table
-from gppo_interposer_workflow.core.project import merge_project_settings
+from connector_interposer_workflow.core import SignalRecord, read_footprint, read_symbol
+from connector_interposer_workflow.core.sexpr import loads, children, child
+from connector_interposer_workflow.schematic import PartSelection, generate_schematic, merge_library_table
+from connector_interposer_workflow.core.project import merge_project_settings
 
-NATIVE_CLI = ([os.environ['GPPO_TEST_APP_RUN'], 'kicad-cli'] if os.environ.get('GPPO_TEST_APP_RUN') else ([shutil.which('kicad-cli')] if shutil.which('kicad-cli') else None))
+NATIVE_CLI = ([os.environ['KICAD_TEST_APP_RUN'], 'kicad-cli'] if os.environ.get('KICAD_TEST_APP_RUN') else ([shutil.which('kicad-cli')] if shutil.which('kicad-cli') else None))
 
-NATIVE_PYTHON = ([os.environ['GPPO_TEST_APP_RUN'], 'python3.11'] if os.environ.get('GPPO_TEST_APP_RUN') else ([sys.executable] if importlib.util.find_spec('pcbnew') else None))
+NATIVE_PYTHON = ([os.environ['KICAD_TEST_APP_RUN'], 'python3.11'] if os.environ.get('KICAD_TEST_APP_RUN') else ([sys.executable] if importlib.util.find_spec('pcbnew') else None))
 
 PROJECT_ID='d4fcdb6e-bd58-41fd-9225-d52b6d258ab3'
 
@@ -126,7 +126,7 @@ assert classes['RF']==(0,-1),classes
             result=subprocess.run(NATIVE_PYTHON+['-c',inspect,board_path],capture_output=True,text=True,timeout=60)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
-    @unittest.skipUnless(NATIVE_CLI,'Native tests need kicad-cli on PATH or GPPO_TEST_APP_RUN')
+    @unittest.skipUnless(NATIVE_CLI,'Native tests need kicad-cli on PATH or KICAD_TEST_APP_RUN')
     def test_native_multisheet_netlist_and_erc(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory=Path(tmp)

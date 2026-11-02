@@ -13,8 +13,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'plugins'))
 
-from gppo_interposer_workflow.controller import WorkflowController, NativeProcessBackend
-from gppo_interposer_workflow.core.libraries import read_footprint, read_symbol
+from connector_interposer_workflow.controller import WorkflowController, NativeProcessBackend
+from connector_interposer_workflow.core.libraries import read_footprint, read_symbol
 
 
 def prepare(destination):
@@ -36,7 +36,7 @@ def prepare(destination):
     }
     symbol_path = fixture / 'library/Example.kicad_sym'
     symbol = read_symbol(symbol_path, 'Example:GPPO')
-    controller.config['gppo_symbol'] = {
+    controller.config['connector_symbol'] = {
         'path': str(symbol_path), 'library_id': symbol.library_id, 'sha256': symbol.sha256,
     }
     footprint = fixture / 'library/Example.pretty/GPPO_B012_L13_01_EXPERIMENTAL.kicad_mod'

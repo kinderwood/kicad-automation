@@ -2,15 +2,16 @@
 
 Independent librarian authoring ActionPlugin, version **0.1.0 testing**. Supports
 the repository's KiCad **9.0.0 through 10.0.8** range. Exact runtime results and
-scope are recorded in the repository's `docs/gppo-implementation.md`.
+scope are recorded in the repository's
+`docs/connector-interposer-implementation.md`.
 This is a geometry authoring prototype, not an impedance,
 electromagnetic or manufacturing qualification.
 
 Install this directory under KiCad's scripting `plugins` directory, or install
 its independent PCM package. Restart PCB Editor and select **Tools → External
 Plugins → GPPO RF Transition Designer**. The tool never modifies the open board
-or central GPPO/interposer footprint sources. No other authoring plugin or
-GPPO Interposer Workflow installation is required.
+or central connector/interposer footprint sources. No other authoring plugin or
+Connector to Interposer Workflow installation is required.
 
 ## Authoring
 

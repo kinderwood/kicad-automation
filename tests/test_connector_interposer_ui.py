@@ -7,7 +7,7 @@ import threading
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from plugins.gppo_interposer_workflow.controller import WorkflowController, row_ranges, PAGES
+from plugins.connector_interposer_workflow.controller import WorkflowController, row_ranges, PAGES
 
 
 class ControllerTests(unittest.TestCase):
@@ -118,9 +118,9 @@ class NativeDialogTests(unittest.TestCase):
         cls.app = wx.GetApp() or wx.App(False)
 
     def test_native_page_hierarchy_and_full_10000_row_popup(self):
-        from plugins.gppo_interposer_workflow.ui import WorkflowDialog, DataDialog
-        from plugins.gppo_interposer_workflow.core.workbook import Worksheet, parse_sheet
-        from plugins.gppo_interposer_workflow.core.model import HEADERS
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog, DataDialog
+        from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
+        from plugins.connector_interposer_workflow.core.model import HEADERS
         dialog = WorkflowDialog()
         self.assertEqual(tuple(dialog.book.GetPageText(i) for i in range(dialog.book.GetPageCount())), PAGES)
         self.assertFalse(dialog.view_button.IsEnabled())
@@ -150,8 +150,8 @@ class NativeControllerEndToEndTests(unittest.TestCase):
         cls.p = pcbnew
 
     def test_saved_native_population_to_project_copy_and_reopen_noop(self):
-        from plugins.gppo_interposer_workflow.controller import NativeProcessBackend
-        from test_gppo_schematic import fixture
+        from plugins.connector_interposer_workflow.controller import NativeProcessBackend
+        from test_connector_interposer_schematic import fixture
         import csv
         import hashlib
         with tempfile.TemporaryDirectory() as temporary:
@@ -192,7 +192,7 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             part = interposer_parts['E1'].footprint
             controller.config['interposers']['E1'] = dict(part.pin(), approved=True, pose=[70, 60, 0])
             symbol = library/'Approved.kicad_sym'
-            controller.config['gppo_symbol'] = {'path': str(symbol), 'library_id': 'Approved:GPPO', 'sha256': hashlib.sha256(symbol.read_bytes()).hexdigest()}
+            controller.config['connector_symbol'] = {'path': str(symbol), 'library_id': 'Approved:GPPO', 'sha256': hashlib.sha256(symbol.read_bytes()).hexdigest()}
             controller.config['mechanical'] = {'layer': 'Dwgs.User', 'accepted': True, 'label_offset': [-2.54, -2.54]}
             before = path.read_bytes()
             controller.set_gang('J101', {'anchor': [21, 30]})
@@ -202,7 +202,7 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             preview = controller.review()
             self.assertEqual(preview['conflicts'], [])
             import io
-            bom_rows = {row['Reference']: row for row in csv.DictReader(io.StringIO(preview['desired']['project_files']['demo-gppo-bom.csv']))}
+            bom_rows = {row['Reference']: row for row in csv.DictReader(io.StringIO(preview['desired']['project_files']['demo-connector-bom.csv']))}
             for reference, instance in preview['desired']['instances'].items():
                 self.assertEqual(instance['symbol_fields'], {name: bom_rows[reference][name] for name in ('Value', 'MPN')})
             controller.config['output_dir'] = str(root/'output')

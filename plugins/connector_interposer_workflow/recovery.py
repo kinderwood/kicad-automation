@@ -26,7 +26,7 @@ def file_hash(path):
 def _write(path, data):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix=".gppo-", dir=str(path.parent))
+    fd, name = tempfile.mkstemp(prefix=".connector-interposer-", dir=str(path.parent))
     try:
         with os.fdopen(fd, "wb") as stream:
             stream.write(data)
@@ -78,7 +78,7 @@ def apply_files(project_root, files, expected, *, closed_project=False,
                if (digest(bytes(b)) if b is not None else None) != expected[n]}
     if not changed:
         return {"status": "NOOP", "journal": None, "changed": []}
-    directory = Path(journal_dir) if journal_dir else root / ".gppo-recovery"
+    directory = Path(journal_dir) if journal_dir else root / ".connector-interposer-recovery"
     directory = directory.resolve()
     directory.mkdir(parents=True, exist_ok=True)
     run = Path(tempfile.mkdtemp(prefix="transaction-", dir=str(directory)))
@@ -91,7 +91,7 @@ def apply_files(project_root, files, expected, *, closed_project=False,
             _write(run / (str(index) + ".after"), content)
         entries[name] = {"before": expected[name], "after": digest(content) if content is not None else None,
                          "backup": backup, "staged": str(index) + ".after"}
-    journal = {"schema": "gppo.recovery/1.0", "root": str(root),
+    journal = {"schema": "connector-interposer.recovery/1.0", "root": str(root),
                "status": "PREPARED", "files": entries}
     location = run / "journal.json"
     _write(location, json.dumps(journal, sort_keys=True, indent=2).encode())
@@ -116,7 +116,7 @@ def recover(journal_path, *, closed_project=False, boundary=None):
     """Restore pre-state only if every file and every backup passes preflight."""
     location = Path(journal_path).resolve()
     journal = json.loads(location.read_text())
-    if journal.get("schema") != "gppo.recovery/1.0":
+    if journal.get("schema") != "connector-interposer.recovery/1.0":
         raise RecoveryError("Unsupported recovery journal")
     root = require_closed(journal["root"], closed_project)
     entries = journal["files"]

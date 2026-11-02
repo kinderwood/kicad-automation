@@ -42,7 +42,7 @@ def validate_records(records, pad_universes=None):
         if not re.fullmatch(r"[1-9][0-9]*", r.connector_pin):
             issues.append(Issue("connector_pin", "Connector Pin must be a positive integer", r.source_row, "connector_pin"))
         if r.signal.casefold() == "gnd":
-            issues.append(Issue("ground_signal", "Installed GPPO center conductors require a signal other than GND", r.source_row, "signal"))
+            issues.append(Issue("ground_signal", "Installed connector signal conductors require a signal other than GND", r.source_row, "signal"))
         for name, key in (("connector", r.key), ("signal", r.signal), ("destination", (r.interposer, r.interposer_pin))):
             if key in seen[name]:
                 issues.append(Issue("duplicate_"+name, f"Duplicate {name} {key}; first seen on row {seen[name][key]}", r.source_row))

@@ -1,6 +1,6 @@
 """Deterministic hierarchical schematics from approved read-only part selections.
 
-No footprint or generic GPPO symbol is authored here. Only the application-local
+No footprint or generic connector symbol is authored here. Only the application-local
 interposer connectivity representation is generated from existing pad numbers.
 """
 import copy
@@ -59,7 +59,7 @@ def _safe_name(kind, identity, page):
 
 
 def _header(identity, library=''):
-    return f'(kicad_sch (version 20250114) (generator "gppo_interposer_workflow") (uuid {q(identity)}) (paper "A4") (lib_symbols {library})'
+    return f'(kicad_sch (version 20250114) (generator "connector_interposer_workflow") (uuid {q(identity)}) (paper "A4") (lib_symbols {library})'
 
 
 def _label(net, x, y, uid):
@@ -84,7 +84,7 @@ def _interposer_lib(lib_id, unit_pads):
     return f'(symbol {q(lib_id)} (pin_names (offset 0) (hide yes)) (in_bom yes) (on_board yes) (property "Reference" "E" (at 0 5 0) {effects()}) (property "Value" {q(name)} (at 0 7 0) {effects()}) '+''.join(units)+')'
 
 
-def generate_schematic(records, gang_parts, interposer_parts, project_id, project_name='gppo_workflow'):
+def generate_schematic(records, gang_parts, interposer_parts, project_id, project_name='connector_interposer_workflow'):
     """Return all tool-owned file contents; callers stage and review before saving.
 
     gang_parts maps gang IDs to PartSelection (approved two-pin symbol required).
@@ -99,7 +99,7 @@ def generate_schematic(records, gang_parts, interposer_parts, project_id, projec
         raise ValueError('; '.join(f'row {i.source_row}: {i.message}' for i in issues))
     missing = {r.connector for r in records}-set(gang_parts)
     if missing:
-        raise ValueError(f'Select approved GPPO parts for {sorted(missing)}')
+        raise ValueError(f'Select approved connector parts for {sorted(missing)}')
     if {r.connector for r in records} & set(interposer_parts):
         raise ValueError('Gang and interposer designations must be distinct')
     uid = lambda key: stable_uuid(project_id, key)
@@ -116,10 +116,10 @@ def generate_schematic(records, gang_parts, interposer_parts, project_id, projec
     for gang in sorted({r.connector for r in records}, key=natural_key):
         part = gang_parts[gang]
         if not part.symbol:
-            raise ValueError(f'Select the librarian-authored two-pin GPPO symbol for {gang}')
+            raise ValueError(f'Select the librarian-authored two-pin connector symbol for {gang}')
         numbers = {p[0] for p in part.symbol.pin_numbers}
         if {part.signal_pin, part.ground_pin} != numbers or numbers != set(part.footprint.pad_numbers):
-            raise ValueError(f'GPPO {gang} symbol/footprint signal and ground pads are incompatible')
+            raise ValueError(f'Connector {gang} symbol/footprint signal and ground pads are incompatible')
         footprint_library(part)
         snapshot_alias = 'WorkflowApproved_'+part.symbol.sha256[:16]
         lib_id = snapshot_alias+':'+part.symbol.library_id.split(':', 1)[1]
@@ -198,7 +198,7 @@ def generate_schematic(records, gang_parts, interposer_parts, project_id, projec
     symbol_entries = []
     for alias, symbols in sorted(symbol_libraries.items()):
         filename = alias+'.kicad_sym'
-        files[filename] = '(kicad_symbol_lib (version 20241209) (generator "gppo_interposer_workflow") '+''.join(symbols[name] for name in sorted(symbols))+')\n'
+        files[filename] = '(kicad_symbol_lib (version 20241209) (generator "connector_interposer_workflow") '+''.join(symbols[name] for name in sorted(symbols))+')\n'
         symbol_entries.append(f'(lib (name {q(alias)}) (type "KiCad") (uri {q("${KIPRJMOD}/"+filename)}) (options "") (descr "Pinned Workflow project symbols"))')
     files['sym-lib-table'] = '(sym_lib_table '+''.join(symbol_entries)+')\n'
     files['fp-lib-table'] = '(fp_lib_table '+''.join(f'(lib (name {q(alias)}) (type "KiCad") (uri {q(path)}) (options "") (descr "Read-only approved footprint source"))' for alias,path in sorted(footprint_libraries.items()))+')\n'

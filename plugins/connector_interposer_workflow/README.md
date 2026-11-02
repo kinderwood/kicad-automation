@@ -1,19 +1,21 @@
-# GPPO Interposer Workflow
+# Connector to Interposer Workflow
 
-Version **0.1.0**, testing release. The package targets KiCad 9.0.0 through
+Version **0.2.0**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
-This independent PCB Action Plugin consumes librarian-approved GPPO footprints,
-interposer footprints, two-pin GPPO symbols and immutable RF artifact bundles.
+This independent PCB Action Plugin consumes librarian-approved two-pin connector
+footprints and symbols, interposer footprints, and optional immutable RF artifact
+bundles. The validated connector profile is currently a signal contact plus a
+ground/shield contact; broader DC and multi-contact profiles are future work.
 It never invokes the BGA Interposer Wizard or an RF authoring tool and exposes
 no footprint creation, recipe editing or variant-authoring controls.
 
 Install through the repository's Plugin and Content Manager catalogue, or copy
 this complete package directory into KiCad's user scripting `plugins` directory.
 Restart PCB Editor or refresh plugins, then choose **Tools → External Plugins →
-GPPO Interposer Workflow**. Save the project before opening the modeless native
-wx dialog. Python core modules also run without KiCad or wx dependencies.
+Connector to Interposer Workflow**. Save the project before opening the modeless
+native wx dialog. Python core modules also run without KiCad or wx dependencies.
 
 ## Saved-state workflow
 
@@ -34,7 +36,7 @@ an already-open source board does not update the output copy.
    and review netclass permissions. New combinations start allowed; existing
    restrictions survive subsequent imports and stackup additions.
 3. **Validation:** select the approved interposer footprint and its reference,
-   placement, and an approved standalone two-pin GPPO symbol from a
+   placement, and an approved standalone two-pin connector symbol from a
    `.kicad_sym` library. Supply the symbol's `Library:Symbol` ID. The selected
    interposer's electrical pad universe is authoritative; unused pads become
    ground. Literal external connector references such as `J101-1` are retained.
@@ -71,11 +73,13 @@ an already-open source board does not update the output copy.
    copy. Recovery requires a closed output project and matching expected file
    hashes; later edits are not silently overwritten.
 
-The source `.gppo-workflow.json` sidecar stores project identity and UI drafts,
+The source `.connector-interposer-workflow.json` sidecar stores project identity
+and UI drafts,
 including mappings, ignored rows, layer policy, independent gang definitions,
 artifact selections and accepted mechanical inputs. The exact accepted workbook
-is snapshotted under `.gppo-inputs`; selected parts, approved symbols and RF
-artifacts remain pinned under `.gppo-pinned`. Generated project-local footprint
+is snapshotted under `.connector-interposer-inputs`; selected parts, approved
+symbols and RF artifacts remain pinned under `.connector-interposer-pinned`.
+Generated project-local footprint
 aliases avoid taking over designer library-table entries. Generated-file ownership,
 instance UUIDs and immutable artifact pins are stored separately in the project.
 Existing unowned schematics or conflicting library-table aliases are blocking

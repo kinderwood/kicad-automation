@@ -12,9 +12,9 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
 import pcbnew as p
-from gppo_interposer_workflow.backend import BackendError, NativeBackend, board_state, uuid_of
-from gppo_interposer_workflow.recovery import recover
-from test_gppo_artifacts import artifact_fixture, rehash
+from connector_interposer_workflow.backend import BackendError, NativeBackend, board_state, uuid_of
+from connector_interposer_workflow.recovery import recover
+from test_connector_interposer_artifacts import artifact_fixture, rehash
 
 
 class BackendTests(unittest.TestCase):
@@ -62,7 +62,7 @@ class BackendTests(unittest.TestCase):
                   "net_settings": {"meta": {"version": 4}, "classes": [{"name": "RF", "priority": 0}],
                   "netclass_patterns": [{"netclass": "RF", "pattern": "CLOCK"}, {"netclass": "RF", "pattern": "DATA"}]}}))
         (self.source/"ordinary.kicad_sch").write_text("designer sheet")
-        self.desired = {"instances": {"J101-1": {"gang": "J101", "kind": "gppo", "footprint": self.selection,
+        self.desired = {"instances": {"J101-1": {"gang": "J101", "kind": "connector", "footprint": self.selection,
                          "pose": [20, 20, 0], "pads": {"1": "CLOCK", "2": "GND"}, "netclass": "RF", "signal_layer": "In2.Cu",
                          "rf": {"artifact": artifact_fixture(self.selection["sha256"]), "nets": {"signal": "CLOCK", "ground": "GND"}, "clock": 90}}}}
 
@@ -76,7 +76,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(source_bytes, self.board_path.read_bytes())
         output = Path(first["board_path"])
         self.assertEqual("designer sheet", (output.parent/"ordinary.kicad_sch").read_text())
-        self.assertTrue(list((output.parent/".gppo-pinned/footprints").glob("*.kicad_mod")))
+        self.assertTrue(list((output.parent/".connector-interposer-pinned/footprints").glob("*.kicad_mod")))
         loaded = p.LoadBoard(str(output))
         state = board_state(loaded, p)
         base = first["registry"]["instances"]["J101-1"]["base"]
@@ -295,7 +295,7 @@ class BackendTests(unittest.TestCase):
             result = original(*args, **kwargs)
             (self.source/"demo.kicad_pro").write_text('{"later":true}')
             return result
-        with mock.patch("gppo_interposer_workflow.backend.shutil.copytree", side_effect=edited):
+        with mock.patch("connector_interposer_workflow.backend.shutil.copytree", side_effect=edited):
             with self.assertRaisesRegex(BackendError, "changed while copying"):
                 self.backend.apply(preview, self.root/"race")
 

@@ -262,7 +262,7 @@ class RFNativeTests(unittest.TestCase):
             for node in ast.walk(tree):
                 names = ([alias.name for alias in node.names] if isinstance(node, ast.Import)
                          else [node.module or ""] if isinstance(node, ast.ImportFrom) else [])
-                self.assertFalse(any("gppo_interposer_workflow" in name for name in names))
+                self.assertFalse(any("connector_interposer_workflow" in name for name in names))
 
     def test_native_plated_signal_and_custom_annular_shield_roundtrip(self):
         from gppo_rf_transition.native import read_base_part
