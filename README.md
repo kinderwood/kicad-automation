@@ -17,7 +17,20 @@ hole center.
 See [`plugins/bga_interposer/README.md`](plugins/bga_interposer/README.md) for
 parameters and manual installation instructions.
 
-## Compatibility
+### GPPO tools (testing builds)
+
+The [GPPO Interposer Workflow](plugins/gppo_interposer_workflow/README.md)
+imports complete spreadsheet snapshots, selects librarian-approved parts,
+reconciles native mechanical geometry and creates a reviewed output project.
+The separate [RF Transition Designer](plugins/gppo_rf_transition/README.md)
+lets librarians author immutable RF geometry artifacts. Neither tool invokes
+the BGA Interposer Wizard. These new packages are testing builds, not qualified
+RF or manufacturing tools.
+
+See the [worked example](examples/gppo_demo/README.md) and
+[implementation acceptance and limitations](docs/gppo-implementation.md).
+
+## Runtime compatibility
 
 All distributed tools support stable KiCad releases from 9.0.0 through 10.0.8.
 

@@ -51,13 +51,22 @@ def main():
             )
 
         module = pcbnew.KICAD_PLUGINS[package_directory]["ModuleName"]
-        assert hasattr(module, "BGAInterposerWizard")
-        wizard = module.BGAInterposerWizard()
-        wizard.BuildFootprint()
-        assert not wizard.AnyErrors(), wizard.GetBuildMessages()
-        pads = list(wizard.module.Pads())
-        assert len(pads) == 337
-        assert sum(pad.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH for pad in pads) == 1
+        if hasattr(module, "BGAInterposerWizard"):
+            wizard = module.BGAInterposerWizard()
+            wizard.BuildFootprint()
+            assert not wizard.AnyErrors(), wizard.GetBuildMessages()
+            pads = list(wizard.module.Pads())
+            assert len(pads) == 337
+            assert sum(pad.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH for pad in pads) == 1
+        else:
+            # Import through the real loader must construct the action plugin;
+            # invoking Run would require the editor's active GUI/board context.
+            plugin = getattr(module, "PLUGIN", None)
+            assert isinstance(plugin, pcbnew.ActionPlugin), package_directory
+            assert plugin.GetName() not in ("", "Undefined Action plugin")
+            assert plugin.GetDescription()
+            assert plugin.GetCategoryName() != "Undefined"
+            assert type(plugin).Run is not pcbnew.ActionPlugin.Run
 
         print(f"KiCad discovered {package_directory} from the PCM layout")
 

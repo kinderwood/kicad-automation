@@ -1,0 +1,104 @@
+(footprint "GPPO_B012_L13_01_EXPERIMENTAL"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(descr "Stage0: OL-B012-L1X-01 rev B minima. Mask/paste/courtyard/internal pads provisional.")
+	(property "Reference" ""
+		(at 0 -2.5 0)
+		(layer "F.SilkS")
+		(uuid "f22db3fe-8c82-452d-8705-61bc3a563cb7")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "GPPO_B012_L13_01_EXPERIMENTAL"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "5f14dd33-ca9b-4cf2-bc31-05aca0268922")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "bbb2a185-8085-4542-9295-e23ecf88974f")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "5c269a6a-4f77-43ae-a872-2fecfb8d9e3e")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(fp_circle
+		(center 0 0)
+		(end 1.8629 0)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "679af9d6-8d94-4490-9609-b2434e2ecb3e")
+	)
+	(fp_circle
+		(center 0 0)
+		(end 1.6129 0)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "b865caa6-f9a4-42e7-be10-3eebf143a5e2")
+	)
+	(pad "1" thru_hole circle
+		(at 0 0)
+		(size 0.508 0.508)
+		(drill 0.381)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers yes)
+		(keep_end_layers yes)
+		(uuid "5e23b1bf-f89f-42d0-918b-598f4d17746d")
+	)
+	(pad "2" smd custom
+		(at 1.11125 0)
+		(size 0.2 0.2)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(options
+			(clearance outline)
+			(anchor circle)
+		)
+		(primitives
+			(gr_circle
+				(center -1.11125 0)
+				(end 0 0)
+				(width 0.952499)
+				(fill no)
+			)
+		)
+		(uuid "6a999a95-2b3f-42cc-988a-b0b160f09e58")
+	)
+	(embedded_fonts no)
+)

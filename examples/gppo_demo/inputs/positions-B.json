@@ -1,0 +1,110 @@
+[
+  {
+    "reference": "J101-1",
+    "pin": 1,
+    "gang": "J101",
+    "x_mm": 40.5371,
+    "y_mm": 87.31249999999999,
+    "uuid": "cda1e61e-e0e5-4294-81c6-88215c92bcfe",
+    "orientation_degrees": -90
+  },
+  {
+    "reference": "J101-2",
+    "pin": 2,
+    "gang": "J101",
+    "x_mm": 40.5371,
+    "y_mm": 95.5675,
+    "uuid": "e156b3f9-1bdb-46c8-a535-49ac5ad9fd47",
+    "orientation_degrees": -90
+  },
+  {
+    "reference": "J101-3",
+    "pin": 3,
+    "gang": "J101",
+    "x_mm": 40.5371,
+    "y_mm": 103.82249999999999,
+    "uuid": "4ee5fe42-8fea-4cdb-b957-963a2f24f919",
+    "orientation_degrees": -90
+  },
+  {
+    "reference": "J101-4",
+    "pin": 4,
+    "gang": "J101",
+    "x_mm": 40.5371,
+    "y_mm": 112.07749999999999,
+    "uuid": "bf70ebf0-5b90-4c4d-89c5-2162a9cdff1f",
+    "orientation_degrees": -90
+  },
+  {
+    "reference": "J101-5",
+    "pin": 5,
+    "gang": "J101",
+    "x_mm": 40.5371,
+    "y_mm": 120.33249999999998,
+    "uuid": "e824e656-4876-46e7-96ad-173fcf90a6fb",
+    "orientation_degrees": -90
+  },
+  {
+    "reference": "J101-6",
+    "pin": 6,
+    "gang": "J101",
+    "x_mm": 40.5371,
+    "y_mm": 128.58749999999998,
+    "uuid": "603f6509-ade1-42fa-b3bb-31583b5da490",
+    "orientation_degrees": -90
+  },
+  {
+    "reference": "J102-1",
+    "pin": 1,
+    "gang": "J102",
+    "x_mm": 175.3629,
+    "y_mm": 87.31249999999999,
+    "uuid": "a31a3960-770a-4e1d-8b36-9ec49169fe57",
+    "orientation_degrees": -90
+  },
+  {
+    "reference": "J102-2",
+    "pin": 2,
+    "gang": "J102",
+    "x_mm": 175.3629,
+    "y_mm": 95.5675,
+    "uuid": "e27c48f1-544f-4296-9c59-b5cb54549f30",
+    "orientation_degrees": -90
+  },
+  {
+    "reference": "J102-3",
+    "pin": 3,
+    "gang": "J102",
+    "x_mm": 175.3629,
+    "y_mm": 103.82249999999999,
+    "uuid": "41179569-f02d-443c-8605-efd4507621c1",
+    "orientation_degrees": -90
+  },
+  {
+    "reference": "J102-4",
+    "pin": 4,
+    "gang": "J102",
+    "x_mm": 175.3629,
+    "y_mm": 112.07749999999999,
+    "uuid": "ac859704-b515-4762-920f-1f18d096d673",
+    "orientation_degrees": -90
+  },
+  {
+    "reference": "J102-5",
+    "pin": 5,
+    "gang": "J102",
+    "x_mm": 175.3629,
+    "y_mm": 120.33249999999998,
+    "uuid": "babe2fc1-2646-4220-9b66-e7188e89ba3a",
+    "orientation_degrees": -90
+  },
+  {
+    "reference": "J102-6",
+    "pin": 6,
+    "gang": "J102",
+    "x_mm": 175.3629,
+    "y_mm": 128.58749999999998,
+    "uuid": "0c217580-1f4a-4d14-93da-bfdd2b4722be",
+    "orientation_degrees": -90
+  }
+]

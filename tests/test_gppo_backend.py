@@ -1,0 +1,375 @@
+"""Native placement, preservation, stale previews and idempotence on KiCad 9/10."""
+import copy
+import hashlib
+import json
+import shutil
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "plugins"))
+import pcbnew as p
+from gppo_interposer_workflow.backend import BackendError, NativeBackend, board_state, uuid_of
+from gppo_interposer_workflow.recovery import recover
+from test_gppo_artifacts import artifact_fixture, rehash
+
+
+class BackendTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.source = self.root/"source"
+        self.source.mkdir()
+        self.backend = NativeBackend(p)
+        # Isolated test fixture only: production always loads librarian files.
+        library = self.root/"approved.pretty"
+        library.mkdir()
+        fp = p.FOOTPRINT(None)
+        fp.SetValue("ApprovedGPPO")
+        for number, x in (("1", 0), ("2", 2)):
+            pad = p.PAD(fp)
+            pad.SetNumber(number)
+            pad.SetAttribute(p.PAD_ATTRIB_SMD)
+            pad.SetShape(p.PAD_SHAPE_CIRCLE)
+            pad.SetSize(p.VECTOR2I(600000, 600000))
+            pad.SetPosition(p.VECTOR2I(x*1000000, 0))
+            ls = p.LSET()
+            ls.AddLayer(p.F_Cu)
+            pad.SetLayerSet(ls)
+            fp.Add(pad)
+        fp.SetFPIDAsString("Approved:GPPO")
+        p.PCB_IO_KICAD_SEXPR().FootprintSave(str(library), fp)
+        part = library/"GPPO.kicad_mod"
+        self.selection = {"path": str(part), "sha256": hashlib.sha256(part.read_bytes()).hexdigest(),
+                          "approved": True, "library_id": "Approved:GPPO"}
+        board = p.BOARD()
+        board.SetCopperLayerCount(4)
+        line = p.PCB_SHAPE(board)
+        line.SetShape(p.SHAPE_T_SEGMENT)
+        line.SetLayer(p.Dwgs_User)
+        line.SetStart(p.VECTOR2I(0, 0))
+        line.SetEnd(p.VECTOR2I(3000000, 0))
+        line.SetWidth(50000)
+        board.Add(line)
+        self.foreign = uuid_of(line)
+        self.board_path = self.source/"demo.kicad_pcb"
+        p.SaveBoard(str(self.board_path), board, True)
+        (self.source/"demo.kicad_pro").write_text(json.dumps({"meta": {"filename": "demo.kicad_pro", "version": 3},
+                  "net_settings": {"meta": {"version": 4}, "classes": [{"name": "RF", "priority": 0}],
+                  "netclass_patterns": [{"netclass": "RF", "pattern": "CLOCK"}, {"netclass": "RF", "pattern": "DATA"}]}}))
+        (self.source/"ordinary.kicad_sch").write_text("designer sheet")
+        self.desired = {"instances": {"J101-1": {"gang": "J101", "kind": "gppo", "footprint": self.selection,
+                         "pose": [20, 20, 0], "pads": {"1": "CLOCK", "2": "GND"}, "netclass": "RF", "signal_layer": "In2.Cu",
+                         "rf": {"artifact": artifact_fixture(self.selection["sha256"]), "nets": {"signal": "CLOCK", "ground": "GND"}, "clock": 90}}}}
+
+    def apply_first(self):
+        preview = self.backend.preview(self.board_path, self.desired)
+        return self.backend.apply(preview, self.root/"first")
+
+    def test_native_copy_ownership_noop_and_incremental_assignment(self):
+        source_bytes = self.board_path.read_bytes()
+        first = self.apply_first()
+        self.assertEqual(source_bytes, self.board_path.read_bytes())
+        output = Path(first["board_path"])
+        self.assertEqual("designer sheet", (output.parent/"ordinary.kicad_sch").read_text())
+        self.assertTrue(list((output.parent/".gppo-pinned/footprints").glob("*.kicad_mod")))
+        loaded = p.LoadBoard(str(output))
+        state = board_state(loaded, p)
+        base = first["registry"]["instances"]["J101-1"]["base"]
+        self.assertIn(self.foreign, state)
+        self.assertEqual({"CLOCK", "GND"}, {x["net"] for x in state[base]["pads"].values()})
+        stamp, raw = output.stat().st_mtime_ns, output.read_bytes()
+        noop = self.backend.preview(output, self.desired)
+        self.assertEqual("NOOP", noop["status"])
+        self.assertEqual("NOOP", self.backend.apply(noop, self.root/"unused")["status"])
+        self.assertFalse((self.root/"unused").exists())
+        self.assertEqual((stamp, raw), (output.stat().st_mtime_ns, output.read_bytes()))
+        changed = copy.deepcopy(self.desired)
+        changed["instances"]["J101-1"]["pads"]["1"] = "DATA"
+        changed["instances"]["J101-1"]["rf"]["nets"]["signal"] = "DATA"
+        preview = self.backend.preview(output, changed)
+        second = self.backend.apply(preview, self.root/"second")
+        self.assertEqual(base, second["registry"]["instances"]["J101-1"]["base"])
+        self.assertEqual(first["registry"]["instances"]["J101-1"]["objects"], second["registry"]["instances"]["J101-1"]["objects"])
+
+    def test_edited_owned_and_routed_net_change_block(self):
+        first = self.apply_first()
+        output = Path(first["board_path"])
+        board = p.LoadBoard(str(output))
+        fp = next(iter(board.GetFootprints()))
+        fp.Move(p.VECTOR2I(100000, 0))
+        p.SaveBoard(str(output), board)
+        preview = self.backend.preview(output, self.desired)
+        self.assertEqual("BLOCKED", preview["status"])
+        with self.assertRaises(BackendError):
+            self.backend.apply(preview, self.root/"forbidden")
+
+    def test_routed_assignment_side_and_library_change_block(self):
+        first = self.apply_first()
+        output = Path(first["board_path"])
+        board = p.LoadBoard(str(output))
+        track = p.PCB_TRACK(board)
+        track.SetStart(p.VECTOR2I(20000000, 20000000))
+        track.SetEnd(p.VECTOR2I(25000000, 20000000))
+        track.SetLayer(p.F_Cu)
+        track.SetWidth(200000)
+        track.SetNet(next(n for n in board.GetNetInfo().NetsByNetcode().values() if n.GetNetname() == "CLOCK"))
+        board.Add(track)
+        p.SaveBoard(str(output), board)
+        for mode in ("net", "side", "library"):
+            desired = copy.deepcopy(self.desired)
+            instance = desired["instances"]["J101-1"]
+            if mode == "net":
+                instance["pads"]["1"] = "DATA"
+                instance["rf"]["nets"]["signal"] = "DATA"
+            elif mode == "side":
+                instance["side"] = "B"
+                del instance["rf"]
+            else:
+                instance["footprint"]["library_id"] = "Approved:OtherAlias"
+            preview = self.backend.preview(output, desired)
+            self.assertTrue(any(c["kind"] == "routed-net-change" for c in preview["conflicts"]), mode)
+
+    def test_one_parent_per_gang_removal_reintroduction_and_foreign_member(self):
+        desired = copy.deepcopy(self.desired)
+        for i in range(2, 7):
+            desired["instances"]["J101-"+str(i)] = copy.deepcopy(desired["instances"]["J101-1"])
+            desired["instances"]["J101-"+str(i)]["pose"][0] += i*4
+        first = self.backend.apply(self.backend.preview(self.board_path, desired), self.root/"six")
+        board = p.LoadBoard(first["board_path"])
+        self.assertEqual(7, len(list(board.Groups())))
+        self.assertEqual(1, sum(g.GetName() == "Workflow:J101" for g in board.Groups()))
+        former = first["registry"]["instances"]["J101-1"]["base"]
+        removed = copy.deepcopy(desired)
+        del removed["instances"]["J101-1"]
+        second = self.backend.apply(self.backend.preview(first["board_path"], removed), self.root/"five")
+        loaded = p.LoadBoard(second["board_path"])
+        self.assertEqual(5, len(list(loaded.GetFootprints())))
+        self.assertNotIn(former, board_state(loaded, p))
+        third = self.backend.apply(self.backend.preview(second["board_path"], desired), self.root/"six-again")
+        self.assertNotEqual(former, third["registry"]["instances"]["J101-1"]["base"])
+        for key in removed["instances"]:
+            self.assertEqual(first["registry"]["instances"][key]["base"], third["registry"]["instances"][key]["base"])
+        # A foreign item in an owned group must survive the next own-object edit.
+        board = p.LoadBoard(third["board_path"])
+        line = next(x for x in board.GetDrawings() if uuid_of(x) == self.foreign)
+        foreign = uuid_of(line)
+        group_id = third["registry"]["instances"]["J101-1"]["group"]
+        next(g for g in board.Groups() if uuid_of(g) == group_id).AddItem(line)
+        p.SaveBoard(third["board_path"], board)
+        changed = copy.deepcopy(desired)
+        changed["instances"]["J101-1"]["rf"]["clock"] = 180
+        fourth = self.backend.apply(self.backend.preview(third["board_path"], changed), self.root/"foreign-kept")
+        self.assertIn(foreign, board_state(p.LoadBoard(fourth["board_path"]), p))
+
+    def test_offline_project_relocation_noop(self):
+        first = self.apply_first()
+        moved = self.root/"moved"
+        shutil.copytree(Path(first["board_path"]).parent, moved)
+        Path(self.selection["path"]).unlink()
+        board = moved/"demo.kicad_pcb"
+        preview = self.backend.preview(board, self.desired)
+        self.assertEqual("NOOP", preview["status"])
+        self.assertEqual("NOOP", self.backend.apply(preview, self.root/"unused")["status"])
+
+    def test_native_output_recovery_restores_exact_pre_board_and_new_file_absence(self):
+        before = self.board_path.read_bytes()
+        result = self.apply_first()
+        recover(result["journal"], closed_project=True)
+        output = Path(result["board_path"])
+        self.assertEqual(before, output.read_bytes())
+        self.assertFalse(Path(result["registry_path"]).exists())
+        self.assertFalse(Path(result["report_path"]).exists())
+        restored = p.LoadBoard(str(output))
+        self.assertEqual(0, len(list(restored.GetFootprints())))
+        self.assertIn(self.foreign, board_state(restored, p))
+
+    def test_generated_file_ownership(self):
+        desired = copy.deepcopy(self.desired)
+        desired["project_files"] = {"ordinary.kicad_sch": "replacement"}
+        self.assertEqual("BLOCKED", self.backend.preview(self.board_path, desired)["status"])
+        desired["project_files"] = {"generated.kicad_sch": "generated sheet"}
+        first = self.backend.apply(self.backend.preview(self.board_path, desired), self.root/"generated")
+        (Path(first["board_path"]).parent/"generated.kicad_sch").write_text("manual edit")
+        self.assertTrue(any(c["kind"] == "generated-file-edit" for c in self.backend.preview(first["board_path"], desired)["conflicts"]))
+
+    def test_same_net_name_native_netclass_change_uses_reviewed_project_settings(self):
+        first = self.apply_first()
+        output = Path(first["board_path"])
+        desired = copy.deepcopy(self.desired)
+        spec = desired["instances"]["J101-1"]
+        spec["netclass"] = "DATA"
+        spec["rf"]["artifact"]["revision"] = 2
+        spec["rf"]["artifact"]["compatibility"]["netclasses"] = ["RF", "DATA"]
+        rehash(spec["rf"]["artifact"])
+        settings = json.loads((output.parent/"demo.kicad_pro").read_text())
+        settings["net_settings"]["classes"].append({"name": "DATA", "priority": 0})
+        settings["net_settings"]["netclass_patterns"] = [{"netclass": "DATA", "pattern": "CLOCK"}]
+        desired["project_files"] = {"demo.kicad_pro": json.dumps(settings)}
+        desired["project_file_merges"] = ["demo.kicad_pro"]
+        result = self.backend.apply(self.backend.preview(output, desired), self.root/"new-class")
+        board = p.LoadBoard(result["board_path"])
+        net = next(n for n in board.GetNetInfo().NetsByNetcode().values() if n.GetNetname() == "CLOCK")
+        self.assertTrue(net.GetNetClassSlow().ContainsNetclassWithName("DATA"))
+        self.assertEqual(first["registry"]["instances"]["J101-1"]["base"], result["registry"]["instances"]["J101-1"]["base"])
+
+    def test_project_schematic_value_and_mpn_fields_roundtrip_without_library_mutation(self):
+        library = Path(self.selection["path"])
+        original, stamp = library.read_bytes(), library.stat().st_mtime_ns
+        desired = copy.deepcopy(self.desired)
+        desired["instances"]["J101-1"]["symbol_fields"] = {"Value": "LibrarianGPPO", "MPN": "B012-L13-01"}
+        interposer = copy.deepcopy(desired["instances"]["J101-1"])
+        interposer.update(kind="interposer", gang="Interposer", pose=[40,20,0], symbol_fields={"Value": "Interposer", "MPN": ""})
+        del interposer["rf"]
+        desired["instances"]["E1"] = interposer
+        result = self.backend.apply(self.backend.preview(self.board_path, desired), self.root/"fields")
+        board = p.LoadBoard(result["board_path"])
+        footprints = {fp.GetReference(): fp for fp in board.GetFootprints()}
+        self.assertEqual("LibrarianGPPO", footprints["J101-1"].GetValue())
+        self.assertEqual("B012-L13-01", footprints["J101-1"].GetFieldText("MPN"))
+        self.assertEqual("Interposer", footprints["E1"].GetValue())
+        self.assertTrue(footprints["E1"].HasField("MPN"))
+        self.assertEqual("", footprints["E1"].GetFieldText("MPN"))
+        self.assertEqual((original, stamp), (library.read_bytes(), library.stat().st_mtime_ns))
+        output = Path(result["board_path"])
+        raw, saved = output.read_bytes(), output.stat().st_mtime_ns
+        self.assertEqual("NOOP", self.backend.apply(self.backend.preview(output, desired), self.root/"unused-fields")["status"])
+        self.assertEqual((raw, saved), (output.read_bytes(), output.stat().st_mtime_ns))
+
+    def test_rf_layer_side_and_netclass_are_independent_checks(self):
+        for mode in ("layer", "side", "class"):
+            desired = copy.deepcopy(self.desired)
+            spec = desired["instances"]["J101-1"]
+            artifact = spec["rf"]["artifact"]
+            artifact["payload"]["layer_roles"] = {"mount": "F.Cu", "signal": "In2.Cu"}
+            spec["signal_layer"] = "In2.Cu"
+            spec["netclass"] = "RF"
+            if mode == "layer":
+                spec["signal_layer"] = "In1.Cu"
+            elif mode == "side":
+                spec["side"] = "B"
+            else:
+                spec["netclass"] = "DATA"
+            rehash(artifact)
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                self.backend.preview(self.board_path, desired)
+
+    def test_selected_native_outline_mounting_hole_and_noop(self):
+        board = p.LoadBoard(str(self.board_path))
+        ids = []
+        for a, b in (((5,5),(60,5)),((60,5),(60,40)),((60,40),(5,40)),((5,40),(5,5))):
+            line = p.PCB_SHAPE(board)
+            line.SetShape(p.SHAPE_T_SEGMENT)
+            line.SetStart(p.VECTOR2I(*[int(x*1e6) for x in a]))
+            line.SetEnd(p.VECTOR2I(*[int(x*1e6) for x in b]))
+            line.SetLayer(p.Dwgs_User)
+            line.SetWidth(50000)
+            board.Add(line)
+            ids.append(uuid_of(line))
+        p.SaveBoard(str(self.board_path), board)
+        desired = copy.deepcopy(self.desired)
+        hole = copy.deepcopy(desired["instances"]["J101-1"])
+        hole.update(kind="mounting-hole", gang="Mounting", pose=[10, 10, 0], pads={})
+        del hole["rf"]
+        desired["instances"]["H1"] = hole
+        desired["outline"] = {"enabled": True, "source_layer": "Dwgs.User", "outer_uuids": ids, "cutout_uuids": []}
+        preview = self.backend.preview(self.board_path, desired)
+        result = self.backend.apply(preview, self.root/"outline")
+        board = p.LoadBoard(result["board_path"])
+        self.assertEqual(4, sum(x.GetLayer() == p.Edge_Cuts for x in board.GetDrawings()))
+        self.assertTrue(set(ids) <= set(board_state(board, p)))
+        fp = next(x for x in board.GetFootprints() if x.GetReference() == "H1")
+        self.assertTrue(fp.GetAttributes() & p.FP_BOARD_ONLY)
+        self.assertTrue(fp.IsExcludedFromBOM())
+        self.assertTrue(fp.IsExcludedFromPosFiles())
+        self.assertEqual("NOOP", self.backend.preview(result["board_path"], desired)["status"])
+
+    def test_source_edit_during_copy_rejected(self):
+        preview = self.backend.preview(self.board_path, self.desired)
+        original = shutil.copytree
+        def edited(*args, **kwargs):
+            result = original(*args, **kwargs)
+            (self.source/"demo.kicad_pro").write_text('{"later":true}')
+            return result
+        with mock.patch("gppo_interposer_workflow.backend.shutil.copytree", side_effect=edited):
+            with self.assertRaisesRegex(BackendError, "changed while copying"):
+                self.backend.apply(preview, self.root/"race")
+
+    def test_mechanical_explicit_offset_and_population_guard(self):
+        board = p.LoadBoard(str(self.board_path))
+        circle = p.PCB_SHAPE(board)
+        circle.SetShape(p.SHAPE_T_CIRCLE)
+        circle.SetStart(p.VECTOR2I(20000000,20000000))
+        circle.SetEnd(p.VECTOR2I(21000000,20000000))
+        circle.SetWidth(50000)
+        circle.SetLayer(p.Dwgs_User)
+        board.Add(circle)
+        label = p.PCB_TEXT(board)
+        label.SetText("J101-1")
+        label.SetPosition(p.VECTOR2I(17460000,17460000))
+        label.SetLayer(p.Dwgs_User)
+        board.Add(label)
+        p.SaveBoard(str(self.board_path), board)
+        self.assertTrue(self.backend.inspect_graphics(self.board_path)["errors"])
+        accepted = self.backend.inspect_graphics(self.board_path, "Dwgs.User", [-2.54,-2.54])
+        self.assertEqual([], accepted["errors"])
+        desired = copy.deepcopy(self.desired)
+        desired["mechanical"] = {name: accepted[name] for name in ("source_layer", "label_offset", "locations")}
+        self.assertEqual("PREVIEW", self.backend.preview(self.board_path, desired)["status"])
+        desired["instances"] = {}
+        with self.assertRaisesRegex(BackendError, "populations"):
+            self.backend.preview(self.board_path, desired)
+
+    def test_stale_project_files_and_preview_tampering(self):
+        preview = self.backend.preview(self.board_path, self.desired)
+        (self.source/"demo.kicad_pro").write_text('{"later":true}')
+        with self.assertRaises(BackendError):
+            self.backend.apply(preview, self.root/"stale")
+        preview = self.backend.preview(self.board_path, self.desired)
+        preview["desired"]["instances"]["J101-1"]["pose"][0] = 99
+        with self.assertRaises(BackendError):
+            self.backend.apply(preview, self.root/"tampered")
+
+    def test_arbitrary_adjacent_microvia_stack(self):
+        board = p.LoadBoard(str(self.board_path))
+        board.SetCopperLayerCount(6)
+        p.SaveBoard(str(self.board_path), board)
+        desired = copy.deepcopy(self.desired)
+        artifact = desired["instances"]["J101-1"]["rf"]["artifact"]
+        via = artifact["payload"]["objects"][0]
+        artifact["payload"]["objects"] = []
+        layers = ["F.Cu", "In1.Cu", "In2.Cu", "In3.Cu", "In4.Cu", "B.Cu"]
+        artifact["compatibility"]["stackup"] = layers
+        for i in range(5):
+            obj = dict(via, id="stack-"+str(i), via_type="microvia", layers=layers[i:i+2])
+            artifact["payload"]["objects"].append(obj)
+        rehash(artifact)
+        result = self.backend.apply(self.backend.preview(self.board_path, desired), self.root/"stack")
+        board = p.LoadBoard(result["board_path"])
+        self.assertEqual(5, len(list(board.GetTracks())))
+        self.assertTrue(all(v.HasValidLayerPair(6) for v in board.GetTracks()))
+
+    def test_native_copper_arc_polygon_and_circular_rule_area(self):
+        desired = copy.deepcopy(self.desired)
+        artifact = desired["instances"]["J101-1"]["rf"]["artifact"]
+        artifact["payload"]["objects"] += [
+            {"id": "signal-arc", "type": "copper", "shape": "arc", "net": "signal", "layer": "F.Cu",
+             "start": [0,0], "mid": [.70710678,.29289322], "end": [1,1], "width": .25},
+            {"id": "signal-polygon", "type": "copper", "shape": "polygon", "net": "signal", "layer": "F.Cu",
+             "points": [[-.3,-.3],[.3,-.3],[.3,.3],[-.3,.3]]},
+            {"id": "circle-keepout", "type": "keepout", "shape": "circle", "net": "ground", "layers": ["B.Cu"],
+             "at": [0,0], "diameter": 1.2, "prohibit": ["copperpour"]}]
+        rehash(artifact)
+        result = self.backend.apply(self.backend.preview(self.board_path, desired), self.root/"curves")
+        board = p.LoadBoard(result["board_path"])
+        shapes = list(board.GetDrawings())
+        self.assertTrue(any(x.GetShape() == p.SHAPE_T_ARC and x.GetNetname() == "CLOCK" for x in shapes))
+        self.assertTrue(any(x.GetShape() == p.SHAPE_T_POLY and x.GetNetname() == "CLOCK" for x in shapes))
+
+
+if __name__ == "__main__":
+    unittest.main()

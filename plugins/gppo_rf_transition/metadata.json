@@ -1,0 +1,14 @@
+{
+  "$schema": "https://go.kicad.org/pcm/schemas/v1",
+  "name": "GPPO RF Transition Designer",
+  "description": "Librarian authoring of immutable GPPO RF transition artifacts and recipes",
+  "description_full": "An independent native KiCad librarian ActionPlugin for reading approved GPPO library footprints, authoring parameterized signal via stacks, layer-specific copper enlargement, antipads and ground-via arcs with validated exit corridors, reopening recipes, cloning variants and publishing immutable revisions. Saves exact declarative board geometry, complete recipes, dependency pins and SHA-256 integrity hashes for offline consumption. Source footprints and placed boards are never edited. This testing prerelease supports KiCad 9.0.0 through 10.0.8; fabrication and RF electromagnetic qualification remain outside the tool.",
+  "identifier": "com.github.kinderwood.kicad-automation.gppo-rf-transition",
+  "type": "plugin",
+  "author": {"name": "kinderwood", "contact": {"web": "https://github.com/kinderwood/kicad-automation"}},
+  "maintainer": {"name": "kinderwood", "contact": {"web": "https://github.com/kinderwood/kicad-automation"}},
+  "license": "GPL",
+  "resources": {"homepage": "https://github.com/kinderwood/kicad-automation/tree/main/plugins/gppo_rf_transition"},
+  "tags": ["rf", "gppo", "library"],
+  "versions": [{"version": "0.1.0", "status": "testing", "kicad_version": "9.0", "kicad_version_max": "10.0"}]
+}

@@ -1,0 +1,143 @@
+"""Domain tests run in ordinary Python and bundled KiCad Python."""
+import dataclasses
+import hashlib
+import math
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+import uuid
+import zipfile
+
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'plugins'))
+from gppo_interposer_workflow.core import *
+from gppo_interposer_workflow.core.outline import Segment, validate_outline
+from gppo_interposer_workflow.core.sexpr import loads, dumps
+
+
+def rectangle(x,y,w,h):
+    points = [(x,y),(x+w,y),(x+w,y+h),(x,y+h)]
+    return [Segment(points[i],points[(i+1)%4]) for i in range(4)]
+
+
+class WorkbookTests(unittest.TestCase):
+    def test_preamble_mapping_all_rows_and_ignored(self):
+        sheet = Worksheet('Pins', (('Title',),HEADERS,('SIG','RF','E1','A1','J101','1','L1'),(),('bad',)))
+        table = parse_sheet(sheet,header_row=2,ignored_rows=(4,))
+        self.assertTrue(table.mapping_complete)
+        self.assertTrue(table.view_data_enabled)
+        self.assertEqual((table.included_count,table.ignored_count),(2,1))
+        self.assertEqual([r.source_row for r in table.rows],[3,4,5])
+        self.assertFalse(table.valid)
+        self.assertTrue(table.rows[-1].issues)
+        self.assertEqual(table.records[0].key,'J101-1')
+        self.assertFalse(parse_sheet(sheet,2,ignored_rows=(1,)).view_data_enabled)
+
+    def test_manual_mapping_and_duplicate_headers(self):
+        sheet = Worksheet('manual', (('Signal','Signal'),('S','RF','E1','A1','J1','1','L1')))
+        self.assertFalse(parse_sheet(sheet).mapping_complete)
+        self.assertTrue(parse_sheet(sheet,mapping=dict(zip(HEADERS,range(7)))).valid)
+        mapping=dict(zip(HEADERS,range(7)));mapping['Layer']=0
+        self.assertFalse(parse_sheet(sheet,mapping=mapping).view_data_enabled)
+        mapping['Layer']=99
+        self.assertFalse(parse_sheet(sheet,mapping=mapping).mapping_complete)
+        self.assertFalse(parse_sheet(sheet,ignored_rows=('3',4)).view_data_enabled)
+
+    def test_xlsx_shared_inline_sparse_and_formula_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'pins.xlsx'
+            with zipfile.ZipFile(path,'w') as z:
+                z.writestr('xl/workbook.xml','<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Pins" sheetId="1" r:id="rId1"/></sheets></workbook>')
+                z.writestr('xl/_rels/workbook.xml.rels','<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>')
+                z.writestr('xl/sharedStrings.xml','<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><r><t>Sig</t></r><r><t>nal</t></r><rPh sb="0" eb="3"><t>phonetic</t></rPh></si></sst>')
+                z.writestr('xl/worksheets/sheet1.xml','<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="2"><c r="A2" t="s"><v>0</v></c><c r="C2" t="inlineStr"><is><t>NetClass</t></is></c></row><row r="4"><c r="A4"><f>1+1</f></c></row></sheetData></worksheet>')
+            sheet=read_workbook(path).sheets[0]
+            self.assertEqual(sheet.rows[1],('Signal','','NetClass'))
+            self.assertEqual(sheet.rows[2],())
+            self.assertIn('formula',sheet.rows[3][0])
+            negative=Path(tmp)/'negative.xlsx'
+            with zipfile.ZipFile(path) as source, zipfile.ZipFile(negative,'w') as target:
+                for name in source.namelist():
+                    payload=source.read(name)
+                    if name.endswith('sheet1.xml'):payload=payload.replace(b'<v>0</v>',b'<v>-1</v>')
+                    target.writestr(name,payload)
+            with self.assertRaises(ValueError):read_workbook(negative)
+
+    def test_complete_snapshot_duplicates_and_pad_authority(self):
+        row=SignalRecord('S','RF','E1','A1','J1','1','L1',4)
+        issues=validate_records((row,dataclasses.replace(row,source_row=8)),{'E1':('B1',)})
+        self.assertEqual({i.code for i in issues},{'duplicate_connector','duplicate_signal','duplicate_destination','pad_missing'})
+        diff=diff_snapshots((row,),())
+        self.assertEqual(diff.removed,('J1-1',))
+        for pin in ('²', '01', '0', '-1', '١'):
+            self.assertIn('connector_pin', {i.code for i in validate_records([dataclasses.replace(row,connector_pin=pin)])})
+        self.assertEqual(diff_snapshots((row,),(dataclasses.replace(row,source_row=9),)).unchanged,('J1-1',))
+
+    def test_layer_rules_default_all_and_persisted_rejection(self):
+        rules=LayerRules();self.assertEqual(len(rules.synchronize(['RF'],['F.Cu','B.Cu'])),2)
+        rules.permissions['RF']['B.Cu']=False
+        rules.synchronize(['RF','DATA'],['F.Cu','B.Cu','In1.Cu'])
+        self.assertFalse(rules.allowed('RF','B.Cu'))
+        record=SignalRecord('S','RF','E1','A1','J1','1','L2',7)
+        self.assertEqual(validate_layers([record],{'L2':'B.Cu'},['F.Cu','B.Cu'],rules)[0].source_row,7)
+        self.assertEqual(validate_layers([record],{'L2':'In1.Cu'},['F.Cu','B.Cu'],rules)[0].code,'layer_missing')
+
+
+class GeometryTests(unittest.TestCase):
+    def test_custom_numbering_location_one_anchor_and_independence(self):
+        g=GangDefinition('J1',(2,2),2,3,row_offsets=(0,1),numbering=(3,4,1,2),rotation=90,anchor=(10,20))
+        points=g.positions()
+        self.assertEqual(points['1'],(10,20))
+        self.assertAlmostEqual(points['2'][0],10)
+        self.assertAlmostEqual(points['2'][1],18)
+        self.assertEqual(GangDefinition('J2',(1,),100,100).positions(),{'1':(0,0)})
+        self.assertEqual(set(GangDefinition('J2',(3,),2,3,numbering=(1,3,6)).positions()),{'1','3','6'})
+        self.assertEqual(GangDefinition('J3',(2,),100,100,units='mil').positions()['2'],(2.54,0))
+        with self.assertRaises(ValueError):dataclasses.replace(g,numbering=(1,1,2,3)).positions()
+        with self.assertRaises(ValueError):dataclasses.replace(g,pitch_x=float('nan')).positions()
+
+    def test_serpentine_and_population(self):
+        points=GangDefinition('J1',(3,2),2,2,traversal='serpentine').positions()
+        self.assertEqual(points['4'],(2,2))
+        row=SignalRecord('S','RF','E1','A1','J1','1','L1')
+        with self.assertRaises(ValueError):validate_mechanical_population([row],['J1-1','J1-1'])
+
+    def test_outline_strict_topology_intent(self):
+        self.assertEqual(len(validate_outline(rectangle(0,0,20,20),[rectangle(5,5,3,3)])),2)
+        self.assertTrue(validate_outline([s.reversed() for s in reversed(rectangle(0,0,20,20))]))
+        for cutout in (rectangle(21,5,3,3),rectangle(0,5,3,3),rectangle(19,5,3,3)):
+            with self.assertRaises(ValueError):validate_outline(rectangle(0,0,20,20),[cutout])
+        with self.assertRaises(ValueError):validate_outline(rectangle(0,0,20,20)[:-1])
+        with self.assertRaises(ValueError):validate_outline(rectangle(0,0,20,20)*2)
+        with self.assertRaises(ValueError):validate_outline([Segment((0,0),(10,10)),Segment((10,10),(0,10)),Segment((0,10),(10,0)),Segment((10,0),(0,0))])
+        with self.assertRaises(ValueError):validate_outline(rectangle(0,0,20,20),[rectangle(2,2,10,10),rectangle(3,3,2,2)])
+
+    def test_arc_boundaries_are_not_chords(self):
+        circle=[Segment((10,0),(-10,0),(0,10)),Segment((-10,0),(10,0),(0,-10))]
+        self.assertTrue(validate_outline(circle,[rectangle(-1,-1,2,2)]))
+        with self.assertRaises(ValueError):validate_outline(circle,[rectangle(8,5,2,2)])
+        with self.assertRaises(ValueError):validate_outline(circle,[rectangle(10,-1,2,2)])
+        with self.assertRaises(ValueError):validate_outline(circle,[rectangle(-11,-1,2,2)])
+
+
+class LibraryTests(unittest.TestCase):
+    def test_approved_pad_universe_repeated_ground_and_npth(self):
+        content='(footprint "Approved" (pad "A1" thru_hole circle (at 0 0) (size 1 1) (drill .5) (layers "*.Cu" "*.Mask")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu")) (pad "2" smd rect (at 3 0) (size 1 1) (layers "F.Cu")) (pad "" np_thru_hole circle (at 4 0) (size 1 1) (drill 1) (layers "*.Cu" "*.Mask")))'
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'Approved.kicad_mod';path.write_text(content)
+            part=read_footprint(path,'Approved:Approved')
+            self.assertEqual(set(part.pad_numbers),{'A1','2'})
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),part.sha256)
+            with self.assertRaises(ValueError):read_footprint(path,'Approved:Approved','a'*64)
+            path.write_text('(footprint "Hole" (pad "" np_thru_hole circle (at 0 0) (size 1 1) (drill 1) (layers "*.Cu" "*.Mask")))')
+            with self.assertRaises(ValueError):read_footprint(path,'Approved:Approved')
+            self.assertEqual(read_footprint(path,'Approved:Approved',allow_mechanical=True).pad_numbers,())
+        self.assertEqual(loads(dumps(loads('(a "a \\"quoted\\"" (b 1))'))),loads('(a "a \\"quoted\\"" (b 1))'))
+
+    def test_project_schema_identity(self):
+        config=ProjectConfig();self.assertEqual(ProjectConfig.from_dict(config.to_dict()).project_id,config.project_id)
+        self.assertEqual(stable_uuid(config.project_id,'symbol/J1-1'),stable_uuid(config.project_id,'symbol/J1-1'))
+        with self.assertRaises(ValueError):ProjectConfig.from_dict({'project_id':config.project_id,'schema_version':2})
+
+
+if __name__=='__main__':unittest.main()

@@ -10,6 +10,8 @@ if [ "${KICAD_USE_SYSTEM:-0}" = "1" ]; then
 else
     appdir=${KICAD_APPDIR:-/workspace/shared/kicad-10.0.8/AppDir}
     plugin_dir="$appdir/share/kicad/scripting/plugins"
+    GPPO_TEST_APP_RUN="$appdir/AppRun"
+    export GPPO_TEST_APP_RUN
 
     run_kicad_python() {
         "$appdir/AppRun" python3.11 "$@"
@@ -22,10 +24,12 @@ KICAD_WIZARD_DIR="$plugin_dir" \
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' EXIT
 
-plugin_archive=$(python3 scripts/build_pcm.py \
+python3 scripts/build_pcm.py \
     --base-url https://example.test/kicad \
-    --output-dir "$test_root/dist")
+    --output-dir "$test_root/dist" > "$test_root/archives.txt"
 
-run_kicad_python scripts/test_kicad_loader.py \
-    "$plugin_archive" \
-    --builtin-plugins "$plugin_dir"
+while IFS= read -r plugin_archive; do
+    run_kicad_python scripts/test_kicad_loader.py \
+        "$plugin_archive" \
+        --builtin-plugins "$plugin_dir"
+done < "$test_root/archives.txt"

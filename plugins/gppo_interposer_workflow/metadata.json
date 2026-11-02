@@ -1,0 +1,14 @@
+{
+  "$schema": "https://go.kicad.org/pcm/schemas/v1",
+  "name": "GPPO Interposer Workflow",
+  "description": "Validate workbook connectivity and reconcile approved GPPO artifacts in a project copy",
+  "description_full": "Native KiCad workflow for authoritative workbook import, source-row inspection, copper-layer permissions, independent gang placement, approved read-only footprint and RF artifact selection, DXF circle anchors, optional managed board outlines, deterministic schematic and BOM generation, reviewed reconciliation and journal recovery. Applies to a separate controlled project copy. Footprint and RF authoring remain separate librarian tools. Initial testing release; broader live-editor recovery, generic magnetic picking and fabrication/EM qualification are outside the validated scope.",
+  "identifier": "com.github.kinderwood.kicad-automation.gppo-interposer-workflow",
+  "type": "plugin",
+  "author": {"name": "kinderwood", "contact": {"web": "https://github.com/kinderwood/kicad-automation"}},
+  "maintainer": {"name": "kinderwood", "contact": {"web": "https://github.com/kinderwood/kicad-automation"}},
+  "license": "GPL",
+  "resources": {"homepage": "https://github.com/kinderwood/kicad-automation/tree/main/plugins/gppo_interposer_workflow"},
+  "tags": ["gppo", "interposer", "workflow"],
+  "versions": [{"version": "0.1.0", "status": "testing", "kicad_version": "9.0", "kicad_version_max": "10.0"}]
+}
