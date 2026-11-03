@@ -1,4 +1,4 @@
-"""Read XLSX and CSV without optional runtime packages; preserve every source row."""
+"""Read XLSX and delimited text without optional runtime packages; preserve every source row."""
 import csv
 from decimal import Decimal, InvalidOperation
 import posixpath
@@ -101,12 +101,20 @@ def _column(ref):
 
 def read_workbook(path):
     path = Path(path)
-    if path.suffix.lower() == ".csv":
+    if path.suffix.lower() in (".csv", ".txt"):
         with path.open(encoding="utf-8-sig", newline="") as stream:
-            rows = tuple(tuple(cell for cell in row) for row in csv.reader(stream))
+            dialect = csv.excel
+            if path.suffix.lower() == ".txt":
+                sample = stream.read(8192)
+                stream.seek(0)
+                try:
+                    dialect = csv.Sniffer().sniff(sample, delimiters=",\t;|")
+                except csv.Error:
+                    dialect = csv.excel_tab if "\t" in sample else csv.excel
+            rows = tuple(tuple(cell for cell in row) for row in csv.reader(stream, dialect))
         return Workbook((Worksheet(path.stem, rows),))
     if path.suffix.lower() != ".xlsx":
-        raise ValueError("Choose an .xlsx or UTF-8 .csv file")
+        raise ValueError("Choose an .xlsx, UTF-8 .csv, or UTF-8 .txt file")
     with zipfile.ZipFile(path) as zf:
         root = _xml(zf, "xl/workbook.xml")
         rels = _xml(zf, "xl/_rels/workbook.xml.rels")

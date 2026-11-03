@@ -21,6 +21,20 @@ def rectangle(x,y,w,h):
 
 
 class WorkbookTests(unittest.TestCase):
+    def test_txt_netlist_sniffs_tab_delimited_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'signals.txt'
+            path.write_text(
+                '\t'.join(HEADERS) + '\n' +
+                '\t'.join(('CLOCK1', 'CLOCK', 'E1', 'K3', 'J101', '1', 'L2')) + '\n',
+                encoding='utf-8',
+            )
+            workbook = read_workbook(path)
+            self.assertEqual(workbook.sheets[0].name, 'signals')
+            table = parse_sheet(workbook.sheets[0])
+            self.assertTrue(table.valid)
+            self.assertEqual(table.records[0].key, 'J101-1')
+
     def test_preamble_mapping_all_rows_and_ignored(self):
         sheet = Worksheet('Pins', (('Title',),HEADERS,('SIG','RF','E1','A1','J101','1','L1'),(),('bad',)))
         table = parse_sheet(sheet,header_row=2,ignored_rows=(4,))

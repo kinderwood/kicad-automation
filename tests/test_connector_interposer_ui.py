@@ -127,8 +127,15 @@ class NativeDialogTests(unittest.TestCase):
         from plugins.connector_interposer_workflow.core.model import HEADERS
         dialog = WorkflowDialog()
         self.assertEqual(tuple(dialog.book.GetPageText(i) for i in range(dialog.book.GetPageCount())), PAGES)
+        self.assertEqual(PAGES[0], 'Netlist Source')
+        for page_index, page_name in enumerate(PAGES):
+            self.assertIsNotNone(self.wx.FindWindowByLabel(page_name, dialog.pages[page_index]))
         self.assertFalse(dialog.view_button.IsEnabled())
         self.assertFalse(dialog.apply_button.IsEnabled())
+        self.assertFalse(dialog.workbook_path.IsShown())
+        self.assertEqual(dialog.mapper.GetNumberRows(), 6)
+        self.assertEqual(dialog.mapper.GetNumberCols(), 9)
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Open full table…', dialog))
         self.assertIsInstance(dialog.interposer_path, LibrarySelectionCtrl)
         self.assertIsInstance(dialog.connector_symbol, LibrarySelectionCtrl)
         self.assertIsInstance(dialog.gang_fields['part_id'], LibrarySelectionCtrl)
@@ -200,20 +207,25 @@ class NativeDialogTests(unittest.TestCase):
                 self.assertIsNotNone(dialog.controller.table)
                 self.assertEqual(dialog.sheet.GetStringSelection(), 'signals')
                 self.assertLessEqual(dialog.sheet.GetSize().width, 180)
-                self.assertEqual(dialog.mapper.GetNumberCols(), 3)
-                self.assertEqual(dialog.mapper.GetCellValue(0, 1), 'A · Signal')
-                self.assertEqual(dialog.mapper.GetCellValue(0, 2), 'CLOCK1')
+                self.assertEqual(dialog.mapper.GetNumberCols(), 9)
+                self.assertEqual(dialog.mapper.GetCellValue(0, 2), 'A · Signal')
+                self.assertEqual(dialog.mapper.GetCellValue(1, 0), '1')
+                self.assertEqual(dialog.mapper.GetCellValue(1, 1), '2')
+                self.assertEqual(dialog.mapper.GetCellValue(1, 2), 'CLOCK1')
+                self.assertEqual(dialog.workbook_filename.GetLabel(), 'signals.csv')
                 self.assertEqual(len(dialog._spreadsheet_columns), 7)
                 self.assertFalse(any(label.startswith('H ·') for label in dialog._spreadsheet_columns))
-                self.assertIn('2 included · 0 excluded · 7 of 7 fields mapped', dialog.row_count.GetLabel())
+                self.assertEqual(dialog.columns_status.GetLabel(), '7 of 7 columns assigned')
+                self.assertEqual(dialog.nets_status.GetLabel(), '2 nets parsed')
 
                 dialog.ignored.ChangeValue('2')
                 dialog._parse_spreadsheet('mapping')
-                self.assertEqual(dialog.mapper.GetCellValue(0, 2), 'DATA1')
-                self.assertIn('1 included · 1 excluded', dialog.row_count.GetLabel())
+                self.assertEqual(dialog.mapper.GetCellValue(1, 1), '3')
+                self.assertEqual(dialog.mapper.GetCellValue(1, 2), 'DATA1')
+                self.assertEqual(dialog.nets_status.GetLabel(), '1 net parsed')
 
-                dialog.mapper.SetCellValue(0, 1, 'B · NetClass')
-                dialog.mapper.SetCellValue(1, 1, 'A · Signal')
+                dialog.mapper.SetCellValue(0, 2, 'B · NetClass')
+                dialog.mapper.SetCellValue(0, 3, 'A · Signal')
                 dialog._parse_spreadsheet('mapping')
                 self.assertEqual(dialog.controller.table.mapping['Signal'], 1)
                 self.assertEqual(dialog.controller.table.mapping['NetClass'], 0)
@@ -225,8 +237,8 @@ class NativeDialogTests(unittest.TestCase):
                                     encoding='utf-8')
                 dialog.reload_workbook(None)
                 self.assertEqual(dialog.ignored.GetValue(), '2')
-                self.assertEqual(dialog.mapper.GetCellValue(0, 1), 'A · Signal')
-                self.assertEqual(dialog.mapper.GetCellValue(0, 2), 'DATA9')
+                self.assertEqual(dialog.mapper.GetCellValue(0, 2), 'A · Signal')
+                self.assertEqual(dialog.mapper.GetCellValue(1, 2), 'DATA9')
                 self.assertEqual(tuple(dialog.controller.table.mapping[name] for name in HEADERS),
                                  tuple(range(7)))
 
@@ -243,11 +255,11 @@ class NativeDialogTests(unittest.TestCase):
                 while (dialog.controller.table is None or dialog.controller.table.worksheet != 'wide') and time.monotonic() < deadline:
                     self.app.Yield()
                     time.sleep(.01)
-                self.assertEqual([dialog.mapper.GetCellValue(row, 1) for row in range(7)], [''] * 7)
-                dialog.mapper.SetCellValue(0, 1, 'R · Wire')
+                self.assertEqual([dialog.mapper.GetCellValue(0, column) for column in range(2, 9)], [''] * 7)
+                dialog.mapper.SetCellValue(0, 2, 'R · Wire')
                 self.assertTrue(dialog._autofill_consecutive_mapping())
                 self.assertEqual(
-                    [dialog.mapper.GetCellValue(row, 1).split(' · ', 1)[0] for row in range(7)],
+                    [dialog.mapper.GetCellValue(0, column).split(' · ', 1)[0] for column in range(2, 9)],
                     ['R', 'S', 'T', 'U', 'V', 'W', 'X'],
                 )
                 dialog._parse_spreadsheet('mapping')

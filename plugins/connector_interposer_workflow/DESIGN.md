@@ -1,9 +1,10 @@
 # Workflow boundaries
 
-The native modeless wx dialog follows Spreadsheet → Layer rules → Validation →
+The native modeless wx dialog follows Netlist Source → Layer rules → Validation →
 Gangs → DXF Anchors → Board Outline → Review Changes → Apply / Results. A
 read-only virtual grid displays the complete parsed workbook in a separate
-popup. No browser, webview, authoring wizard or generative recipe editor is
+popup. Every page begins with a blue task-description panel whose title exactly
+matches its navigation entry. No browser, webview, authoring wizard or generative recipe editor is
 part of this package's layout flow.
 
 `WorkflowController` owns UI drafts and preview invalidation. Core records,

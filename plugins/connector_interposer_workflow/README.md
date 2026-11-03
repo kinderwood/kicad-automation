@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.2.9**, testing release. The package targets KiCad 9.0.0 through
+Version **0.3.0**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -26,15 +26,16 @@ state. Do not open the output project in another editor during application or
 recovery. After Apply, open the output project explicitly; continuing to save
 an already-open source board does not update the output copy.
 
-1. **Spreadsheet:** choose `.xlsx` or UTF-8 `.csv`; the page loads it
-   automatically and detects the worksheet headers. Worksheet, header row and
+1. **Netlist Source:** choose `.xlsx`, UTF-8 `.csv`, or delimited UTF-8 `.txt`;
+   the page loads it automatically and detects the worksheet headers. Netlist worksheet, header row and
    optional excluded source rows remain editable. Map each required field with
-   a dropdown containing only populated workbook columns; the adjacent live
-   example updates as the mapping changes. Unique exact header matches are
+   a dropdown containing only populated workbook columns. The selectors form
+   the first row of an aligned live net table, so each assignment sits directly
+   above the parsed values it produces. Unique exact header matches are
    assigned automatically whenever the workbook, worksheet or header row
    changes. When the mapping is otherwise blank, choosing the Signal column
    fills the remaining six fields from consecutive populated columns. All seven
-   fields must map uniquely. **View all parsed data…** shows source-row numbers
+   fields must map uniquely. **Open full table…** shows source-row numbers
    and the seven mapped workflow fields in workflow order for included rows
    only. The grid gutter is a sequential preview index while **Source row** is
    the original worksheet row. Its columns fit the longest header or displayed

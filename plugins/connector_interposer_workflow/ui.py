@@ -7,6 +7,9 @@ import wx.grid as grid
 from .controller import HEADERS, PAGES, WorkflowController, library_id
 from .core.library_catalog import KiCadLibraryCatalog
 
+WORKBOOK_SUFFIXES = ('.xlsx', '.csv', '.txt')
+SPREADSHEET_PREVIEW_ROWS = 5
+
 
 class ReadOnlyTable(grid.GridTableBase):
     def __init__(self, headings, rows):
@@ -22,12 +25,16 @@ class ReadOnlyTable(grid.GridTableBase):
 
 
 class DataDialog(wx.Dialog):
-    """Virtual table exposes every parsed row including excluded and invalid rows."""
+    """Virtual table exposes every included parsed row in workflow-field order."""
     def __init__(self, parent, table):
         super().__init__(parent, title='Workbook data — ' + table.worksheet, size=(1100, 650),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(wx.StaticText(self, label=f'{table.included_count} included · {table.ignored_count} excluded. Source rows retain worksheet numbering.'), 0, wx.ALL, 10)
+        sizer.Add(wx.StaticText(
+            self,
+            label=(f'{table.included_count} nets parsed. Excluded rows are omitted from this table; '
+                   'Source row retains worksheet numbering.'),
+        ), 0, wx.ALL, 10)
         rows = [
             (row.source_row, *(row.values[table.mapping[name]] if table.mapping[name] < len(row.values) else ''
                                for name in HEADERS))
@@ -411,6 +418,38 @@ class WorkflowDialog(wx.Dialog):
         parent.GetSizer().Add(label, 0, wx.ALL | wx.EXPAND, 8)
         return label
 
+    def task_box(self, parent, title, subtitle, description):
+        box = wx.Panel(parent, style=wx.BORDER_SIMPLE)
+        box.SetBackgroundColour(wx.Colour(220, 235, 250))
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        heading = wx.StaticText(box, label=title)
+        font = heading.GetFont()
+        font.SetWeight(wx.FONTWEIGHT_BOLD)
+        heading.SetFont(font)
+        sizer.Add(heading, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        task = wx.StaticText(box, label=subtitle)
+        task_font = task.GetFont()
+        task_font.SetWeight(wx.FONTWEIGHT_BOLD)
+        task.SetFont(task_font)
+        sizer.Add(task, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        detail = wx.StaticText(box, label=description)
+        detail.Wrap(820)
+        sizer.Add(detail, 0, wx.ALL, 10)
+        box.SetSizer(sizer)
+        parent.GetSizer().Add(box, 0, wx.EXPAND | wx.ALL, 8)
+        return box
+
+    @staticmethod
+    def status_label(parent, label):
+        control = wx.StaticText(parent, label=label, style=wx.BORDER_SIMPLE)
+        control.SetBackgroundColour(wx.Colour(232, 244, 234))
+        control.SetForegroundColour(wx.Colour(40, 122, 61))
+        font = control.GetFont()
+        font.SetWeight(wx.FONTWEIGHT_BOLD)
+        control.SetFont(font)
+        control.SetMinSize((190, -1))
+        return control
+
     def field(self, parent, label, value='', picker=False, invalidate=True):
         row = wx.BoxSizer(wx.HORIZONTAL)
         row.Add(wx.StaticText(parent, label=label), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
@@ -446,80 +485,97 @@ class WorkflowDialog(wx.Dialog):
         event.Skip()
 
     def build_spreadsheet(self, panel):
-        intro = wx.Panel(panel, style=wx.BORDER_SIMPLE)
-        intro.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
-        intro_sizer = wx.BoxSizer(wx.VERTICAL)
-        title = wx.StaticText(intro, label='Import connector assignments')
-        font = title.GetFont()
-        font.SetWeight(wx.FONTWEIGHT_BOLD)
-        title.SetFont(font)
-        intro_sizer.Add(title, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
-        description = wx.StaticText(
-            intro,
-            label=('Choose the workbook that defines signals, connector locations, interposer pins and '
-                   'routing layers. Confirm the detected columns before continuing.'),
+        self.task_box(
+            panel,
+            'Netlist Source',
+            'Import connector and nets assignment',
+            'Choose the netlist source, assign the seven required columns, and verify the parsed nets before continuing to Layer rules.',
         )
-        description.Wrap(780)
-        intro_sizer.Add(description, 0, wx.ALL, 10)
-        intro.SetSizer(intro_sizer)
-        panel.GetSizer().Add(intro, 0, wx.EXPAND | wx.ALL, 8)
 
-        source_box = wx.StaticBox(panel, label='Workbook source')
+        source_box = wx.StaticBox(panel, label='Netlist source')
         source = wx.StaticBoxSizer(source_box, wx.VERTICAL)
-        row = wx.BoxSizer(wx.HORIZONTAL)
-        row.Add(wx.StaticText(source_box, label='Workbook'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         self.workbook_path = wx.TextCtrl(source_box)
-        row.Add(self.workbook_path, 1, wx.EXPAND | wx.RIGHT, 8)
+        self.workbook_path.Hide()
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        workbook = wx.BoxSizer(wx.VERTICAL)
+        workbook.Add(wx.StaticText(source_box, label='Netlist workbook'), 0, wx.BOTTOM, 2)
+        self.workbook_filename = wx.StaticText(
+            source_box, label='No netlist workbook selected', style=wx.ST_ELLIPSIZE_MIDDLE,
+        )
+        self.workbook_filename.SetMinSize((240, -1))
+        self.workbook_filename.SetMaxSize((280, -1))
+        font = self.workbook_filename.GetFont()
+        font.SetWeight(wx.FONTWEIGHT_BOLD)
+        self.workbook_filename.SetFont(font)
+        workbook.Add(self.workbook_filename, 0, wx.BOTTOM, 2)
+        self.workbook_display_path = wx.StaticText(source_box, label='', style=wx.ST_ELLIPSIZE_MIDDLE)
+        self.workbook_display_path.SetMinSize((240, -1))
+        self.workbook_display_path.SetMaxSize((280, -1))
+        self.workbook_display_path.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
+        workbook.Add(self.workbook_display_path, 0, wx.EXPAND)
+        row.Add(workbook, 1, wx.EXPAND | wx.RIGHT, 12)
         self.workbook_browse = self.button(source_box, 'Browse…', self.choose_workbook)
-        row.Add(self.workbook_browse, 0, wx.RIGHT, 8)
+        row.Add(self.workbook_browse, 0, wx.ALIGN_BOTTOM | wx.RIGHT, 8)
         self.workbook_reload = self.button(source_box, 'Reload', self.reload_workbook)
         self.workbook_reload.SetToolTip('Re-read this file and redetect exact column headers.')
-        row.Add(self.workbook_reload)
-        source.Add(row, 0, wx.EXPAND | wx.ALL, 8)
+        row.Add(self.workbook_reload, 0, wx.ALIGN_BOTTOM | wx.RIGHT, 16)
 
-        row = wx.BoxSizer(wx.HORIZONTAL)
-        row.Add(wx.StaticText(source_box, label='Worksheet'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
-        self.sheet = wx.Choice(source_box, size=(180, -1))
-        self.sheet.SetMinSize((150, -1))
-        row.Add(self.sheet, 0, wx.RIGHT, 16)
-        row.Add(wx.StaticText(source_box, label='Header row'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
-        self.header = wx.SpinCtrl(source_box, min=1, max=1048576, initial=1, size=(110, -1))
-        row.Add(self.header, 0, wx.RIGHT, 16)
-        row.Add(wx.StaticText(source_box, label='Exclude data rows'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
-        self.ignored = wx.TextCtrl(source_box, size=(170, -1))
+        worksheet = wx.BoxSizer(wx.VERTICAL)
+        worksheet.Add(wx.StaticText(source_box, label='Netlist worksheet'), 0, wx.BOTTOM, 4)
+        self.sheet = wx.Choice(source_box, size=(160, -1))
+        self.sheet.SetMinSize((140, -1))
+        worksheet.Add(self.sheet)
+        row.Add(worksheet, 0, wx.ALIGN_BOTTOM | wx.RIGHT, 16)
+
+        header = wx.BoxSizer(wx.VERTICAL)
+        header.Add(wx.StaticText(source_box, label='Header row'), 0, wx.BOTTOM, 4)
+        self.header = wx.SpinCtrl(source_box, min=1, max=1048576, initial=1, size=(100, -1))
+        header.Add(self.header)
+        row.Add(header, 0, wx.ALIGN_BOTTOM | wx.RIGHT, 16)
+
+        excluded = wx.BoxSizer(wx.VERTICAL)
+        excluded.Add(wx.StaticText(source_box, label='Exclude rows'), 0, wx.BOTTOM, 4)
+        self.ignored = wx.TextCtrl(source_box, size=(140, -1))
         self.ignored.SetHint('e.g. 17-18, 24')
         self.ignored.SetToolTip('Optional worksheet row numbers or ranges to exclude from this import.')
-        row.Add(self.ignored, 0)
-        source.Add(row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        self.spreadsheet_feedback = wx.StaticText(source_box, label='Choose a .xlsx or UTF-8 .csv workbook to begin.')
+        excluded.Add(self.ignored)
+        row.Add(excluded, 0, wx.ALIGN_BOTTOM)
+        source.Add(row, 0, wx.EXPAND | wx.ALL, 8)
+
+        self.spreadsheet_feedback = wx.StaticText(source_box, label=' ')
         self.spreadsheet_feedback.Wrap(780)
         source.Add(self.spreadsheet_feedback, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         panel.GetSizer().Add(source, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        mapping_box = wx.StaticBox(panel, label='Column mapping and preview')
+        mapping_box = wx.StaticBox(panel, label='Column assignments and parsed nets')
         mapping = wx.StaticBoxSizer(mapping_box, wx.VERTICAL)
-        self.row_count = wx.StaticText(mapping_box, label='No workbook loaded')
-        mapping.Add(self.row_count, 0, wx.EXPAND | wx.ALL, 8)
         self.mapper = grid.Grid(mapping_box)
-        self.mapper.CreateGrid(len(HEADERS), 3)
-        self.mapper.SetColLabelValue(0, 'Required field')
-        self.mapper.SetColLabelValue(1, 'Workbook column')
-        self.mapper.SetColLabelValue(2, 'Parsed example')
+        self.mapper.CreateGrid(SPREADSHEET_PREVIEW_ROWS + 1, len(HEADERS) + 2)
+        for column, name in enumerate(('#', 'Source row') + tuple(HEADERS)):
+            self.mapper.SetColLabelValue(column, name)
         self.mapper.SetRowLabelSize(0)
-        self.mapper.SetColSize(0, 185)
-        self.mapper.SetColSize(1, 250)
-        self.mapper.SetColSize(2, 210)
-        self.mapper.SetMinSize((-1, 245))
-        for row, name in enumerate(HEADERS):
-            self.mapper.SetCellValue(row, 0, name)
-            self.mapper.SetReadOnly(row, 0)
-            self.mapper.SetReadOnly(row, 2)
+        self.mapper.SetColSize(0, 42)
+        self.mapper.SetColSize(1, 82)
+        for column, name in enumerate(HEADERS, 2):
+            self.mapper.SetColSize(column, 125 if name in ('Interposer Pin', 'Connector Pin') else 112)
+        self.mapper.SetRowSize(0, 34)
+        self.mapper.SetMinSize((-1, 255))
+        self.mapper.SetReadOnly(0, 0)
+        self.mapper.SetReadOnly(0, 1)
+        for row_index in range(1, SPREADSHEET_PREVIEW_ROWS + 1):
+            for column in range(len(HEADERS) + 2):
+                self.mapper.SetReadOnly(row_index, column)
         mapping.Add(self.mapper, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+
         row = wx.BoxSizer(wx.HORIZONTAL)
-        self.view_button = self.button(mapping_box, 'View all parsed data…', self.view_data)
-        row.Add(self.view_button)
+        self.columns_status = self.status_label(mapping_box, '0 of 7 columns assigned')
+        self.row_count = self.columns_status
+        row.Add(self.columns_status, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        self.nets_status = self.status_label(mapping_box, '0 nets parsed')
+        row.Add(self.nets_status, 0, wx.ALIGN_CENTER_VERTICAL)
         row.AddStretchSpacer()
-        row.Add(wx.StaticText(mapping_box, label='Changes are parsed automatically.'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.view_button = self.button(mapping_box, 'Open full table…', self.view_data)
+        row.Add(self.view_button, 0, wx.ALIGN_CENTER_VERTICAL)
         mapping.Add(row, 0, wx.EXPAND | wx.ALL, 8)
         panel.GetSizer().Add(mapping, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
@@ -529,12 +585,14 @@ class WorkflowDialog(wx.Dialog):
         self.header.Bind(wx.EVT_TEXT, self.header_changed)
         self.ignored.Bind(wx.EVT_TEXT, self.excluded_rows_changed)
         self.mapper.Bind(grid.EVT_GRID_CELL_CHANGED, self.mapping_changed)
+        self._update_workbook_display()
 
     def choose_workbook(self, event):
         with wx.FileDialog(
             self,
-            'Choose connector assignment workbook',
-            wildcard='Workbooks (*.xlsx;*.csv)|*.xlsx;*.csv|Excel workbooks (*.xlsx)|*.xlsx|CSV files (*.csv)|*.csv',
+            'Choose netlist workbook',
+            wildcard=('Netlist files (*.xlsx;*.csv;*.txt)|*.xlsx;*.csv;*.txt|'
+                      'Excel workbooks (*.xlsx)|*.xlsx|CSV files (*.csv)|*.csv|Text files (*.txt)|*.txt'),
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
         ) as dialog:
             if dialog.ShowModal() == wx.ID_OK:
@@ -548,6 +606,7 @@ class WorkflowDialog(wx.Dialog):
         if self._updating_spreadsheet:
             event.Skip()
             return
+        self._update_workbook_display()
         self._loaded_workbook_path = ''
         self.controller.table = None
         self.controller.workbook = None
@@ -555,17 +614,32 @@ class WorkflowDialog(wx.Dialog):
         self.sheet.Set([])
         self._set_mapping_columns({})
         path = Path(self.workbook_path.GetValue()).expanduser()
-        if path.is_file() and path.suffix.casefold() in ('.xlsx', '.csv'):
+        if path.is_file() and path.suffix.casefold() in WORKBOOK_SUFFIXES:
             self._schedule_spreadsheet_parse('reload')
-            self._set_spreadsheet_feedback('Reading workbook…')
+            self._set_spreadsheet_feedback('Reading netlist workbook…')
         elif self.workbook_path.GetValue().strip():
             self._cancel_spreadsheet_timer()
-            self._set_spreadsheet_feedback('Enter an existing .xlsx or .csv workbook path.', True)
+            self._set_spreadsheet_feedback('Choose an existing supported netlist file.', True)
         else:
             self._cancel_spreadsheet_timer()
-            self._set_spreadsheet_feedback('Choose a .xlsx or UTF-8 .csv workbook to begin.')
+            self._set_spreadsheet_feedback('')
         self.refresh()
         event.Skip()
+
+    def _update_workbook_display(self):
+        value = self.workbook_path.GetValue().strip()
+        if value:
+            path = Path(value).expanduser()
+            self.workbook_filename.SetLabel(path.name or value)
+            self.workbook_display_path.SetLabel(str(path))
+            self.workbook_filename.SetToolTip(str(path))
+            self.workbook_display_path.SetToolTip(str(path))
+        else:
+            self.workbook_filename.SetLabel('No netlist workbook selected')
+            self.workbook_display_path.SetLabel('')
+            self.workbook_filename.SetToolTip('')
+            self.workbook_display_path.SetToolTip('')
+        self.workbook_filename.GetParent().Layout()
 
     def worksheet_changed(self, event):
         if not self._updating_spreadsheet:
@@ -583,17 +657,17 @@ class WorkflowDialog(wx.Dialog):
         event.Skip()
 
     def mapping_changed(self, event):
-        if not self._updating_spreadsheet and event.GetCol() == 1:
-            if event.GetRow() == 0:
+        if not self._updating_spreadsheet and event.GetRow() == 0 and event.GetCol() >= 2:
+            if event.GetCol() == 2:
                 self._autofill_consecutive_mapping()
             self._schedule_spreadsheet_parse('mapping', 0)
         event.Skip()
 
     def _autofill_consecutive_mapping(self):
         """Fill a wholly blank mapping from a user-selected Signal column."""
-        if any(self.mapper.GetCellValue(row, 1).strip() for row in range(1, len(HEADERS))):
+        if any(self.mapper.GetCellValue(0, column).strip() for column in range(3, len(HEADERS) + 2)):
             return False
-        signal_label = self.mapper.GetCellValue(0, 1).strip()
+        signal_label = self.mapper.GetCellValue(0, 2).strip()
         if signal_label not in self._spreadsheet_columns:
             return False
         start = self._spreadsheet_columns[signal_label]
@@ -602,8 +676,8 @@ class WorkflowDialog(wx.Dialog):
             return False
         self._updating_spreadsheet = True
         try:
-            for row, column in enumerate(range(start, start + len(HEADERS))):
-                self.mapper.SetCellValue(row, 1, labels[column])
+            for field, column in enumerate(range(start, start + len(HEADERS)), 2):
+                self.mapper.SetCellValue(0, field, labels[column])
         finally:
             self._updating_spreadsheet = False
         return True
@@ -620,12 +694,13 @@ class WorkflowDialog(wx.Dialog):
         self._spreadsheet_timer = wx.CallLater(delay, self._parse_spreadsheet, mode)
 
     def _set_spreadsheet_feedback(self, message, error=False):
-        self.spreadsheet_feedback.SetLabel(message)
+        self.spreadsheet_feedback.SetLabel(message or ' ')
         colour = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT)
         if error:
             colour = wx.Colour(180, 35, 35)
         self.spreadsheet_feedback.SetForegroundColour(colour)
         self.spreadsheet_feedback.Wrap(780)
+        self.spreadsheet_feedback.GetParent().Layout()
 
     @staticmethod
     def _column_name(index):
@@ -653,37 +728,40 @@ class WorkflowDialog(wx.Dialog):
             columns[label] = column
         return columns
 
-    def _sample_value(self, column, table):
-        if self.controller.workbook is None or table is None:
-            return ''
-        worksheet = self.controller.workbook.sheet(table.worksheet)
-        excluded = set(table.ignored_rows)
-        for source_row, values in enumerate(worksheet.rows[table.header_row:], table.header_row + 1):
-            if source_row in excluded or column >= len(values):
-                continue
-            value = str(values[column]).strip()
-            if value:
-                return value
-        return ''
-
     def _set_mapping_columns(self, mapped, table=None):
         self._spreadsheet_columns = self._available_columns()
         choices = [''] + list(self._spreadsheet_columns)
         by_column = {column: label for label, column in self._spreadsheet_columns.items()}
         self._updating_spreadsheet = True
         try:
-            for row, header in enumerate(HEADERS):
-                self.mapper.SetCellEditor(row, 1, grid.GridCellChoiceEditor(choices, False))
-                column = mapped.get(header)
-                self.mapper.SetCellValue(row, 1, by_column.get(column, ''))
-                self.mapper.SetCellValue(row, 2, self._sample_value(column, table) if column is not None else '')
+            for field_offset, header in enumerate(HEADERS):
+                grid_column = field_offset + 2
+                self.mapper.SetCellEditor(0, grid_column, grid.GridCellChoiceEditor(choices, False))
+                source_column = mapped.get(header)
+                self.mapper.SetCellValue(0, grid_column, by_column.get(source_column, ''))
+            self._render_mapping_preview(table, mapped)
         finally:
             self._updating_spreadsheet = False
 
+    def _render_mapping_preview(self, table, mapped=None):
+        mapped = mapped if mapped is not None else self._mapping_from_grid()
+        rows = [row for row in table.rows if not row.ignored][:SPREADSHEET_PREVIEW_ROWS] if table else []
+        for preview_index in range(SPREADSHEET_PREVIEW_ROWS):
+            grid_row = preview_index + 1
+            parsed = rows[preview_index] if preview_index < len(rows) else None
+            self.mapper.SetCellValue(grid_row, 0, str(preview_index + 1) if parsed else '')
+            self.mapper.SetCellValue(grid_row, 1, str(parsed.source_row) if parsed else '')
+            for field_index, header in enumerate(HEADERS, 2):
+                source_column = mapped.get(header)
+                value = ''
+                if parsed is not None and source_column is not None and source_column < len(parsed.values):
+                    value = str(parsed.values[source_column])
+                self.mapper.SetCellValue(grid_row, field_index, value)
+
     def _mapping_from_grid(self):
         mapping = {}
-        for row, header in enumerate(HEADERS):
-            label = self.mapper.GetCellValue(row, 1).strip()
+        for column, header in enumerate(HEADERS, 2):
+            label = self.mapper.GetCellValue(0, column).strip()
             if label in self._spreadsheet_columns:
                 mapping[header] = self._spreadsheet_columns[label]
         return mapping
@@ -691,9 +769,9 @@ class WorkflowDialog(wx.Dialog):
     def _parse_spreadsheet(self, mode='mapping'):
         self._spreadsheet_timer = None
         path = Path(self.workbook_path.GetValue()).expanduser()
-        if not path.is_file() or path.suffix.casefold() not in ('.xlsx', '.csv'):
+        if not path.is_file() or path.suffix.casefold() not in WORKBOOK_SUFFIXES:
             self.controller.table = None
-            self._set_spreadsheet_feedback('Enter an existing .xlsx or .csv workbook path.', True)
+            self._set_spreadsheet_feedback('Choose an existing supported netlist file.', True)
             self.refresh()
             return
         try:
@@ -742,7 +820,7 @@ class WorkflowDialog(wx.Dialog):
                             'column mappings were redetected.'
                         )
                 else:
-                    self._set_spreadsheet_feedback('Workbook is loaded. Review the live examples and continue when they match your data.')
+                    self._set_spreadsheet_feedback('')
             else:
                 self._set_spreadsheet_feedback('Map every required field to a different populated workbook column.', True)
             self.refresh_layers()
@@ -782,7 +860,10 @@ class WorkflowDialog(wx.Dialog):
                 dialog.ShowModal()
 
     def build_layers(self, panel):
-        self.note(panel, 'Map architecture names to actual copper layers. New netclass/layer combinations start allowed; an explicit prohibition is a validation error.')
+        self.task_box(
+            panel, 'Layer rules', 'Map layers and netclass permissions',
+            'Map architecture names to actual copper layers. New netclass/layer combinations start allowed; an explicit prohibition is a validation error.',
+        )
         self.layer_map = grid.Grid(panel)
         self.layer_map.CreateGrid(0, 2)
         self.layer_map.SetColLabelValue(0, 'Architecture layer')
@@ -833,7 +914,10 @@ class WorkflowDialog(wx.Dialog):
         self.status.SetLabel('Layer mapping and permissions accepted. Validation and preview invalidated.')
 
     def build_validation(self, panel):
-        self.note(panel, 'Validation identifies the source worksheet row. Missing parts require librarian resolution; the workflow cannot author them.')
+        self.task_box(
+            panel, 'Validation', 'Validate nets and approved library parts',
+            'Validation identifies the source worksheet row. Missing parts require librarian resolution; the workflow cannot author them.',
+        )
         self.validation = wx.ListCtrl(panel, style=wx.LC_REPORT)
         for col, (name, width) in enumerate((('Severity', 80), ('Source row', 85), ('Code', 150), ('Details', 600))): self.validation.InsertColumn(col, name, width=width)
         panel.GetSizer().Add(self.validation, 1, wx.EXPAND | wx.ALL, 8)
@@ -872,7 +956,10 @@ class WorkflowDialog(wx.Dialog):
         self.status.SetLabel(f'{sum(i.severity == "error" for i in issues)} blocking validation errors.' if issues else 'Validation passed.')
 
     def build_gangs(self, panel):
-        self.note(panel, 'Each gang retains its own approved part, pattern, numbering, orientation and RF settings. Preview labels are location indices.')
+        self.task_box(
+            panel, 'Gangs', 'Define connector gang geometry',
+            'Each gang retains its own approved part, pattern, numbering, orientation and RF settings. Preview labels are location indices.',
+        )
         self.gang_filter = wx.SearchCtrl(panel, style=wx.TE_PROCESS_ENTER)
         self.gang_filter.SetDescriptiveText('Filter gangs')
         self.gang_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_gang_list())
@@ -1073,7 +1160,10 @@ class WorkflowDialog(wx.Dialog):
                 self.select_gang(None)
 
     def build_anchors(self, panel):
-        self.note(panel, 'Use KiCad File → Import → Graphics to import the whole DXF to a user layer first. Select one native circle in the PCB canvas, then capture its center. Numeric anchors are also supported.')
+        self.task_box(
+            panel, 'DXF Anchors', 'Associate imported connector locations',
+            'Use KiCad File → Import → Graphics to import the whole DXF to a user layer first. Select one native circle in the PCB canvas, then capture its center. Numeric anchors are also supported.',
+        )
         self.anchor_gang = wx.Choice(panel)
         panel.GetSizer().Add(self.anchor_gang, 0, wx.EXPAND | wx.ALL, 8)
         self.user_layer = self.field(panel, 'Imported mechanical user layer', 'Dwgs.User')
@@ -1162,9 +1252,12 @@ class WorkflowDialog(wx.Dialog):
         self.anchor_status.SetLabel(f'{reference} added as board-only, excluded from BOM and position files.')
 
     def build_outline(self, panel):
+        self.task_box(
+            panel, 'Board Outline', 'Capture managed board contours',
+            'Select imported native lines or arcs in the PCB canvas. Capture the outer boundary and optional center cutout separately. Exact closure and ownership are checked before Apply; designer Edge.Cuts stay untouched.',
+        )
         self.outline_enable = wx.CheckBox(panel, label='Explicitly enable managed board outline')
         panel.GetSizer().Add(self.outline_enable, 0, wx.ALL, 8)
-        self.note(panel, 'Select imported native lines/arcs in the PCB canvas. Capture outer boundary and optional center cutout separately. Exact closure and ownership are checked before Apply; designer Edge.Cuts stay untouched.')
         panel.GetSizer().Add(self.button(panel, 'Capture selected outer boundary', lambda e: self.capture_outline('outer')), 0, wx.ALL, 8)
         panel.GetSizer().Add(self.button(panel, 'Capture selected center cutout', lambda e: self.capture_outline('cutout')), 0, wx.ALL, 8)
         self.outline_status = self.note(panel, 'Managed outline disabled. No Edge.Cuts changes requested.')
@@ -1211,7 +1304,10 @@ class WorkflowDialog(wx.Dialog):
         self.outline_status.SetLabel('Contour topology validated. Saved source UUIDs and ownership are rechecked during comparison.')
 
     def build_review(self, panel):
-        self.note(panel, 'Compare complete desired state against saved board ownership. Conflicts, stale inputs and affected designer routing block Apply.')
+        self.task_box(
+            panel, 'Review Changes', 'Compare the desired-state delta',
+            'Compare complete desired state against saved board ownership. Conflicts, stale inputs and affected designer routing block Apply.',
+        )
         self.diff_list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
         for col, (name, width) in enumerate((('Gang', 90), ('Connector / file', 280), ('Change', 150), ('Status', 230))):
             self.diff_list.InsertColumn(col, name, width=width)
@@ -1229,7 +1325,10 @@ class WorkflowDialog(wx.Dialog):
         self.confirm_review.Bind(wx.EVT_CHECKBOX, lambda e: self.refresh())
 
     def build_results(self, panel):
-        self.note(panel, 'Apply saves a separate controlled project copy, a reconciliation report and a recovery journal. Keep the source project separate when opening the result.')
+        self.task_box(
+            panel, 'Apply / Results', 'Apply to a project copy and inspect results',
+            'Apply saves a separate controlled project copy, a reconciliation report and a recovery journal. Keep the source project separate when opening the result.',
+        )
         self.results = wx.TextCtrl(panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL)
         panel.GetSizer().Add(self.results, 1, wx.EXPAND | wx.ALL, 8)
         self.journal = self.field(panel, 'Recovery journal', picker=True)
@@ -1319,6 +1418,7 @@ class WorkflowDialog(wx.Dialog):
         self._updating_spreadsheet = True
         try:
             self.workbook_path.ChangeValue(source.get('path', ''))
+            self._update_workbook_display()
             self.header.SetValue(source.get('header_row', 1))
             self.ignored.ChangeValue(', '.join(map(str, source.get('ignored_rows', []))))
         finally:
@@ -1328,13 +1428,14 @@ class WorkflowDialog(wx.Dialog):
             source_path = str(self.controller.board_path.parent / source['snapshot'])
         if source_path and Path(source_path).exists():
             self.workbook_path.ChangeValue(source_path)
+            self._update_workbook_display()
             try:
                 table = self.controller.load_workbook(source_path, source.get('worksheet'), source.get('header_row', 1), source.get('ignored_rows', []), source.get('mapping'))
                 self.sheet.Set([s.name for s in self.controller.workbook.sheets])
                 self.sheet.SetStringSelection(table.worksheet)
                 self._loaded_workbook_path = str(Path(source_path).resolve())
                 self.update_mapping(table)
-                self._set_spreadsheet_feedback('Workbook is loaded. Review the live examples and continue when they match your data.')
+                self._set_spreadsheet_feedback('')
             except Exception as error:
                 self.status.SetLabel('Saved workbook requires attention: ' + str(error))
                 self._set_spreadsheet_feedback(str(error), True)
@@ -1363,17 +1464,17 @@ class WorkflowDialog(wx.Dialog):
         workbook_path = Path(self.workbook_path.GetValue()).expanduser()
         self.workbook_reload.Enable(
             not self.controller.busy and workbook_path.is_file()
-            and workbook_path.suffix.casefold() in ('.xlsx', '.csv')
+            and workbook_path.suffix.casefold() in WORKBOOK_SUFFIXES
         )
         table = self.controller.table
         if table:
             mapped = len(table.mapping)
-            self.row_count.SetLabel(
-                f'{table.included_count} included · {table.ignored_count} excluded · '
-                f'{mapped} of {len(HEADERS)} fields mapped'
-            )
+            self.columns_status.SetLabel(f'{mapped} of {len(HEADERS)} columns assigned')
+            noun = 'net' if table.included_count == 1 else 'nets'
+            self.nets_status.SetLabel(f'{table.included_count} {noun} parsed')
         else:
-            self.row_count.SetLabel('No parsed workbook data')
+            self.columns_status.SetLabel(f'0 of {len(HEADERS)} columns assigned')
+            self.nets_status.SetLabel('0 nets parsed')
         self.review_button.Enable(not self.controller.busy)
         self.apply_button.Enable(not self.controller.busy and self.controller.preview is not None and not self.controller.preview.get('conflicts') and self.confirm_review.GetValue())
         self.abort_button.Enable(self.controller.busy and not self._applying)
