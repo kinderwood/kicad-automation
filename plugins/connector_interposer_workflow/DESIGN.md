@@ -5,13 +5,19 @@ Routing permissions → Validation → Gangs → DXF Anchors → Board Outline �
 Review Changes → Apply / Results. A
 read-only virtual grid displays the complete parsed workbook in a separate
 popup. Every page begins with a blue task-description panel whose title exactly
-matches its navigation entry. The dialog header names the tool and its purpose;
+matches its navigation entry and uses a larger title than the supporting text.
+The dialog header names the tool without repeating a separate purpose subtitle;
 the left step list sizes itself to the native font and stops after the last
 step. The bordered page area and compact status/footer regions establish the
 layout without a full-height navigation pane. The Layer assignment grid fits
 its rows instead of consuming the remaining window. No browser, webview,
 authoring wizard or generative recipe editor is part of this package's layout
 flow.
+
+Layer assignment and Routing permissions update the current workflow directly
+from their native grid editors. They do not add page-level acceptance buttons;
+the global status area reports the change, and **Save workflow settings**
+persists it separately from the reviewed project-copy Apply operation.
 
 The editable [UI Design Guide](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=135-37)
 records the current workflow, product principles, approved and retired patterns,

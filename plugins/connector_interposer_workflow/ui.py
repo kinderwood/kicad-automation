@@ -384,7 +384,7 @@ class LibrarySelectionCtrl(wx.Panel):
 
 class WorkflowDialog(wx.Dialog):
     def __init__(self, parent=None, controller=None, pcbnew_module=None):
-        super().__init__(parent, title='Connector to Interposer Workflow', size=(1140, 800),
+        super().__init__(parent, title='Connector to Interposer Workflow', size=(1320, 840),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.pcbnew = pcbnew_module
         self.controller = controller or WorkflowController(dispatch=wx.CallAfter)
@@ -405,19 +405,14 @@ class WorkflowDialog(wx.Dialog):
         heading_font.SetPointSize(heading_font.GetPointSize() + 6)
         heading_font.SetWeight(wx.FONTWEIGHT_BOLD)
         heading.SetFont(heading_font)
-        outer.Add(heading, 0, wx.LEFT | wx.RIGHT | wx.TOP, 14)
-        subtitle = wx.StaticText(
-            self,
-            label='Import connector assignments, reconcile mechanical placement, and preview a controlled project-copy update.',
-        )
-        subtitle.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
-        outer.Add(subtitle, 0, wx.LEFT | wx.RIGHT | wx.TOP | wx.BOTTOM, 14)
+        outer.Add(heading, 0, wx.ALL, 14)
 
         body = wx.BoxSizer(wx.HORIZONTAL)
         navigation = wx.Panel(self)
         navigation_sizer = wx.BoxSizer(wx.VERTICAL)
         steps = wx.StaticText(navigation, label='Steps')
         steps_font = steps.GetFont()
+        steps_font.SetPointSize(steps_font.GetPointSize() + 2)
         steps_font.SetWeight(wx.FONTWEIGHT_BOLD)
         steps.SetFont(steps_font)
         navigation_sizer.Add(steps, 0, wx.BOTTOM, 6)
@@ -464,8 +459,8 @@ class WorkflowDialog(wx.Dialog):
         status_sizer.Add(status_heading, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
         self.status = wx.StaticText(
             status_panel,
-            label=('Ready. Start with Netlist Source. Save workflow draft stores settings '
-                   'without changing board files.'),
+            label=('Ready. Start with Netlist Source. Save workflow settings persists the current '
+                   'setup without changing board files.'),
         )
         self.status.Wrap(860)
         status_sizer.Add(self.status, 1, wx.ALIGN_CENTER_VERTICAL)
@@ -473,7 +468,7 @@ class WorkflowDialog(wx.Dialog):
         outer.Add(status_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
 
         footer = wx.BoxSizer(wx.HORIZONTAL)
-        self.save_button = self.button(self, 'Save workflow draft', self.save)
+        self.save_button = self.button(self, 'Save workflow settings', self.save)
         self.save_button.SetToolTip(
             'Save the current workflow settings and accepted source snapshot without applying board changes.'
         )
@@ -485,8 +480,17 @@ class WorkflowDialog(wx.Dialog):
         outer.Add(footer, 0, wx.EXPAND | wx.ALL, 10)
         self.SetSizer(outer)
         self.SetMinSize((960, 680))
+        display_index = wx.Display.GetFromPoint(wx.GetMousePosition())
+        if display_index == wx.NOT_FOUND:
+            display_index = 0
+        display_area = wx.Display(display_index).GetClientArea()
+        self.SetSize((min(1320, max(960, int(display_area.width * .94))),
+                      min(840, max(680, int(display_area.height * .90)))))
         self.Bind(wx.EVT_CLOSE, self.close)
         self.restore()
+        self.Layout()
+        for page in self.pages:
+            page.FitInside()
         self.refresh()
 
     def select_step(self, event):
@@ -524,6 +528,7 @@ class WorkflowDialog(wx.Dialog):
         sizer = wx.BoxSizer(wx.VERTICAL)
         heading = wx.StaticText(box, label=title)
         font = heading.GetFont()
+        font.SetPointSize(font.GetPointSize() + 1)
         font.SetWeight(wx.FONTWEIGHT_BOLD)
         heading.SetFont(font)
         sizer.Add(heading, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
@@ -1033,12 +1038,10 @@ class WorkflowDialog(wx.Dialog):
         )
         layer_box = wx.StaticBox(panel, label='Layer mappings')
         layer_sizer = wx.StaticBoxSizer(layer_box, wx.VERTICAL)
-        summary = wx.BoxSizer(wx.HORIZONTAL)
-        summary.Add(wx.StaticText(layer_box, label='Choose one enabled board layer for each netlist layer.'),
-                    1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
-        self.layer_mapping_status = self.status_label(layer_box, '0 of 0 assigned')
-        summary.Add(self.layer_mapping_status, 0, wx.ALIGN_CENTER_VERTICAL)
-        layer_sizer.Add(summary, 0, wx.EXPAND | wx.ALL, 8)
+        layer_sizer.Add(
+            wx.StaticText(layer_box, label='Choose one enabled board layer for each netlist layer.'),
+            0, wx.EXPAND | wx.ALL, 8,
+        )
 
         self.layer_map = grid.Grid(layer_box)
         self.layer_map.CreateGrid(0, 2)
@@ -1047,17 +1050,14 @@ class WorkflowDialog(wx.Dialog):
         self.layer_map.SetColLabelValue(1, 'KiCad layer')
         self.layer_map.SetColSize(0, 280)
         self.layer_map.SetColSize(1, 320)
-        self.layer_map.SetMinSize((-1, self.layer_map.GetColLabelSize() + 8))
-        self.layer_map.SetMaxSize((-1, self.layer_map.GetColLabelSize() + 8))
+        self.layer_map.SetMinSize((-1, self.layer_map.GetColLabelSize() + 2))
+        self.layer_map.SetMaxSize((-1, self.layer_map.GetColLabelSize() + 2))
         layer_sizer.Add(self.layer_map, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
-        hint = wx.StaticText(
-            layer_box,
-            label=('Selections take effect in the current workflow immediately. Use Save workflow '
-                   'draft to persist them; board files are not modified on this page.'),
-        )
-        hint.Wrap(820)
-        hint.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
-        layer_sizer.Add(hint, 0, wx.EXPAND | wx.ALL, 8)
+        status_row = wx.BoxSizer(wx.HORIZONTAL)
+        self.layer_mapping_status = self.status_label(layer_box, '0 of 0 assigned')
+        status_row.Add(self.layer_mapping_status, 0, wx.ALIGN_CENTER_VERTICAL)
+        status_row.AddStretchSpacer()
+        layer_sizer.Add(status_row, 0, wx.EXPAND | wx.ALL, 8)
         panel.GetSizer().Add(layer_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         self.layer_map.Bind(grid.EVT_GRID_CELL_CHANGED, self.layer_assignment_changed)
 
@@ -1068,10 +1068,10 @@ class WorkflowDialog(wx.Dialog):
         )
         self.rules = grid.Grid(panel)
         self.rules.CreateGrid(0, 1)
-        self.rules.Bind(grid.EVT_GRID_CELL_CHANGED, self.input_changed)
+        self.rules.Bind(grid.EVT_GRID_CELL_CHANGED, self.routing_permission_changed)
         panel.GetSizer().Add(self.rules, 1, wx.EXPAND | wx.ALL, 8)
-        panel.GetSizer().Add(self.button(panel, 'Apply routing permissions', self.apply_routing_permissions), 0, wx.ALL, 8)
         self.new_rules = self.note(panel, '')
+        self.new_rules.Hide()
 
     def refresh_layers(self):
         self._updating_layers = True
@@ -1087,31 +1087,43 @@ class WorkflowDialog(wx.Dialog):
                     row, 1, grid.GridCellChoiceEditor(list(self.controller.copper_layers), False),
                 )
             table_height = (self.layer_map.GetColLabelSize()
-                            + sum(self.layer_map.GetRowSize(row) for row in range(len(names))) + 8)
+                            + sum(self.layer_map.GetRowSize(row) for row in range(len(names))) + 2)
             self.layer_map.SetMinSize((-1, table_height))
             self.layer_map.SetMaxSize((-1, table_height))
             assigned = sum(bool(self.controller.config['layer_mapping'].get(name)) for name in names)
             self.layer_mapping_status.SetLabel(f'{assigned} of {len(names)} assigned')
             self.layer_map.GetParent().Layout()
             self.pages[1].FitInside()
+
+            if self.rules.GetNumberRows(): self.rules.DeleteRows(0, self.rules.GetNumberRows())
+            count = self.rules.GetNumberCols()
+            if count: self.rules.DeleteCols(0, count)
+            layers = self.controller.copper_layers
+            self.rules.AppendCols(len(layers))
+            classes = sorted(self.controller.config['layer_rules'])
+            if classes: self.rules.AppendRows(len(classes))
+            for col, layer in enumerate(layers): self.rules.SetColLabelValue(col, layer)
+            for row, netclass in enumerate(classes):
+                self.rules.SetRowLabelValue(row, netclass)
+                self.rules.SetRowLabelSize(140)
+                for col, layer in enumerate(layers):
+                    self.rules.SetCellEditor(row, col, grid.GridCellBoolEditor())
+                    self.rules.SetCellRenderer(row, col, grid.GridCellBoolRenderer())
+                    self.rules.SetCellValue(
+                        row, col,
+                        '1' if self.controller.config['layer_rules'][netclass].get(layer, True) else '',
+                    )
+            if self.controller.new_rules:
+                self.new_rules.SetLabel(
+                    f'{len(self.controller.new_rules)} new combinations require review.'
+                )
+                self.new_rules.Show()
+            else:
+                self.new_rules.SetLabel('')
+                self.new_rules.Hide()
+            self.pages[2].Layout()
         finally:
             self._updating_layers = False
-        if self.rules.GetNumberRows(): self.rules.DeleteRows(0, self.rules.GetNumberRows())
-        count = self.rules.GetNumberCols()
-        if count: self.rules.DeleteCols(0, count)
-        layers = self.controller.copper_layers
-        self.rules.AppendCols(len(layers))
-        classes = sorted(self.controller.config['layer_rules'])
-        if classes: self.rules.AppendRows(len(classes))
-        for col, layer in enumerate(layers): self.rules.SetColLabelValue(col, layer)
-        for row, netclass in enumerate(classes):
-            self.rules.SetRowLabelValue(row, netclass)
-            self.rules.SetRowLabelSize(140)
-            for col, layer in enumerate(layers):
-                self.rules.SetCellEditor(row, col, grid.GridCellBoolEditor())
-                self.rules.SetCellRenderer(row, col, grid.GridCellBoolRenderer())
-                self.rules.SetCellValue(row, col, '1' if self.controller.config['layer_rules'][netclass].get(layer, True) else '')
-        self.new_rules.SetLabel(f'{len(self.controller.new_rules)} new combinations require review.' if self.controller.new_rules else 'Saved permissions retained.')
 
     def layer_assignment_changed(self, event):
         if self._updating_layers or event.GetCol() != 1:
@@ -1137,11 +1149,21 @@ class WorkflowDialog(wx.Dialog):
         self.refresh()
         event.Skip()
 
-    def apply_routing_permissions(self, event):
-        for row in range(self.rules.GetNumberRows()):
-            for col, layer in enumerate(self.controller.copper_layers):
-                self.controller.set_rule(self.rules.GetRowLabelValue(row), layer, self.rules.GetCellValue(row, col) == '1')
-        self.status.SetLabel('Routing validation permissions applied. Validation and preview invalidated.')
+    def routing_permission_changed(self, event):
+        if self._updating_layers:
+            event.Skip()
+            return
+        row, col = event.GetRow(), event.GetCol()
+        netclass = self.rules.GetRowLabelValue(row)
+        layer = self.controller.copper_layers[col]
+        allowed = self.rules.GetCellValue(row, col) == '1'
+        self.controller.set_rule(netclass, layer, allowed)
+        self.status.SetLabel(
+            f'{netclass} is {"allowed" if allowed else "not allowed"} on {layer}. '
+            'The current workflow changed; board files were not modified.'
+        )
+        self.refresh()
+        event.Skip()
 
     def build_validation(self, panel):
         self.task_box(
@@ -1640,7 +1662,7 @@ class WorkflowDialog(wx.Dialog):
 
     def save(self, event):
         self.controller.save()
-        self.status.SetLabel('Workflow draft saved. Board files were not changed.')
+        self.status.SetLabel('Workflow settings saved. Board files were not changed.')
 
     def restore(self):
         cfg = self.controller.config

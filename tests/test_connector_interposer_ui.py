@@ -134,7 +134,8 @@ class NativeDialogTests(unittest.TestCase):
         for page_index, page_name in enumerate(PAGES):
             self.assertIsNotNone(self.wx.FindWindowByLabel(page_name, dialog.pages[page_index]))
         self.assertIsNone(self.wx.FindWindowByLabel('Apply layer assignments', dialog))
-        self.assertIsNotNone(self.wx.FindWindowByLabel('Apply routing permissions', dialog))
+        self.assertIsNone(self.wx.FindWindowByLabel('Apply routing permissions', dialog))
+        self.assertIsNone(self.wx.FindWindowByLabel('Saved permissions retained.', dialog))
         self.assertIs(dialog.layer_map.GetParent().GetParent(), dialog.pages[1])
         self.assertIs(dialog.rules.GetParent(), dialog.pages[2])
         self.assertEqual(dialog.step_list.GetCount(), len(PAGES))
@@ -142,11 +143,17 @@ class NativeDialogTests(unittest.TestCase):
         step_extent = self.wx.ClientDC(dialog.step_list).GetTextExtent(longest_step)[0]
         self.assertGreater(dialog.step_list.GetSize().width, step_extent)
         self.assertLess(dialog.step_list.GetSize().height, dialog.GetClientSize().height // 2)
-        self.assertIsNotNone(self.wx.FindWindowByLabel('Save workflow draft', dialog))
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Save workflow settings', dialog))
         self.assertIn('without applying board changes', dialog.save_button.GetToolTipText())
         self.assertEqual(dialog.layer_map.GetRowLabelSize(), 0)
         self.assertEqual(dialog.layer_map.GetColLabelValue(0), 'Netlist layer')
         self.assertEqual(dialog.layer_map.GetColLabelValue(1), 'KiCad layer')
+        task_heading = self.wx.FindWindowByLabel('Layer assignment', dialog.pages[1])
+        self.assertGreater(task_heading.GetFont().GetPointSize(), dialog.GetFont().GetPointSize())
+        dialog.Show()
+        self.app.Yield()
+        self.assertLessEqual(dialog.pages[0].GetVirtualSize().width,
+                             dialog.pages[0].GetClientSize().width)
         self.assertFalse(dialog.view_button.IsEnabled())
         self.assertFalse(dialog.apply_button.IsEnabled())
         self.assertFalse(dialog.workbook_path.IsShown())
@@ -186,8 +193,14 @@ class NativeDialogTests(unittest.TestCase):
         dialog.controller.table = table
         dialog.controller.set_layers(('F.Cu', 'In1.Cu', 'B.Cu'))
         dialog.refresh_layers()
+        self.assertTrue(dialog.new_rules.IsShown())
+        self.assertIn('new combinations require review', dialog.new_rules.GetLabel())
         self.assertEqual(dialog.layer_map.GetNumberRows(), 1)
         self.assertLess(dialog.layer_map.GetSize().height, 100)
+        self.assertEqual(
+            dialog.layer_map.GetSize().height,
+            dialog.layer_map.GetColLabelSize() + dialog.layer_map.GetRowSize(0) + 2,
+        )
         dialog.layer_map.SetCellValue(0, 1, 'In1.Cu')
         class LayerEvent:
             @staticmethod
@@ -200,6 +213,17 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(dialog.controller.config['layer_mapping']['L1'], 'In1.Cu')
         self.assertEqual(dialog.layer_mapping_status.GetLabel(), '1 of 1 assigned')
         self.assertIn('board files were not modified', dialog.status.GetLabel())
+        dialog.rules.SetCellValue(0, 0, '')
+        class PermissionEvent:
+            @staticmethod
+            def GetCol(): return 0
+            @staticmethod
+            def GetRow(): return 0
+            @staticmethod
+            def Skip(): return None
+        dialog.routing_permission_changed(PermissionEvent())
+        self.assertFalse(dialog.controller.config['layer_rules']['RF']['F.Cu'])
+        self.assertIn('not allowed', dialog.status.GetLabel())
         popup = DataDialog(dialog, table)
         native_grid = next(child for child in popup.GetChildren() if isinstance(child, self.wx.grid.Grid))
         self.assertEqual(native_grid.GetNumberRows(), 9998)

@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.3.6 and the
+are authorized. Connector to Interposer Workflow is version 0.3.7 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -122,12 +122,22 @@ and previewed KiCad rule updates.
 The 0.3.6 Workflow replaces the overflowing Listbook navigation with a compact
 native step list whose width follows the rendered labels and whose height ends
 after the final step. A tool heading, purpose line, bordered current-step area
-and explicit status region clarify the dialog hierarchy and the scope of
-**Save workflow draft**. **Layer assignment** uses a content-sized mapping table
+and explicit status region clarify the dialog hierarchy and the scope of the
+workflow-settings save action. **Layer assignment** uses a content-sized mapping table
 with no row-number gutter, labels its columns **Netlist layer** and **KiCad
 layer**, and updates the current workflow as soon as a layer is selected. It no
 longer requires a separate Apply button; board files remain unchanged until the
 reviewed workflow is applied.
+
+The 0.3.7 Workflow opens wider when the active display permits so Netlist Source
+fits without an initial horizontal scrollbar. The redundant dialog subtitle is
+removed, **Steps** and each blue-panel page title have stronger hierarchy, and
+the footer action is named **Save workflow settings**. Layer assignment places
+its assigned count below the table and removes its explanatory footer; the grid
+height ends at the last complete row. Routing-permission checkboxes now update
+the current workflow immediately, so their Apply button and static saved-state
+sentence are removed. A dynamic notice remains when newly encountered
+netclass/layer combinations require review.
 
 Completion requires integration and observed behavior, not only unit-test or
 file-format acceptance. Stage 0 evidence and its pass/fail/blocked matrix remain
