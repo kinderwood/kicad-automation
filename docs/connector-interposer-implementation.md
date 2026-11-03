@@ -211,6 +211,7 @@ Constraints were not weakened and findings were not waived.
 | Recovery durability | Hash-checked journal and backup restoration | Power-loss durability and concurrent-writer guarantees |
 | Cross-platform UI | Linux native wx validation first | Windows/macOS focus, keyboard and accessibility |
 | Large-count interaction | Virtual parsed table and stable gang sheets | Full workflow latency, sorting and selection retention |
+| Per-net routing permissions | Current class-by-layer matrix is workflow validation only | Searchable high-count per-net UI, decision on a separate workflow step, previewed rule changes, managed `.kicad_dru` ownership/merge behavior, and KiCad 9/10 router and DRC prototypes |
 | DXF variation | Native import and explicit source validation | Arbitrary nested blocks, curves and repair tolerances |
 | RF electrical/fabrication acceptance | Geometry and native output controls | Fabricator stackup review and impedance/EM qualification |
 | Automatic RF selection | Explicit approved artifact selection | Reviewed rules by connector, netclass, layer and stackup |
