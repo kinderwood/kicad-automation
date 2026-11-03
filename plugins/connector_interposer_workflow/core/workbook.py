@@ -136,18 +136,18 @@ def read_workbook(path):
                 rows.extend([()] * (number-len(rows)))
                 cells = []
                 for cell in row.findall("m:c", NS):
-                    index, cell_row = _column(cell.get("r", ""))
-                    if cell_row != number or index < len(cells):
+                    column_index, cell_row = _column(cell.get("r", ""))
+                    if cell_row != number or column_index < len(cells):
                         raise ValueError("Invalid or duplicate worksheet cell")
-                    cells.extend([""] * (index+1-len(cells)))
+                    cells.extend([""] * (column_index+1-len(cells)))
                     typ = cell.get("t", "n")
                     val = cell.findtext("m:v", default="", namespaces=NS)
                     if typ == "s":
                         try:
-                            index = int(val)
-                            if index < 0:
+                            shared_index = int(val)
+                            if shared_index < 0:
                                 raise ValueError("Negative shared-string index")
-                            val = shared[index]
+                            val = shared[shared_index]
                         except (ValueError, IndexError):
                             raise ValueError("Invalid shared-string index") from None
                     elif typ == "inlineStr":
@@ -165,7 +165,7 @@ def read_workbook(path):
                             val = "#XLSX_ERROR:invalid number"
                     if cell.find("m:f", NS) is not None and not val:
                         val = "#XLSX_ERROR:formula has no cached result"
-                    cells[index] = val
+                    cells[column_index] = val
                 rows[number-1] = tuple(cells)
             sheets.append(Worksheet(sheet.get("name", ""), tuple(rows)))
         return Workbook(tuple(sheets))

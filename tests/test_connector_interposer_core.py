@@ -63,6 +63,48 @@ class WorkbookTests(unittest.TestCase):
                     target.writestr(name,payload)
             with self.assertRaises(ValueError):read_workbook(negative)
 
+    def test_xlsx_shared_string_indices_do_not_replace_column_indices(self):
+        names = ('Signal Map', 'Connector-1', 'Interposer Data',
+                 'Layer-Rules', 'Mechanical 2026', 'Notes-Archive')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'six-sheets.xlsx'
+            sheets = ''.join(
+                f'<sheet name="{name}" sheetId="{index}" r:id="rId{index}"/>'
+                for index, name in enumerate(names, 1)
+            )
+            relationships = ''.join(
+                f'<Relationship Id="rId{index}" Target="worksheets/sheet{index}.xml"/>'
+                for index in range(1, len(names) + 1)
+            )
+            strings = tuple(f'Unused {index}' for index in range(7)) + names
+            shared = ''.join(f'<si><t>{value}</t></si>' for value in strings)
+            with zipfile.ZipFile(path, 'w') as archive:
+                archive.writestr(
+                    'xl/workbook.xml',
+                    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+                    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                    f'<sheets>{sheets}</sheets></workbook>',
+                )
+                archive.writestr(
+                    'xl/_rels/workbook.xml.rels',
+                    f'<Relationships>{relationships}</Relationships>',
+                )
+                archive.writestr(
+                    'xl/sharedStrings.xml',
+                    '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                    f'{shared}</sst>',
+                )
+                for index, name in enumerate(names, 1):
+                    archive.writestr(
+                        f'xl/worksheets/sheet{index}.xml',
+                        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                        f'<sheetData><row r="1"><c r="A1" t="s"><v>{index + 6}</v></c></row>'
+                        '</sheetData></worksheet>',
+                    )
+            workbook = read_workbook(path)
+            self.assertEqual(tuple(sheet.name for sheet in workbook.sheets), names)
+            self.assertEqual(tuple(sheet.rows[0][0] for sheet in workbook.sheets), names)
+
     def test_complete_snapshot_duplicates_and_pad_authority(self):
         row=SignalRecord('S','RF','E1','A1','J1','1','L1',4)
         issues=validate_records((row,dataclasses.replace(row,source_row=8)),{'E1':('B1',)})

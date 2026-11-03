@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.2.4 and the
+are authorized. Connector to Interposer Workflow is version 0.2.5 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -55,6 +55,10 @@ from mapping and preview. Mapping dropdowns list populated columns by workbook
 letter and heading, parsed examples update immediately, and the complete data
 popup remains available after a valid unique mapping.
 
+The 0.2.5 Workflow corrects XLSX shared-string decoding. Cell column indices
+remain independent from shared-string table indices, including across
+multi-sheet workbooks with spaces, hyphens and alphanumeric sheet names.
+
 Completion requires integration and observed behavior, not only unit-test or
 file-format acceptance. Stage 0 evidence and its pass/fail/blocked matrix remain
 in the implementation-plan and feasibility-report Pages. New verification
@@ -64,10 +68,10 @@ results below record their exact runtime and scope.
 
 | Actual native version | Environment | Tests | Skips | Real PCM loader |
 |---|---|---:|---:|---|
-| 9.0.0 | Official OCI binaries, Debian 12 userspace through PRoot | 135 PASS | 0 | All 3 packages PASS |
-| 9.0.9 | Extracted official AppImage | 135 PASS | 0 | All 3 packages PASS |
-| 10.0.0 | Extracted official AppImage | 135 PASS | 0 | All 3 packages PASS |
-| 10.0.8 | Extracted official AppImage | 135 PASS | 0 | All 3 packages PASS |
+| 9.0.0 | Official OCI binaries, Debian 12 userspace through PRoot | 136 PASS | 0 | All 3 packages PASS |
+| 9.0.9 | Extracted official AppImage | 136 PASS | 0 | All 3 packages PASS |
+| 10.0.0 | Extracted official AppImage | 136 PASS | 0 | All 3 packages PASS |
+| 10.0.8 | Extracted official AppImage | 136 PASS | 0 | All 3 packages PASS |
 
 All runs used the same working tree.
 The tests include existing BGA regression coverage, pure/core and native PCB
