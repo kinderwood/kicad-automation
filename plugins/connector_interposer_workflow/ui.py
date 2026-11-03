@@ -608,12 +608,6 @@ class WorkflowDialog(wx.Dialog):
                     self.mapper.SetCellBackgroundColour(row_index, column, wx.Colour(248, 249, 250))
         mapping.Add(self.mapper, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
 
-        self.mapping_feedback = wx.StaticText(mapping_box, label=' ')
-        self.mapping_feedback.SetForegroundColour(wx.Colour(180, 85, 20))
-        self.mapping_feedback.Wrap(820)
-        self.mapping_feedback.Hide()
-        mapping.Add(self.mapping_feedback, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
-
         row = wx.BoxSizer(wx.HORIZONTAL)
         self.columns_status = self.status_label(mapping_box, '0 of 7 columns assigned')
         self.row_count = self.columns_status
@@ -660,9 +654,13 @@ class WorkflowDialog(wx.Dialog):
         self.controller.table = None
         self.controller.workbook = None
         self.controller.changed()
-        self.sheet.Set([])
+        self._updating_spreadsheet = True
+        try:
+            self.sheet.Set([])
+            self.header.SetValue(1)
+        finally:
+            self._updating_spreadsheet = False
         self._set_mapping_columns({})
-        self._set_mapping_feedback('')
         path = Path(self.workbook_path.GetValue()).expanduser()
         if path.is_file() and path.suffix.casefold() in WORKBOOK_SUFFIXES:
             self._schedule_spreadsheet_parse('reload')
@@ -694,7 +692,7 @@ class WorkflowDialog(wx.Dialog):
 
     def header_changed(self, event):
         if not self._updating_spreadsheet:
-            self._schedule_spreadsheet_parse('redetect')
+            self._schedule_spreadsheet_parse('mapping')
         event.Skip()
 
     def excluded_rows_changed(self, event):
@@ -760,34 +758,18 @@ class WorkflowDialog(wx.Dialog):
         self.spreadsheet_feedback.Wrap(780)
         self.spreadsheet_feedback.GetParent().Layout()
 
-    def _set_mapping_feedback(self, message):
-        self.mapping_feedback.SetLabel(message)
-        self.mapping_feedback.Wrap(820)
-        self.mapping_feedback.Show(bool(message))
-        self.mapping_feedback.GetParent().Layout()
-        self.pages[0].Layout()
-        self.pages[0].FitInside()
-
-    def _mapping_problem(self):
-        assignments = {
-            header: self.mapper.GetCellValue(0, column).strip()
-            for column, header in enumerate(HEADERS, 2)
-        }
-        missing = [header for header, value in assignments.items() if not value]
-        uses = {}
-        for header, value in assignments.items():
-            if value:
-                uses.setdefault(value, []).append(header)
-        duplicates = [(value, headers) for value, headers in uses.items() if len(headers) > 1]
-        messages = []
-        if missing:
-            messages.append('Assign ' + ', '.join(missing) + '.')
-        if duplicates:
-            messages.extend(
-                f'{value} is assigned to {" and ".join(headers)}; choose a different source column.'
-                for value, headers in duplicates
-            )
-        return ' '.join(messages) or 'Assign each workflow column to a different populated source column.'
+    def _set_worksheet_choices(self, names, selected=''):
+        """Populate the native choice with an explicit blank selection."""
+        names = list(names)
+        self._updating_spreadsheet = True
+        try:
+            self.sheet.Set([''] + names)
+            if selected in names:
+                self.sheet.SetStringSelection(selected)
+            else:
+                self.sheet.SetSelection(0)
+        finally:
+            self._updating_spreadsheet = False
 
     def _source_error(self, error, path, worksheet):
         message = str(error)
@@ -898,78 +880,67 @@ class WorkflowDialog(wx.Dialog):
                 'The selected netlist file does not exist or is unsupported. Use Browse… to choose an .xlsx, .csv, or .txt file.',
                 True,
             )
-            self._set_mapping_feedback('')
             self.refresh()
             return
+        selected = self.sheet.GetStringSelection()
+        current_mapping = self._mapping_from_grid()
         try:
             resolved = str(path.resolve())
-            selected = self.sheet.GetStringSelection()
             worksheet_changed = False
             if mode in ('reload', 'manual_reload') or self.controller.workbook is None or self._loaded_workbook_path != resolved:
                 self._loaded_workbook_path = resolved
-                try:
-                    table = self.controller.load_workbook(
-                        path, selected or None, self.header.GetValue(), self.ignored.GetValue(), None,
-                    )
-                except StopIteration:
-                    if self.controller.workbook is None or not self.controller.workbook.sheets:
-                        raise ValueError('Workbook contains no worksheets') from None
-                    worksheet_changed = True
-                    table = self.controller.parse(
-                        self.controller.workbook.sheets[0].name,
-                        self.header.GetValue(), self.ignored.GetValue(), None, resolved,
-                    )
-                self._updating_spreadsheet = True
-                try:
-                    self.sheet.Set([worksheet.name for worksheet in self.controller.workbook.sheets])
-                    self.sheet.SetStringSelection(table.worksheet)
-                finally:
-                    self._updating_spreadsheet = False
-            elif mode == 'redetect':
+                self.controller.open_workbook(path)
+                names = [worksheet.name for worksheet in self.controller.workbook.sheets]
+                if not names:
+                    raise ValueError('Workbook contains no worksheets')
+                if selected not in names:
+                    if mode == 'manual_reload' and selected:
+                        selected = names[0]
+                        worksheet_changed = True
+                    else:
+                        selected = ''
+                self._set_worksheet_choices(names, selected)
+
+            if not selected:
+                self.controller.table = None
+                self._set_mapping_columns({})
+                self._set_spreadsheet_feedback('Choose a netlist worksheet.')
+                self.refresh_layers()
+                self.refresh_gangs()
+                self.refresh()
+                return
+
+            if mode in ('reload', 'manual_reload', 'redetect'):
                 table = self.controller.parse(
-                    selected, self.header.GetValue(), self.ignored.GetValue(), None,
+                    selected, self.header.GetValue(), self.ignored.GetValue(), None, resolved,
                 )
             else:
                 table = self.controller.parse(
-                    selected, self.header.GetValue(), self.ignored.GetValue(), self._mapping_from_grid(),
+                    selected, self.header.GetValue(), self.ignored.GetValue(), current_mapping, resolved,
                 )
             self.update_mapping(table)
-            if table.mapping_complete:
-                self._set_mapping_feedback('')
-                if mode == 'manual_reload':
-                    if worksheet_changed:
-                        self._set_spreadsheet_feedback(
-                            f'Workbook reloaded. The previous worksheet is gone, so {table.worksheet} was selected; '
-                            'header row and excluded rows were retained, and column mappings were redetected.'
-                        )
-                    else:
-                        self._set_spreadsheet_feedback(
-                            'Workbook reloaded. Worksheet, header row and excluded rows were retained; '
-                            'column mappings were redetected.'
-                        )
+            if mode == 'manual_reload':
+                if worksheet_changed:
+                    self._set_spreadsheet_feedback(
+                        f'Workbook reloaded. The previous worksheet is gone, so {table.worksheet} was selected; '
+                        'header row and excluded rows were retained, and column mappings were redetected.'
+                    )
                 else:
-                    self._set_spreadsheet_feedback('')
+                    self._set_spreadsheet_feedback(
+                        'Workbook reloaded. Worksheet, header row and excluded rows were retained; '
+                        'column mappings were redetected.'
+                    )
             else:
                 self._set_spreadsheet_feedback('')
-                self._set_mapping_feedback(self._mapping_problem())
             self.refresh_layers()
             self.refresh_gangs()
         except Exception as error:
             self.controller.table = None
             if self.controller.workbook is not None:
-                selected = self.sheet.GetStringSelection()
                 names = [worksheet.name for worksheet in self.controller.workbook.sheets]
-                self._updating_spreadsheet = True
-                try:
-                    self.sheet.Set(names)
-                    if selected in names:
-                        self.sheet.SetStringSelection(selected)
-                    elif names:
-                        self.sheet.SetSelection(0)
-                finally:
-                    self._updating_spreadsheet = False
-                self._set_mapping_columns(self._mapping_from_grid())
-            self._set_mapping_feedback('')
+                self._set_worksheet_choices(names, selected)
+            self._render_mapping_preview(None, current_mapping)
+            self._style_assignment_row()
             self._set_spreadsheet_feedback(self._source_error(error, path, selected), True)
         self.refresh()
 
@@ -1561,15 +1532,14 @@ class WorkflowDialog(wx.Dialog):
             self._update_workbook_display()
             try:
                 table = self.controller.load_workbook(source_path, source.get('worksheet'), source.get('header_row', 1), source.get('ignored_rows', []), source.get('mapping'))
-                self.sheet.Set([s.name for s in self.controller.workbook.sheets])
-                self.sheet.SetStringSelection(table.worksheet)
+                self._set_worksheet_choices(
+                    [s.name for s in self.controller.workbook.sheets], table.worksheet,
+                )
                 self._loaded_workbook_path = str(Path(source_path).resolve())
                 self.update_mapping(table)
                 self._set_spreadsheet_feedback('')
-                self._set_mapping_feedback('' if table.mapping_complete else self._mapping_problem())
             except Exception as error:
                 self.status.SetLabel('Saved workbook requires attention: ' + str(error))
-                self._set_mapping_feedback('')
                 self._set_spreadsheet_feedback(
                     self._source_error(error, Path(source_path), source.get('worksheet', '')),
                     True,

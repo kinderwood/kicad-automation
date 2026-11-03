@@ -203,9 +203,16 @@ class NativeDialogTests(unittest.TestCase):
             try:
                 dialog.workbook_path.SetValue(str(workbook))
                 deadline = time.monotonic() + 2
-                while dialog.controller.table is None and time.monotonic() < deadline:
+                while dialog.controller.workbook is None and time.monotonic() < deadline:
                     self.app.Yield()
                     time.sleep(.01)
+                self.assertIsNotNone(dialog.controller.workbook)
+                self.assertIsNone(dialog.controller.table)
+                self.assertEqual(dialog.sheet.GetStringSelection(), '')
+                self.assertEqual(dialog.header.GetValue(), 1)
+                self.assertEqual(dialog.spreadsheet_feedback.GetLabel(), 'Choose a netlist worksheet.')
+                dialog.sheet.SetStringSelection('signals')
+                dialog._parse_spreadsheet('redetect')
                 self.assertIsNotNone(dialog.controller.table)
                 self.assertEqual(dialog.sheet.GetStringSelection(), 'signals')
                 self.assertLessEqual(dialog.sheet.GetSize().width, 180)
@@ -254,13 +261,17 @@ class NativeDialogTests(unittest.TestCase):
                     'CLOCK7', 'CLOCK', 'E1', 'K3', 'J101', '1', 'L2',
                 ]
                 wide.write_text(','.join(headings) + '\n' + ','.join(values) + '\n', encoding='utf-8')
+                dialog.header.SetValue(2)
                 dialog.workbook_path.SetValue(str(wide))
                 deadline = time.monotonic() + 2
-                while (dialog.controller.table is None or dialog.controller.table.worksheet != 'wide') and time.monotonic() < deadline:
+                while (dialog.controller.workbook is None or dialog.sheet.GetCount() < 2) and time.monotonic() < deadline:
                     self.app.Yield()
                     time.sleep(.01)
+                self.assertEqual(dialog.sheet.GetStringSelection(), '')
+                self.assertEqual(dialog.header.GetValue(), 1)
+                dialog.sheet.SetStringSelection('wide')
+                dialog._parse_spreadsheet('redetect')
                 self.assertEqual([dialog.mapper.GetCellValue(0, column) for column in range(2, 9)], [''] * 7)
-                self.assertIn('Assign Signal, NetClass, Interposer', dialog.mapping_feedback.GetLabel())
                 self.assertEqual(dialog.mapper.GetCellBackgroundColour(0, 2).Get()[:3],
                                  (255, 244, 214))
                 dialog.mapper.SetCellValue(0, 2, 'R · Wire')
@@ -273,13 +284,36 @@ class NativeDialogTests(unittest.TestCase):
                 self.assertEqual(tuple(dialog.controller.table.mapping[name] for name in HEADERS),
                                  tuple(range(17, 24)))
 
+                dialog.header.SetValue(2)
+                dialog._parse_spreadsheet('mapping')
+                self.assertEqual(tuple(dialog.controller.table.mapping[name] for name in HEADERS),
+                                 tuple(range(17, 24)))
+                self.assertEqual(dialog.mapper.GetCellValue(0, 2), 'R · CLOCK7')
+                dialog.header.SetValue(1)
+                dialog._parse_spreadsheet('mapping')
+                self.assertEqual(tuple(dialog.controller.table.mapping[name] for name in HEADERS),
+                                 tuple(range(17, 24)))
+                self.assertEqual(dialog.mapper.GetCellValue(0, 2), 'R · Wire')
+
                 dialog.header.SetValue(999)
-                dialog._parse_spreadsheet('redetect')
+                dialog._parse_spreadsheet('mapping')
                 self.assertIn(
                     "Header row 999 does not exist in worksheet 'wide'",
                     dialog.spreadsheet_feedback.GetLabel(),
                 )
-                self.assertFalse(dialog.mapping_feedback.IsShown())
+                self.assertEqual(dialog.mapper.GetCellValue(0, 2), 'R · Wire')
+
+                dialog.header.SetValue(1)
+                dialog._parse_spreadsheet('mapping')
+                dialog.mapper.SetCellValue(0, 2, 'S · Kind')
+                dialog._parse_spreadsheet('mapping')
+                self.assertEqual(dialog.controller.table.mapping['Signal'], 18)
+                dialog._parse_spreadsheet('redetect')
+                self.assertEqual([dialog.mapper.GetCellValue(0, column) for column in range(2, 9)], [''] * 7)
+                dialog.sheet.SetSelection(0)
+                dialog._parse_spreadsheet('redetect')
+                self.assertIsNone(dialog.controller.table)
+                self.assertEqual([dialog.mapper.GetCellValue(0, column) for column in range(2, 9)], [''] * 7)
             finally:
                 dialog.Destroy()
                 self.app.Yield()

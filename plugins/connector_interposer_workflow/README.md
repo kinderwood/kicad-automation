@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.3.2**, testing release. The package targets KiCad 9.0.0 through
+Version **0.3.3**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -26,17 +26,22 @@ state. Do not open the output project in another editor during application or
 recovery. After Apply, open the output project explicitly; continuing to save
 an already-open source board does not update the output copy.
 
-1. **Netlist Source:** choose `.xlsx`, UTF-8 `.csv`, or delimited UTF-8 `.txt`;
-   the page loads it automatically and detects the worksheet headers. Netlist worksheet, header row and
-   optional excluded source rows remain editable. Map each required field with
+1. **Netlist Source:** choose `.xlsx`, UTF-8 `.csv`, or delimited UTF-8 `.txt`.
+   The workbook opens automatically, with the worksheet deliberately left blank
+   and header row initially set to 1. Choose the netlist worksheet to detect its
+   headers. Netlist worksheet, header row and optional excluded source rows
+   remain editable. Map each required field with
    a dropdown containing only populated workbook columns. The selectors form
    the first row of an aligned live net table, so each assignment sits directly
    above the parsed values it produces. The assignment band stays visibly
    interactive: assigned cells are blue, missing cells are amber, conflicting
    cells are red, and persistent chevrons distinguish selectors from parsed
    read-only data. Unique exact header matches are
-   assigned automatically whenever the workbook, worksheet or header row
-   changes. When the mapping is otherwise blank, choosing the Signal column
+   assigned automatically after worksheet selection or a workbook reload.
+   Changing worksheets resets and redetects the assignments; changing only the
+   header row preserves assignments by physical source-column position and
+   updates their displayed headings. When the mapping is otherwise blank,
+   choosing the Signal column
    fills the remaining six fields from consecutive populated columns. All seven
    fields must map uniquely. **Open full table…** shows source-row numbers
    and the seven mapped workflow fields in workflow order for included rows

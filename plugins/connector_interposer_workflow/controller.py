@@ -86,15 +86,20 @@ class WorkflowController:
         temporary.write_text(json.dumps(self.config, indent=2, sort_keys=True) + '\n', encoding='utf-8')
         temporary.replace(self.config_path)
 
-    def load_workbook(self, path, worksheet=None, header_row=1, ignored='', mapping=None):
+    def open_workbook(self, path):
         self.changed()
         self.table = None
+        self.workbook = None
         before = hashlib.sha256(Path(path).read_bytes()).hexdigest()
         self.workbook = read_workbook(path)
         self.workbook_sha256 = hashlib.sha256(Path(path).read_bytes()).hexdigest()
         if self.workbook_sha256 != before:
             self.workbook = None
             raise ValueError('Workbook changed while reading; reload it')
+        return self.workbook
+
+    def load_workbook(self, path, worksheet=None, header_row=1, ignored='', mapping=None):
+        self.open_workbook(path)
         worksheet = worksheet or self.workbook.sheets[0].name
         return self.parse(worksheet, header_row, ignored, mapping, str(Path(path).resolve()))
 
