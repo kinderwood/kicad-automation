@@ -11,6 +11,40 @@ WORKBOOK_SUFFIXES = ('.xlsx', '.csv', '.txt')
 SPREADSHEET_PREVIEW_ROWS = 5
 
 
+class AssignmentRenderer(grid.GridCellStringRenderer):
+    """Keep assignment cells visibly interactive when their editor is inactive."""
+    def __init__(self, arrow=True):
+        super().__init__()
+        self.arrow = arrow
+
+    def Clone(self):
+        return AssignmentRenderer(self.arrow)
+
+    def Draw(self, table, attr, dc, rect, row, column, selected):
+        background = table.GetSelectionBackground() if selected else attr.GetBackgroundColour()
+        foreground = table.GetSelectionForeground() if selected else attr.GetTextColour()
+        dc.SetPen(wx.Pen(background))
+        dc.SetBrush(wx.Brush(background))
+        dc.DrawRectangle(rect)
+        dc.SetFont(attr.GetFont())
+        dc.SetTextForeground(foreground)
+        value = table.GetCellValue(row, column)
+        text_width = max(0, rect.width - (28 if self.arrow else 12))
+        clipped = wx.Control.Ellipsize(value, dc, wx.ELLIPSIZE_END, text_width)
+        _, text_height = dc.GetTextExtent(clipped)
+        dc.DrawText(clipped, rect.x + 6, rect.y + max(1, (rect.height - text_height) // 2))
+        if self.arrow:
+            center_x = rect.GetRight() - 12
+            center_y = rect.y + rect.height // 2
+            dc.SetPen(wx.Pen(foreground))
+            dc.SetBrush(wx.Brush(foreground))
+            dc.DrawPolygon((wx.Point(center_x - 4, center_y - 2),
+                            wx.Point(center_x + 4, center_y - 2),
+                            wx.Point(center_x, center_y + 3)))
+        dc.SetPen(wx.Pen(wx.Colour(95, 125, 150), 2))
+        dc.DrawLine(rect.x, rect.GetBottom() - 1, rect.GetRight(), rect.GetBottom() - 1)
+
+
 class ReadOnlyTable(grid.GridTableBase):
     def __init__(self, headings, rows):
         super().__init__()
@@ -554,13 +588,31 @@ class WorkflowDialog(wx.Dialog):
         for column, name in enumerate(HEADERS, 2):
             self.mapper.SetColSize(column, 125 if name in ('Interposer Pin', 'Connector Pin') else 112)
         self.mapper.SetRowSize(0, 34)
-        self.mapper.SetMinSize((-1, 255))
+        for row_index in range(1, SPREADSHEET_PREVIEW_ROWS + 1):
+            self.mapper.SetRowSize(row_index, 28)
+        table_height = (self.mapper.GetColLabelSize() + self.mapper.GetRowSize(0)
+                        + sum(self.mapper.GetRowSize(row) for row in range(1, SPREADSHEET_PREVIEW_ROWS + 1))
+                        + 6)
+        self.mapper.SetMinSize((-1, table_height))
+        self.mapper.SetMaxSize((-1, table_height))
+        self.mapper.SetCellSize(0, 0, 1, 2)
+        self.mapper.SetCellValue(0, 0, 'Assignments')
         self.mapper.SetReadOnly(0, 0)
         self.mapper.SetReadOnly(0, 1)
+        self.mapper.SetCellBackgroundColour(0, 0, wx.Colour(220, 235, 250))
+        self.mapper.SetCellRenderer(0, 0, AssignmentRenderer(False))
         for row_index in range(1, SPREADSHEET_PREVIEW_ROWS + 1):
             for column in range(len(HEADERS) + 2):
                 self.mapper.SetReadOnly(row_index, column)
-        mapping.Add(self.mapper, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+                if row_index % 2 == 0:
+                    self.mapper.SetCellBackgroundColour(row_index, column, wx.Colour(248, 249, 250))
+        mapping.Add(self.mapper, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+
+        self.mapping_feedback = wx.StaticText(mapping_box, label=' ')
+        self.mapping_feedback.SetForegroundColour(wx.Colour(180, 85, 20))
+        self.mapping_feedback.Wrap(820)
+        self.mapping_feedback.Hide()
+        mapping.Add(self.mapping_feedback, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
 
         row = wx.BoxSizer(wx.HORIZONTAL)
         self.columns_status = self.status_label(mapping_box, '0 of 7 columns assigned')
@@ -572,7 +624,7 @@ class WorkflowDialog(wx.Dialog):
         self.view_button = self.button(mapping_box, 'Open full table…', self.view_data)
         row.Add(self.view_button, 0, wx.ALIGN_CENTER_VERTICAL)
         mapping.Add(row, 0, wx.EXPAND | wx.ALL, 8)
-        panel.GetSizer().Add(mapping, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        panel.GetSizer().Add(mapping, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         self.workbook_path.Bind(wx.EVT_TEXT, self.workbook_changed)
         self.sheet.Bind(wx.EVT_CHOICE, self.worksheet_changed)
@@ -580,6 +632,8 @@ class WorkflowDialog(wx.Dialog):
         self.header.Bind(wx.EVT_TEXT, self.header_changed)
         self.ignored.Bind(wx.EVT_TEXT, self.excluded_rows_changed)
         self.mapper.Bind(grid.EVT_GRID_CELL_CHANGED, self.mapping_changed)
+        self.mapper.Bind(grid.EVT_GRID_CELL_LEFT_CLICK, self.assignment_clicked)
+        self._style_assignment_row()
         self._update_workbook_display()
 
     def choose_workbook(self, event):
@@ -608,6 +662,7 @@ class WorkflowDialog(wx.Dialog):
         self.controller.changed()
         self.sheet.Set([])
         self._set_mapping_columns({})
+        self._set_mapping_feedback('')
         path = Path(self.workbook_path.GetValue()).expanduser()
         if path.is_file() and path.suffix.casefold() in WORKBOOK_SUFFIXES:
             self._schedule_spreadsheet_parse('reload')
@@ -654,6 +709,18 @@ class WorkflowDialog(wx.Dialog):
             self._schedule_spreadsheet_parse('mapping', 0)
         event.Skip()
 
+    def assignment_clicked(self, event):
+        if event.GetRow() == 0 and event.GetCol() >= 2:
+            wx.CallAfter(self._enable_assignment_editor, event.GetCol())
+        event.Skip()
+
+    def _enable_assignment_editor(self, column):
+        if self._closing:
+            return
+        self.mapper.SetGridCursor(0, column)
+        self.mapper.MakeCellVisible(0, column)
+        self.mapper.EnableCellEditControl()
+
     def _autofill_consecutive_mapping(self):
         """Fill a wholly blank mapping from a user-selected Signal column."""
         if any(self.mapper.GetCellValue(0, column).strip() for column in range(3, len(HEADERS) + 2)):
@@ -693,6 +760,55 @@ class WorkflowDialog(wx.Dialog):
         self.spreadsheet_feedback.Wrap(780)
         self.spreadsheet_feedback.GetParent().Layout()
 
+    def _set_mapping_feedback(self, message):
+        self.mapping_feedback.SetLabel(message)
+        self.mapping_feedback.Wrap(820)
+        self.mapping_feedback.Show(bool(message))
+        self.mapping_feedback.GetParent().Layout()
+        self.pages[0].Layout()
+        self.pages[0].FitInside()
+
+    def _mapping_problem(self):
+        assignments = {
+            header: self.mapper.GetCellValue(0, column).strip()
+            for column, header in enumerate(HEADERS, 2)
+        }
+        missing = [header for header, value in assignments.items() if not value]
+        uses = {}
+        for header, value in assignments.items():
+            if value:
+                uses.setdefault(value, []).append(header)
+        duplicates = [(value, headers) for value, headers in uses.items() if len(headers) > 1]
+        messages = []
+        if missing:
+            messages.append('Assign ' + ', '.join(missing) + '.')
+        if duplicates:
+            messages.extend(
+                f'{value} is assigned to {" and ".join(headers)}; choose a different source column.'
+                for value, headers in duplicates
+            )
+        return ' '.join(messages) or 'Assign each workflow column to a different populated source column.'
+
+    def _source_error(self, error, path, worksheet):
+        message = str(error)
+        if message == 'Header row must identify an existing worksheet row':
+            count = 0
+            if self.controller.workbook is not None and worksheet:
+                try:
+                    count = len(self.controller.workbook.sheet(worksheet).rows)
+                except StopIteration:
+                    pass
+            limit = f' between 1 and {count}' if count else ''
+            return f'Header row {self.header.GetValue()} does not exist in worksheet {worksheet!r}. Choose a row{limit}.'
+        if message.startswith('Excluded rows must be numbers or ranges'):
+            return 'Exclude rows accepts worksheet row numbers and ranges, for example 3, 8-10.'
+        if message in ('Excluded row range is invalid', 'Excluded rows must be data rows within the worksheet'):
+            return (f'Excluded rows must be below header row {self.header.GetValue()} and within '
+                    f'worksheet {worksheet!r}.')
+        if message == 'Workbook contains no worksheets':
+            return f'{path.name} contains no worksheets.'
+        return f'Could not read {path.name}: {message}'
+
     @staticmethod
     def _column_name(index):
         result = ''
@@ -731,8 +847,24 @@ class WorkflowDialog(wx.Dialog):
                 source_column = mapped.get(header)
                 self.mapper.SetCellValue(0, grid_column, by_column.get(source_column, ''))
             self._render_mapping_preview(table, mapped)
+            self._style_assignment_row()
         finally:
             self._updating_spreadsheet = False
+
+    def _style_assignment_row(self):
+        values = [self.mapper.GetCellValue(0, column).strip()
+                  for column in range(2, len(HEADERS) + 2)]
+        counts = {value: values.count(value) for value in set(values) if value}
+        for column, value in enumerate(values, 2):
+            if not value:
+                background = wx.Colour(255, 244, 214)
+            elif counts[value] > 1:
+                background = wx.Colour(252, 232, 230)
+            else:
+                background = wx.Colour(220, 235, 250)
+            self.mapper.SetCellBackgroundColour(0, column, background)
+            self.mapper.SetCellRenderer(0, column, AssignmentRenderer(True))
+        self.mapper.ForceRefresh()
 
     def _render_mapping_preview(self, table, mapped=None):
         mapped = mapped if mapped is not None else self._mapping_from_grid()
@@ -762,7 +894,11 @@ class WorkflowDialog(wx.Dialog):
         path = Path(self.workbook_path.GetValue()).expanduser()
         if not path.is_file() or path.suffix.casefold() not in WORKBOOK_SUFFIXES:
             self.controller.table = None
-            self._set_spreadsheet_feedback('Choose an existing supported netlist file.', True)
+            self._set_spreadsheet_feedback(
+                'The selected netlist file does not exist or is unsupported. Use Browse… to choose an .xlsx, .csv, or .txt file.',
+                True,
+            )
+            self._set_mapping_feedback('')
             self.refresh()
             return
         try:
@@ -799,6 +935,7 @@ class WorkflowDialog(wx.Dialog):
                 )
             self.update_mapping(table)
             if table.mapping_complete:
+                self._set_mapping_feedback('')
                 if mode == 'manual_reload':
                     if worksheet_changed:
                         self._set_spreadsheet_feedback(
@@ -813,7 +950,8 @@ class WorkflowDialog(wx.Dialog):
                 else:
                     self._set_spreadsheet_feedback('')
             else:
-                self._set_spreadsheet_feedback('Map every required field to a different populated workbook column.', True)
+                self._set_spreadsheet_feedback('')
+                self._set_mapping_feedback(self._mapping_problem())
             self.refresh_layers()
             self.refresh_gangs()
         except Exception as error:
@@ -831,7 +969,8 @@ class WorkflowDialog(wx.Dialog):
                 finally:
                     self._updating_spreadsheet = False
                 self._set_mapping_columns(self._mapping_from_grid())
-            self._set_spreadsheet_feedback(str(error), True)
+            self._set_mapping_feedback('')
+            self._set_spreadsheet_feedback(self._source_error(error, path, selected), True)
         self.refresh()
 
     def load_workbook(self, event):
@@ -1427,9 +1566,14 @@ class WorkflowDialog(wx.Dialog):
                 self._loaded_workbook_path = str(Path(source_path).resolve())
                 self.update_mapping(table)
                 self._set_spreadsheet_feedback('')
+                self._set_mapping_feedback('' if table.mapping_complete else self._mapping_problem())
             except Exception as error:
                 self.status.SetLabel('Saved workbook requires attention: ' + str(error))
-                self._set_spreadsheet_feedback(str(error), True)
+                self._set_mapping_feedback('')
+                self._set_spreadsheet_feedback(
+                    self._source_error(error, Path(source_path), source.get('worksheet', '')),
+                    True,
+                )
         symbol = cfg.get('connector_symbol', {})
         self.connector_symbol.set_selection(symbol)
         if cfg.get('interposers'):

@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.3.1 and the
+are authorized. Connector to Interposer Workflow is version 0.3.2 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -91,6 +91,14 @@ matches the left navigation entry.
 The 0.3.1 Workflow reduces the selected netlist display to the filename. The
 resolved path remains available as a tooltip without occupying source-control
 space.
+
+The 0.3.2 Workflow renders the assignment row as a persistent interactive band:
+blue cells are assigned, amber cells are missing, red cells conflict, and each
+selector retains a dropdown chevron while inactive. A stronger divider separates
+assignments from parsed nets. The grid height now fits its header and six rows.
+Mapping errors identify missing or duplicated fields beside the grid, while
+file, worksheet, header-row and excluded-row errors remain in Netlist source
+with actionable context.
 
 Completion requires integration and observed behavior, not only unit-test or
 file-format acceptance. Stage 0 evidence and its pass/fail/blocked matrix remain

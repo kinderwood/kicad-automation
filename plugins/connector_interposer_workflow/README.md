@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.3.1**, testing release. The package targets KiCad 9.0.0 through
+Version **0.3.2**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -31,7 +31,10 @@ an already-open source board does not update the output copy.
    optional excluded source rows remain editable. Map each required field with
    a dropdown containing only populated workbook columns. The selectors form
    the first row of an aligned live net table, so each assignment sits directly
-   above the parsed values it produces. Unique exact header matches are
+   above the parsed values it produces. The assignment band stays visibly
+   interactive: assigned cells are blue, missing cells are amber, conflicting
+   cells are red, and persistent chevrons distinguish selectors from parsed
+   read-only data. Unique exact header matches are
    assigned automatically whenever the workbook, worksheet or header row
    changes. When the mapping is otherwise blank, choosing the Signal column
    fills the remaining six fields from consecutive populated columns. All seven

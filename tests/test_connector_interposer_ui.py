@@ -121,7 +121,8 @@ class NativeDialogTests(unittest.TestCase):
     def test_native_page_hierarchy_and_full_10000_row_popup(self):
         from plugins.connector_interposer_workflow.ui import (WorkflowDialog, DataDialog,
                                                                LibraryPartPickerDialog,
-                                                               LibrarySelectionCtrl)
+                                                               LibrarySelectionCtrl,
+                                                               AssignmentRenderer)
         from plugins.connector_interposer_workflow.core.library_catalog import LibraryEntry, LibraryPart
         from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
         from plugins.connector_interposer_workflow.core.model import HEADERS
@@ -135,6 +136,7 @@ class NativeDialogTests(unittest.TestCase):
         self.assertFalse(dialog.workbook_path.IsShown())
         self.assertEqual(dialog.mapper.GetNumberRows(), 6)
         self.assertEqual(dialog.mapper.GetNumberCols(), 9)
+        self.assertIsInstance(dialog.mapper.GetCellRenderer(0, 2), AssignmentRenderer)
         self.assertIsNotNone(self.wx.FindWindowByLabel('Open full table…', dialog))
         self.assertIsInstance(dialog.interposer_path, LibrarySelectionCtrl)
         self.assertIsInstance(dialog.connector_symbol, LibrarySelectionCtrl)
@@ -213,6 +215,8 @@ class NativeDialogTests(unittest.TestCase):
                 self.assertEqual(dialog.mapper.GetCellValue(1, 1), '2')
                 self.assertEqual(dialog.mapper.GetCellValue(1, 2), 'CLOCK1')
                 self.assertEqual(dialog.workbook_filename.GetLabel(), 'signals.csv')
+                self.assertEqual(dialog.mapper.GetCellBackgroundColour(0, 2).Get()[:3],
+                                 (220, 235, 250))
                 self.assertEqual(len(dialog._spreadsheet_columns), 7)
                 self.assertFalse(any(label.startswith('H ·') for label in dialog._spreadsheet_columns))
                 self.assertEqual(dialog.columns_status.GetLabel(), '7 of 7 columns assigned')
@@ -256,6 +260,9 @@ class NativeDialogTests(unittest.TestCase):
                     self.app.Yield()
                     time.sleep(.01)
                 self.assertEqual([dialog.mapper.GetCellValue(0, column) for column in range(2, 9)], [''] * 7)
+                self.assertIn('Assign Signal, NetClass, Interposer', dialog.mapping_feedback.GetLabel())
+                self.assertEqual(dialog.mapper.GetCellBackgroundColour(0, 2).Get()[:3],
+                                 (255, 244, 214))
                 dialog.mapper.SetCellValue(0, 2, 'R · Wire')
                 self.assertTrue(dialog._autofill_consecutive_mapping())
                 self.assertEqual(
@@ -265,6 +272,14 @@ class NativeDialogTests(unittest.TestCase):
                 dialog._parse_spreadsheet('mapping')
                 self.assertEqual(tuple(dialog.controller.table.mapping[name] for name in HEADERS),
                                  tuple(range(17, 24)))
+
+                dialog.header.SetValue(999)
+                dialog._parse_spreadsheet('redetect')
+                self.assertIn(
+                    "Header row 999 does not exist in worksheet 'wide'",
+                    dialog.spreadsheet_feedback.GetLabel(),
+                )
+                self.assertFalse(dialog.mapping_feedback.IsShown())
             finally:
                 dialog.Destroy()
                 self.app.Yield()
