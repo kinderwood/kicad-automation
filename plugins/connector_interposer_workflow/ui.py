@@ -409,13 +409,14 @@ class WorkflowDialog(wx.Dialog):
             self.book.AddPage(panel, title)
             self.pages.append(panel)
         self.build_spreadsheet(self.pages[0])
-        self.build_layers(self.pages[1])
-        self.build_validation(self.pages[2])
-        self.build_gangs(self.pages[3])
-        self.build_anchors(self.pages[4])
-        self.build_outline(self.pages[5])
-        self.build_review(self.pages[6])
-        self.build_results(self.pages[7])
+        self.build_layer_assignment(self.pages[1])
+        self.build_routing_permissions(self.pages[2])
+        self.build_validation(self.pages[3])
+        self.build_gangs(self.pages[4])
+        self.build_anchors(self.pages[5])
+        self.build_outline(self.pages[6])
+        self.build_review(self.pages[7])
+        self.build_results(self.pages[8])
         outer.Add(self.book, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
         footer = wx.BoxSizer(wx.HORIZONTAL)
         self.save_button = self.button(self, 'Save draft', self.save)
@@ -960,10 +961,10 @@ class WorkflowDialog(wx.Dialog):
             with DataDialog(self, self.controller.table) as dialog:
                 dialog.ShowModal()
 
-    def build_layers(self, panel):
+    def build_layer_assignment(self, panel):
         self.task_box(
-            panel, 'Layer assignment', 'Map source layers and review the validation policy',
-            'Map workbook layer names to actual KiCad copper layers. Disallowed netclass/layer combinations block workflow validation; they do not create KiCad routing rules.',
+            panel, 'Layer assignment', 'Map workbook layers to KiCad copper layers',
+            'Choose the actual board copper layer for every distinct layer value parsed from the workbook. These assignments drive validation and RF artifact compatibility.',
         )
         self.layer_map = grid.Grid(panel)
         self.layer_map.CreateGrid(0, 2)
@@ -972,12 +973,19 @@ class WorkflowDialog(wx.Dialog):
         self.layer_map.SetColSize(0, 250)
         self.layer_map.SetColSize(1, 250)
         panel.GetSizer().Add(self.layer_map, 1, wx.EXPAND | wx.ALL, 8)
+        self.layer_map.Bind(grid.EVT_GRID_CELL_CHANGED, self.input_changed)
+        panel.GetSizer().Add(self.button(panel, 'Apply layer assignments', self.apply_layer_assignment), 0, wx.ALL, 8)
+
+    def build_routing_permissions(self, panel):
+        self.task_box(
+            panel, 'Routing permissions', 'Review the current routing validation policy',
+            'This release evaluates permissions by netclass and copper layer. Disallowed combinations block workflow validation only; a future per-net design will add search, filters and previewed KiCad rule updates.',
+        )
         self.rules = grid.Grid(panel)
         self.rules.CreateGrid(0, 1)
         self.rules.Bind(grid.EVT_GRID_CELL_CHANGED, self.input_changed)
-        self.layer_map.Bind(grid.EVT_GRID_CELL_CHANGED, self.input_changed)
         panel.GetSizer().Add(self.rules, 1, wx.EXPAND | wx.ALL, 8)
-        panel.GetSizer().Add(self.button(panel, 'Apply layer assignments and policy', self.accept_layers), 0, wx.ALL, 8)
+        panel.GetSizer().Add(self.button(panel, 'Apply routing permissions', self.apply_routing_permissions), 0, wx.ALL, 8)
         self.new_rules = self.note(panel, '')
 
     def refresh_layers(self):
@@ -1006,13 +1014,16 @@ class WorkflowDialog(wx.Dialog):
                 self.rules.SetCellValue(row, col, '1' if self.controller.config['layer_rules'][netclass].get(layer, True) else '')
         self.new_rules.SetLabel(f'{len(self.controller.new_rules)} new combinations require review.' if self.controller.new_rules else 'Saved permissions retained.')
 
-    def accept_layers(self, event):
+    def apply_layer_assignment(self, event):
         for row in range(self.layer_map.GetNumberRows()):
             self.controller.set_layer_mapping(self.layer_map.GetCellValue(row, 0), self.layer_map.GetCellValue(row, 1))
+        self.status.SetLabel('Layer assignments applied. Validation and preview invalidated.')
+
+    def apply_routing_permissions(self, event):
         for row in range(self.rules.GetNumberRows()):
             for col, layer in enumerate(self.controller.copper_layers):
                 self.controller.set_rule(self.rules.GetRowLabelValue(row), layer, self.rules.GetCellValue(row, col) == '1')
-        self.status.SetLabel('Layer assignments and validation policy applied. Validation and preview invalidated.')
+        self.status.SetLabel('Routing validation permissions applied. Validation and preview invalidated.')
 
     def build_validation(self, panel):
         self.task_box(

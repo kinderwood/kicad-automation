@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.3.4**, testing release. The package targets KiCad 9.0.0 through
+Version **0.3.5**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -54,17 +54,19 @@ an already-open source board does not update the output copy.
    worksheet when it still exists, header row and excluded rows. It redetects
    mappings from the new headers and invalidates any prior review.
 2. **Layer assignment:** map workbook layer names to enabled board copper
-   layers and review the workflow's netclass/layer validation policy. New
-   combinations start allowed; existing restrictions survive subsequent imports
-   and stackup additions. A disallowed combination blocks workflow validation
-   and Review Changes. This release does not generate KiCad custom routing rules
-   or modify the project's `.kicad_dru` file.
-3. **Validation:** select the approved interposer footprint and an approved
+   layers. These assignments drive validation and RF artifact compatibility.
+3. **Routing permissions:** review the workflow's current netclass/layer
+   validation policy. New combinations start allowed; existing restrictions
+   survive subsequent imports and stackup additions. A disallowed combination
+   blocks workflow validation and Review Changes. This release does not generate
+   KiCad custom routing rules or modify the project's `.kicad_dru` file. A later
+   per-net redesign will add search, filters and previewed rule updates.
+4. **Validation:** select the approved interposer footprint and an approved
    standalone two-pin connector symbol from KiCad's loaded project or global
    libraries, then enter the interposer reference and placement. The selected
    interposer's electrical pad universe is authoritative; unused pads become
    ground. Literal external connector references such as `J101-1` are retained.
-4. **Gangs:** select a gang, its approved footprint from KiCad's loaded
+5. **Gangs:** select a gang, its approved footprint from KiCad's loaded
    libraries, pattern, units, pitches,
    row offsets, numbering, orientation and explicit pattern mirror. Each gang
    keeps independent settings. Library MPN metadata is displayed read-only; when
@@ -75,7 +77,7 @@ an already-open source board does not update the output copy.
    **Per-location RF assignments…** supports clock and artifact overrides for
    mixed routing layers. An artifact's saved signal-layer role must equal the
    workbook's mapped signal layer.
-5. **DXF Anchors:** import the complete mechanical drawing through KiCad's
+6. **DXF Anchors:** import the complete mechanical drawing through KiCad's
    native **File → Import → Graphics**, selecting a user layer, then save.
    The bounded association accepts one full `gang-pin` text label per native
    circle. If labels have a drafting offset, explicitly enter and accept the
@@ -85,16 +87,16 @@ an already-open source board does not update the output copy.
    coordinates, then explicitly accept the anchor. Mounting holes use approved
    footprints selected from the loaded KiCad libraries and are board-only,
    excluded from BOM and position files.
-6. **Board Outline:** explicitly enable this optional feature and capture
+7. **Board Outline:** explicitly enable this optional feature and capture
    imported outer-boundary segments and optional center-cutout segments
    separately. Review validates exact closure, intersections and ownership.
    Only managed outline objects are replaced; designer Edge.Cuts stay intact.
-7. **Review Changes:** compare the full desired population, review additions,
+8. **Review Changes:** compare the full desired population, review additions,
    removals, placement/electrical/RF changes and conflicts, and choose an empty
    output directory outside the source project tree. Accept the current change
    list before Apply. Input changes make the preview stale. Affected designer
    routing and ownership conflicts block application.
-8. **Apply / Results:** inspect the saved board, generated schematic hierarchy,
+9. **Apply / Results:** inspect the saved board, generated schematic hierarchy,
    individual-component BOM, registry, report and recovery journal in the output
    copy. Recovery requires a closed output project and matching expected file
    hashes; later edits are not silently overwritten.
