@@ -22,10 +22,10 @@ def row_ranges(text):
             continue
         ends = token.split('-')
         if len(ends) > 2 or any(not v.strip().isdigit() for v in ends):
-            raise ValueError("Ignored rows must be numbers or ranges, for example 3, 8-10")
+            raise ValueError("Excluded rows must be numbers or ranges, for example 3, 8-10")
         start, stop = int(ends[0]), int(ends[-1])
         if start < 1 or stop < start or stop - start > 1_048_576:
-            raise ValueError("Ignored row range is invalid")
+            raise ValueError("Excluded row range is invalid")
         result.update(range(start, stop + 1))
     return tuple(sorted(result))
 

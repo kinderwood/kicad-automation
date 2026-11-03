@@ -22,16 +22,16 @@ class ReadOnlyTable(grid.GridTableBase):
 
 
 class DataDialog(wx.Dialog):
-    """Virtual table exposes every parsed row including ignored and invalid rows."""
+    """Virtual table exposes every parsed row including excluded and invalid rows."""
     def __init__(self, parent, table):
         super().__init__(parent, title='Workbook data — ' + table.worksheet, size=(1100, 650),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(wx.StaticText(self, label=f'{table.included_count} included · {table.ignored_count} ignored. Source rows retain worksheet numbering.'), 0, wx.ALL, 10)
+        sizer.Add(wx.StaticText(self, label=f'{table.included_count} included · {table.ignored_count} excluded. Source rows retain worksheet numbering.'), 0, wx.ALL, 10)
         rows = []
         width = max((len(r.values) for r in table.rows), default=0)
         for row in table.rows:
-            rows.append((row.source_row, 'Ignored' if row.ignored else 'Included',
+            rows.append((row.source_row, 'Excluded' if row.ignored else 'Included',
                          '; '.join(i.message for i in row.issues), *row.values, *([''] * (width-len(row.values)))))
         mapped = {column: name for name, column in table.mapping.items()}
         headings = ('Source row', 'Status', 'Validation issues') + tuple(mapped.get(i, f'Column {i+1}') for i in range(width))
@@ -338,6 +338,10 @@ class WorkflowDialog(wx.Dialog):
         self._loading_gang = False
         self._closing = False
         self._applying = False
+        self._updating_spreadsheet = False
+        self._spreadsheet_timer = None
+        self._loaded_workbook_path = ''
+        self._spreadsheet_columns = {}
         outer = wx.BoxSizer(wx.VERTICAL)
         self.status = wx.StaticText(self, label='Saved-state workflow: save the source PCB before analysis. Apply creates a separate project copy.')
         outer.Add(self.status, 0, wx.ALL, 10)
@@ -428,70 +432,285 @@ class WorkflowDialog(wx.Dialog):
         event.Skip()
 
     def build_spreadsheet(self, panel):
-        self.note(panel, 'Select the authoritative workbook. Preamble rows precede the chosen header; ignored data rows remain visible in View data.')
-        self.workbook_path = self.field(panel, 'Workbook (.xlsx or .csv)', picker=True)
+        intro = wx.Panel(panel, style=wx.BORDER_SIMPLE)
+        intro.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
+        intro_sizer = wx.BoxSizer(wx.VERTICAL)
+        title = wx.StaticText(intro, label='Import connector assignments')
+        font = title.GetFont()
+        font.SetWeight(wx.FONTWEIGHT_BOLD)
+        title.SetFont(font)
+        intro_sizer.Add(title, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        description = wx.StaticText(
+            intro,
+            label=('Choose the workbook that defines signals, connector locations, interposer pins and '
+                   'routing layers. Confirm the detected columns before continuing.'),
+        )
+        description.Wrap(780)
+        intro_sizer.Add(description, 0, wx.ALL, 10)
+        intro.SetSizer(intro_sizer)
+        panel.GetSizer().Add(intro, 0, wx.EXPAND | wx.ALL, 8)
+
+        source_box = wx.StaticBox(panel, label='Workbook source')
+        source = wx.StaticBoxSizer(source_box, wx.VERTICAL)
         row = wx.BoxSizer(wx.HORIZONTAL)
-        row.Add(wx.StaticText(panel, label='Worksheet'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
-        self.sheet = wx.Choice(panel)
-        row.Add(self.sheet, 1, wx.RIGHT, 12)
-        row.Add(wx.StaticText(panel, label='Header row'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
-        self.header = wx.SpinCtrl(panel, min=1, max=1048576, initial=1)
-        row.Add(self.header)
-        row.Add(self.button(panel, 'Load / parse', self.load_workbook), 0, wx.LEFT, 12)
-        panel.GetSizer().Add(row, 0, wx.EXPAND | wx.ALL, 8)
-        self.ignored = self.field(panel, 'Ignored source rows (e.g. 3, 8-10)')
-        self.mapper = grid.Grid(panel)
-        self.mapper.CreateGrid(len(HEADERS), 2)
+        row.Add(wx.StaticText(source_box, label='Workbook'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        self.workbook_path = wx.TextCtrl(source_box)
+        row.Add(self.workbook_path, 1, wx.EXPAND | wx.RIGHT, 8)
+        self.workbook_browse = self.button(source_box, 'Browse…', self.choose_workbook)
+        row.Add(self.workbook_browse)
+        source.Add(row, 0, wx.EXPAND | wx.ALL, 8)
+
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        row.Add(wx.StaticText(source_box, label='Worksheet'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
+        self.sheet = wx.Choice(source_box, size=(180, -1))
+        self.sheet.SetMinSize((150, -1))
+        row.Add(self.sheet, 0, wx.RIGHT, 16)
+        row.Add(wx.StaticText(source_box, label='Header row'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        self.header = wx.SpinCtrl(source_box, min=1, max=1048576, initial=1, size=(110, -1))
+        row.Add(self.header, 0, wx.RIGHT, 16)
+        row.Add(wx.StaticText(source_box, label='Exclude data rows'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        self.ignored = wx.TextCtrl(source_box, size=(170, -1))
+        self.ignored.SetHint('e.g. 17-18, 24')
+        self.ignored.SetToolTip('Optional worksheet row numbers or ranges to exclude from this import.')
+        row.Add(self.ignored, 0)
+        source.Add(row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.spreadsheet_feedback = wx.StaticText(source_box, label='Choose a .xlsx or UTF-8 .csv workbook to begin.')
+        self.spreadsheet_feedback.Wrap(780)
+        source.Add(self.spreadsheet_feedback, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        panel.GetSizer().Add(source, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
+        mapping_box = wx.StaticBox(panel, label='Column mapping and preview')
+        mapping = wx.StaticBoxSizer(mapping_box, wx.VERTICAL)
+        self.row_count = wx.StaticText(mapping_box, label='No workbook loaded')
+        mapping.Add(self.row_count, 0, wx.EXPAND | wx.ALL, 8)
+        self.mapper = grid.Grid(mapping_box)
+        self.mapper.CreateGrid(len(HEADERS), 3)
         self.mapper.SetColLabelValue(0, 'Required field')
-        self.mapper.SetColLabelValue(1, 'Worksheet column (1-based)')
-        self.mapper.SetColSize(0, 230)
-        self.mapper.SetColSize(1, 230)
+        self.mapper.SetColLabelValue(1, 'Workbook column')
+        self.mapper.SetColLabelValue(2, 'Parsed example')
+        self.mapper.SetRowLabelSize(0)
+        self.mapper.SetColSize(0, 185)
+        self.mapper.SetColSize(1, 250)
+        self.mapper.SetColSize(2, 210)
+        self.mapper.SetMinSize((-1, 245))
         for row, name in enumerate(HEADERS):
             self.mapper.SetCellValue(row, 0, name)
             self.mapper.SetReadOnly(row, 0)
-        panel.GetSizer().Add(self.mapper, 1, wx.EXPAND | wx.ALL, 8)
+            self.mapper.SetReadOnly(row, 2)
+        mapping.Add(self.mapper, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
         row = wx.BoxSizer(wx.HORIZONTAL)
-        row.Add(self.button(panel, 'Apply manual mapping', self.map_columns), 0, wx.RIGHT, 8)
-        self.view_button = self.button(panel, 'View data…', self.view_data)
+        self.view_button = self.button(mapping_box, 'View all parsed data…', self.view_data)
         row.Add(self.view_button)
-        self.row_count = wx.StaticText(panel)
-        row.Add(self.row_count, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 12)
-        panel.GetSizer().Add(row, 0, wx.ALL, 8)
-        for control, event in ((self.header, wx.EVT_SPINCTRL), (self.ignored, wx.EVT_TEXT), (self.sheet, wx.EVT_CHOICE), (self.workbook_path, wx.EVT_TEXT)):
-            control.Bind(event, self.invalidate_parse)
-        self.mapper.Bind(grid.EVT_GRID_CELL_CHANGED, self.invalidate_parse)
+        row.AddStretchSpacer()
+        row.Add(wx.StaticText(mapping_box, label='Changes are parsed automatically.'), 0, wx.ALIGN_CENTER_VERTICAL)
+        mapping.Add(row, 0, wx.EXPAND | wx.ALL, 8)
+        panel.GetSizer().Add(mapping, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-    def invalidate_parse(self, event):
+        self.workbook_path.Bind(wx.EVT_TEXT, self.workbook_changed)
+        self.sheet.Bind(wx.EVT_CHOICE, self.worksheet_changed)
+        self.header.Bind(wx.EVT_SPINCTRL, self.header_changed)
+        self.header.Bind(wx.EVT_TEXT, self.header_changed)
+        self.ignored.Bind(wx.EVT_TEXT, self.excluded_rows_changed)
+        self.mapper.Bind(grid.EVT_GRID_CELL_CHANGED, self.mapping_changed)
+
+    def choose_workbook(self, event):
+        with wx.FileDialog(
+            self,
+            'Choose connector assignment workbook',
+            wildcard='Workbooks (*.xlsx;*.csv)|*.xlsx;*.csv|Excel workbooks (*.xlsx)|*.xlsx|CSV files (*.csv)|*.csv',
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+        ) as dialog:
+            if dialog.ShowModal() == wx.ID_OK:
+                self.workbook_path.SetValue(dialog.GetPath())
+
+    def workbook_changed(self, event):
+        if self._updating_spreadsheet:
+            event.Skip()
+            return
+        self._loaded_workbook_path = ''
         self.controller.table = None
+        self.controller.workbook = None
         self.controller.changed()
+        self.sheet.Set([])
+        self._set_mapping_columns({})
+        path = Path(self.workbook_path.GetValue()).expanduser()
+        if path.is_file() and path.suffix.casefold() in ('.xlsx', '.csv'):
+            self._schedule_spreadsheet_parse('reload')
+            self._set_spreadsheet_feedback('Reading workbook…')
+        elif self.workbook_path.GetValue().strip():
+            self._cancel_spreadsheet_timer()
+            self._set_spreadsheet_feedback('Enter an existing .xlsx or .csv workbook path.', True)
+        else:
+            self._cancel_spreadsheet_timer()
+            self._set_spreadsheet_feedback('Choose a .xlsx or UTF-8 .csv workbook to begin.')
         self.refresh()
         event.Skip()
 
-    def load_workbook(self, event):
-        wanted = self.sheet.GetStringSelection()
-        table = self.controller.load_workbook(self.workbook_path.GetValue(), wanted or None, self.header.GetValue(), self.ignored.GetValue())
-        self.sheet.Set([s.name for s in self.controller.workbook.sheets])
-        self.sheet.SetStringSelection(table.worksheet)
-        self.update_mapping(table)
-        self.refresh_layers()
-        self.refresh_gangs()
+    def worksheet_changed(self, event):
+        if not self._updating_spreadsheet:
+            self._schedule_spreadsheet_parse('redetect', 0)
+        event.Skip()
 
-    def update_mapping(self, table):
-        for row, header in enumerate(HEADERS):
-            self.mapper.SetCellValue(row, 1, str(table.mapping[header]+1) if header in table.mapping else '')
+    def header_changed(self, event):
+        if not self._updating_spreadsheet:
+            self._schedule_spreadsheet_parse('redetect')
+        event.Skip()
 
-    def map_columns(self, event):
+    def excluded_rows_changed(self, event):
+        if not self._updating_spreadsheet:
+            self._schedule_spreadsheet_parse('mapping')
+        event.Skip()
+
+    def mapping_changed(self, event):
+        if not self._updating_spreadsheet and event.GetCol() == 1:
+            self._schedule_spreadsheet_parse('mapping', 0)
+        event.Skip()
+
+    def _cancel_spreadsheet_timer(self):
+        if self._spreadsheet_timer is not None:
+            self._spreadsheet_timer.Stop()
+            self._spreadsheet_timer = None
+
+    def _schedule_spreadsheet_parse(self, mode, delay=300):
+        self._cancel_spreadsheet_timer()
+        if self._closing:
+            return
+        self._spreadsheet_timer = wx.CallLater(delay, self._parse_spreadsheet, mode)
+
+    def _set_spreadsheet_feedback(self, message, error=False):
+        self.spreadsheet_feedback.SetLabel(message)
+        colour = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT)
+        if error:
+            colour = wx.Colour(180, 35, 35)
+        self.spreadsheet_feedback.SetForegroundColour(colour)
+        self.spreadsheet_feedback.Wrap(780)
+
+    @staticmethod
+    def _column_name(index):
+        result = ''
+        number = index + 1
+        while number:
+            number, remainder = divmod(number - 1, 26)
+            result = chr(65 + remainder) + result
+        return result
+
+    def _available_columns(self):
+        if self.controller.workbook is None or not self.sheet.GetStringSelection():
+            return {}
+        worksheet = self.controller.workbook.sheet(self.sheet.GetStringSelection())
+        start = max(0, self.header.GetValue() - 1)
+        width = max((len(row) for row in worksheet.rows[start:]), default=0)
+        columns = {}
+        for column in range(width):
+            values = [str(row[column]).strip() for row in worksheet.rows[start:] if column < len(row)]
+            populated = [value for value in values if value]
+            if not populated:
+                continue
+            heading = values[0] if values and values[0] else populated[0]
+            label = f'{self._column_name(column)} · {heading}'
+            columns[label] = column
+        return columns
+
+    def _sample_value(self, column, table):
+        if self.controller.workbook is None or table is None:
+            return ''
+        worksheet = self.controller.workbook.sheet(table.worksheet)
+        excluded = set(table.ignored_rows)
+        for source_row, values in enumerate(worksheet.rows[table.header_row:], table.header_row + 1):
+            if source_row in excluded or column >= len(values):
+                continue
+            value = str(values[column]).strip()
+            if value:
+                return value
+        return ''
+
+    def _set_mapping_columns(self, mapped, table=None):
+        self._spreadsheet_columns = self._available_columns()
+        choices = [''] + list(self._spreadsheet_columns)
+        by_column = {column: label for label, column in self._spreadsheet_columns.items()}
+        self._updating_spreadsheet = True
+        try:
+            for row, header in enumerate(HEADERS):
+                self.mapper.SetCellEditor(row, 1, grid.GridCellChoiceEditor(choices, False))
+                column = mapped.get(header)
+                self.mapper.SetCellValue(row, 1, by_column.get(column, ''))
+                self.mapper.SetCellValue(row, 2, self._sample_value(column, table) if column is not None else '')
+        finally:
+            self._updating_spreadsheet = False
+
+    def _mapping_from_grid(self):
         mapping = {}
         for row, header in enumerate(HEADERS):
-            value = self.mapper.GetCellValue(row, 1).strip()
-            if value:
-                mapping[header] = int(value)-1
-        if self.controller.workbook is None:
-            self.controller.load_workbook(self.workbook_path.GetValue(), self.sheet.GetStringSelection() or None, self.header.GetValue(), self.ignored.GetValue(), mapping)
-        else:
-            self.controller.parse(self.sheet.GetStringSelection(), self.header.GetValue(), self.ignored.GetValue(), mapping)
-        self.refresh_layers()
-        self.refresh_gangs()
+            label = self.mapper.GetCellValue(row, 1).strip()
+            if label in self._spreadsheet_columns:
+                mapping[header] = self._spreadsheet_columns[label]
+        return mapping
+
+    def _parse_spreadsheet(self, mode='mapping'):
+        self._spreadsheet_timer = None
+        path = Path(self.workbook_path.GetValue()).expanduser()
+        if not path.is_file() or path.suffix.casefold() not in ('.xlsx', '.csv'):
+            self.controller.table = None
+            self._set_spreadsheet_feedback('Enter an existing .xlsx or .csv workbook path.', True)
+            self.refresh()
+            return
+        try:
+            resolved = str(path.resolve())
+            selected = self.sheet.GetStringSelection()
+            if mode == 'reload' or self.controller.workbook is None or self._loaded_workbook_path != resolved:
+                self._loaded_workbook_path = resolved
+                table = self.controller.load_workbook(
+                    path, selected or None, self.header.GetValue(), self.ignored.GetValue(), None,
+                )
+                self._updating_spreadsheet = True
+                try:
+                    self.sheet.Set([worksheet.name for worksheet in self.controller.workbook.sheets])
+                    self.sheet.SetStringSelection(table.worksheet)
+                finally:
+                    self._updating_spreadsheet = False
+            elif mode == 'redetect':
+                table = self.controller.parse(
+                    selected, self.header.GetValue(), self.ignored.GetValue(), None,
+                )
+            else:
+                table = self.controller.parse(
+                    selected, self.header.GetValue(), self.ignored.GetValue(), self._mapping_from_grid(),
+                )
+            self.update_mapping(table)
+            if table.mapping_complete:
+                self._set_spreadsheet_feedback('Workbook is loaded. Review the live examples and continue when they match your data.')
+            else:
+                self._set_spreadsheet_feedback('Map every required field to a different populated workbook column.', True)
+            self.refresh_layers()
+            self.refresh_gangs()
+        except Exception as error:
+            self.controller.table = None
+            if self.controller.workbook is not None:
+                selected = self.sheet.GetStringSelection()
+                names = [worksheet.name for worksheet in self.controller.workbook.sheets]
+                self._updating_spreadsheet = True
+                try:
+                    self.sheet.Set(names)
+                    if selected in names:
+                        self.sheet.SetStringSelection(selected)
+                    elif names:
+                        self.sheet.SetSelection(0)
+                finally:
+                    self._updating_spreadsheet = False
+                self._set_mapping_columns(self._mapping_from_grid())
+            self._set_spreadsheet_feedback(str(error), True)
+        self.refresh()
+
+    def load_workbook(self, event):
+        """Compatibility entry point for callers that explicitly request a reload."""
+        self._parse_spreadsheet('reload')
+
+    def update_mapping(self, table):
+        self._set_mapping_columns(table.mapping, table)
+
+    def map_columns(self, event):
+        """Compatibility entry point; grid edits now parse immediately."""
+        self._parse_spreadsheet('mapping')
 
     def view_data(self, event):
         if self.controller.view_data_enabled:
@@ -1033,9 +1252,13 @@ class WorkflowDialog(wx.Dialog):
     def restore(self):
         cfg = self.controller.config
         source = cfg.get('workbook', {})
-        self.workbook_path.ChangeValue(source.get('path', ''))
-        self.header.SetValue(source.get('header_row', 1))
-        self.ignored.ChangeValue(', '.join(map(str, source.get('ignored_rows', []))))
+        self._updating_spreadsheet = True
+        try:
+            self.workbook_path.ChangeValue(source.get('path', ''))
+            self.header.SetValue(source.get('header_row', 1))
+            self.ignored.ChangeValue(', '.join(map(str, source.get('ignored_rows', []))))
+        finally:
+            self._updating_spreadsheet = False
         source_path = source.get('path', '')
         if source_path and not Path(source_path).exists() and source.get('snapshot') and self.controller.board_path:
             source_path = str(self.controller.board_path.parent / source['snapshot'])
@@ -1045,8 +1268,12 @@ class WorkflowDialog(wx.Dialog):
                 table = self.controller.load_workbook(source_path, source.get('worksheet'), source.get('header_row', 1), source.get('ignored_rows', []), source.get('mapping'))
                 self.sheet.Set([s.name for s in self.controller.workbook.sheets])
                 self.sheet.SetStringSelection(table.worksheet)
+                self._loaded_workbook_path = str(Path(source_path).resolve())
                 self.update_mapping(table)
-            except Exception as error: self.status.SetLabel('Saved workbook requires attention: ' + str(error))
+                self._set_spreadsheet_feedback('Workbook is loaded. Review the live examples and continue when they match your data.')
+            except Exception as error:
+                self.status.SetLabel('Saved workbook requires attention: ' + str(error))
+                self._set_spreadsheet_feedback(str(error), True)
         symbol = cfg.get('connector_symbol', {})
         self.connector_symbol.set_selection(symbol)
         if cfg.get('interposers'):
@@ -1070,7 +1297,14 @@ class WorkflowDialog(wx.Dialog):
     def refresh(self):
         self.view_button.Enable(self.controller.view_data_enabled)
         table = self.controller.table
-        self.row_count.SetLabel(f'{table.included_count} included / {table.ignored_count} ignored' if table else 'Parse to inspect data')
+        if table:
+            mapped = len(table.mapping)
+            self.row_count.SetLabel(
+                f'{table.included_count} included · {table.ignored_count} excluded · '
+                f'{mapped} of {len(HEADERS)} fields mapped'
+            )
+        else:
+            self.row_count.SetLabel('No parsed workbook data')
         self.review_button.Enable(not self.controller.busy)
         self.apply_button.Enable(not self.controller.busy and self.controller.preview is not None and not self.controller.preview.get('conflicts') and self.confirm_review.GetValue())
         self.abort_button.Enable(self.controller.busy and not self._applying)
@@ -1085,5 +1319,6 @@ class WorkflowDialog(wx.Dialog):
             if isinstance(event, wx.CloseEvent): event.Veto()
             return
         self._closing = True
+        self._cancel_spreadsheet_timer()
         self.controller.cancel()
         self.Destroy()

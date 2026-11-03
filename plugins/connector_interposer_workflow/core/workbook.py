@@ -189,7 +189,7 @@ def parse_sheet(sheet, header_row=1, mapping=None, ignored_rows=()):
     issues = [] if complete else [Issue("mapping", "Map all seven required fields to unique columns")]
     ignored = set(ignored_rows)
     if any(type(row) is not int or row <= header_row or row > len(sheet.rows) for row in ignored):
-        issues.append(Issue("ignored_range", "Ignored rows must be data rows within the worksheet"))
+        issues.append(Issue("ignored_range", "Excluded rows must be data rows within the worksheet"))
     rows, records = [], []
     for number, raw in enumerate(sheet.rows[header_row:], header_row+1):
         row_issues, record = [], None

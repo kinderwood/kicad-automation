@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.2.3**, testing release. The package targets KiCad 9.0.0 through
+Version **0.2.4**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -26,12 +26,14 @@ state. Do not open the output project in another editor during application or
 recovery. After Apply, open the output project explicitly; continuing to save
 an already-open source board does not update the output copy.
 
-1. **Spreadsheet:** choose `.xlsx` or UTF-8 `.csv`, worksheet, header row and
-   explicit ignored source rows. Header recognition supports arbitrary column
-   order. Use the manual mapper for missing headers; column numbers start at 1.
-   All seven fields must map uniquely. **View data…** opens the entire parsed
-   table with source-row numbers, ignored rows and errors. Malformed included
-   rows remain blocking errors; sorting has no electrical meaning.
+1. **Spreadsheet:** choose `.xlsx` or UTF-8 `.csv`; the page loads it
+   automatically and detects the worksheet headers. Worksheet, header row and
+   optional excluded source rows remain editable. Map each required field with
+   a dropdown containing only populated workbook columns; the adjacent live
+   example updates as the mapping changes. All seven fields must map uniquely.
+   **View all parsed data…** opens the entire table with source-row numbers,
+   excluded rows and errors. Malformed included rows remain blocking errors;
+   sorting has no electrical meaning.
 2. **Layer rules:** map architecture layer names to enabled board copper layers
    and review netclass permissions. New combinations start allowed; existing
    restrictions survive subsequent imports and stackup additions.
@@ -77,7 +79,7 @@ an already-open source board does not update the output copy.
 
 The source `.connector-interposer-workflow.json` sidecar stores project identity
 and UI drafts,
-including mappings, ignored rows, layer policy, independent gang definitions,
+including mappings, excluded-row selections, layer policy, independent gang definitions,
 artifact selections and accepted mechanical inputs. The exact accepted workbook
 is snapshotted under `.connector-interposer-inputs`; selected parts, approved
 symbols and RF artifacts remain pinned under `.connector-interposer-pinned`.

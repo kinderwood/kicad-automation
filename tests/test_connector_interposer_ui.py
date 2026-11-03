@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -166,6 +167,49 @@ class NativeDialogTests(unittest.TestCase):
         popup.Destroy()
         dialog.Destroy()
         self.app.Yield()
+
+    def test_spreadsheet_auto_mapping_uses_populated_columns_and_live_examples(self):
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+        with tempfile.TemporaryDirectory() as temporary:
+            workbook = Path(temporary) / 'signals.csv'
+            workbook.write_text(
+                'Signal,NetClass,Interposer,Interposer Pin,Connector,Connector Pin,Layer,\n'
+                'CLOCK1,CLOCK,E1,K3,J101,1,L2,\n'
+                'DATA1,DATA,E1,M6,J101,2,L3,\n',
+                encoding='utf-8',
+            )
+            dialog = WorkflowDialog()
+            try:
+                dialog.workbook_path.SetValue(str(workbook))
+                deadline = time.monotonic() + 2
+                while dialog.controller.table is None and time.monotonic() < deadline:
+                    self.app.Yield()
+                    time.sleep(.01)
+                self.assertIsNotNone(dialog.controller.table)
+                self.assertEqual(dialog.sheet.GetStringSelection(), 'signals')
+                self.assertLessEqual(dialog.sheet.GetSize().width, 180)
+                self.assertEqual(dialog.mapper.GetNumberCols(), 3)
+                self.assertEqual(dialog.mapper.GetCellValue(0, 1), 'A · Signal')
+                self.assertEqual(dialog.mapper.GetCellValue(0, 2), 'CLOCK1')
+                self.assertEqual(len(dialog._spreadsheet_columns), 7)
+                self.assertFalse(any(label.startswith('H ·') for label in dialog._spreadsheet_columns))
+                self.assertIn('2 included · 0 excluded · 7 of 7 fields mapped', dialog.row_count.GetLabel())
+
+                dialog.ignored.ChangeValue('2')
+                dialog._parse_spreadsheet('mapping')
+                self.assertEqual(dialog.mapper.GetCellValue(0, 2), 'DATA1')
+                self.assertIn('1 included · 1 excluded', dialog.row_count.GetLabel())
+
+                dialog.mapper.SetCellValue(0, 1, 'B · NetClass')
+                dialog.mapper.SetCellValue(1, 1, 'A · Signal')
+                dialog._parse_spreadsheet('mapping')
+                self.assertEqual(dialog.controller.table.mapping['Signal'], 1)
+                self.assertEqual(dialog.controller.table.mapping['NetClass'], 0)
+                self.assertIsNone(self.wx.FindWindowByLabel('Load / parse', dialog))
+                self.assertIsNone(self.wx.FindWindowByLabel('Apply manual mapping', dialog))
+            finally:
+                dialog.Destroy()
+                self.app.Yield()
 
 
 
