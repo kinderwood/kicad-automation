@@ -10,7 +10,7 @@ from .core.workbook import read_workbook, parse_sheet
 from .core.layers import LayerRules, validate_layers
 from .core.model import HEADERS, Issue
 
-PAGES = ("Netlist Source", "Layer rules", "Validation", "Gangs", "DXF Anchors", "Board Outline", "Review Changes", "Apply / Results")
+PAGES = ("Netlist Source", "Layer assignment", "Validation", "Gangs", "DXF Anchors", "Board Outline", "Review Changes", "Apply / Results")
 
 
 def row_ranges(text):

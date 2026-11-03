@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.3.3 and the
+are authorized. Connector to Interposer Workflow is version 0.3.4 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -106,6 +106,12 @@ row at 1, avoiding a native `wx.Choice` state where the first item looked select
 without being selected. Worksheet changes reset and redetect assignments. Header
 row changes preserve each assignment by physical source-column index while
 refreshing its displayed heading and parsed preview.
+
+The 0.3.4 Workflow renames **Layer rules** to **Layer assignment** and states
+the boundary of its permission matrix in the UI. Workbook layer names map to
+actual KiCad copper layers. The netclass/layer matrix is a saved workflow
+validation policy that can block Review Changes; it does not generate or modify
+KiCad custom routing rules.
 
 Completion requires integration and observed behavior, not only unit-test or
 file-format acceptance. Stage 0 evidence and its pass/fail/blocked matrix remain

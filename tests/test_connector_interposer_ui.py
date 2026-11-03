@@ -129,8 +129,10 @@ class NativeDialogTests(unittest.TestCase):
         dialog = WorkflowDialog()
         self.assertEqual(tuple(dialog.book.GetPageText(i) for i in range(dialog.book.GetPageCount())), PAGES)
         self.assertEqual(PAGES[0], 'Netlist Source')
+        self.assertEqual(PAGES[1], 'Layer assignment')
         for page_index, page_name in enumerate(PAGES):
             self.assertIsNotNone(self.wx.FindWindowByLabel(page_name, dialog.pages[page_index]))
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Apply layer assignments and policy', dialog))
         self.assertFalse(dialog.view_button.IsEnabled())
         self.assertFalse(dialog.apply_button.IsEnabled())
         self.assertFalse(dialog.workbook_path.IsShown())

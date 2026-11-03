@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.3.3**, testing release. The package targets KiCad 9.0.0 through
+Version **0.3.4**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -53,9 +53,12 @@ an already-open source board does not update the output copy.
    rereads an edited workbook at the same path while retaining the selected
    worksheet when it still exists, header row and excluded rows. It redetects
    mappings from the new headers and invalidates any prior review.
-2. **Layer rules:** map architecture layer names to enabled board copper layers
-   and review netclass permissions. New combinations start allowed; existing
-   restrictions survive subsequent imports and stackup additions.
+2. **Layer assignment:** map workbook layer names to enabled board copper
+   layers and review the workflow's netclass/layer validation policy. New
+   combinations start allowed; existing restrictions survive subsequent imports
+   and stackup additions. A disallowed combination blocks workflow validation
+   and Review Changes. This release does not generate KiCad custom routing rules
+   or modify the project's `.kicad_dru` file.
 3. **Validation:** select the approved interposer footprint and an approved
    standalone two-pin connector symbol from KiCad's loaded project or global
    libraries, then enter the interposer reference and placement. The selected

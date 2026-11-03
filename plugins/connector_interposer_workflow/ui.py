@@ -523,7 +523,7 @@ class WorkflowDialog(wx.Dialog):
             panel,
             'Netlist Source',
             'Import connector and nets assignment',
-            'Choose the netlist source, assign the seven required columns, and verify the parsed nets before continuing to Layer rules.',
+            'Choose the netlist source, assign the seven required columns, and verify the parsed nets before continuing to Layer assignment.',
         )
 
         source_box = wx.StaticBox(panel, label='Netlist source')
@@ -962,8 +962,8 @@ class WorkflowDialog(wx.Dialog):
 
     def build_layers(self, panel):
         self.task_box(
-            panel, 'Layer rules', 'Map layers and netclass permissions',
-            'Map architecture names to actual copper layers. New netclass/layer combinations start allowed; an explicit prohibition is a validation error.',
+            panel, 'Layer assignment', 'Map source layers and review the validation policy',
+            'Map workbook layer names to actual KiCad copper layers. Disallowed netclass/layer combinations block workflow validation; they do not create KiCad routing rules.',
         )
         self.layer_map = grid.Grid(panel)
         self.layer_map.CreateGrid(0, 2)
@@ -977,7 +977,7 @@ class WorkflowDialog(wx.Dialog):
         self.rules.Bind(grid.EVT_GRID_CELL_CHANGED, self.input_changed)
         self.layer_map.Bind(grid.EVT_GRID_CELL_CHANGED, self.input_changed)
         panel.GetSizer().Add(self.rules, 1, wx.EXPAND | wx.ALL, 8)
-        panel.GetSizer().Add(self.button(panel, 'Accept layer mapping and rules', self.accept_layers), 0, wx.ALL, 8)
+        panel.GetSizer().Add(self.button(panel, 'Apply layer assignments and policy', self.accept_layers), 0, wx.ALL, 8)
         self.new_rules = self.note(panel, '')
 
     def refresh_layers(self):
@@ -1012,7 +1012,7 @@ class WorkflowDialog(wx.Dialog):
         for row in range(self.rules.GetNumberRows()):
             for col, layer in enumerate(self.controller.copper_layers):
                 self.controller.set_rule(self.rules.GetRowLabelValue(row), layer, self.rules.GetCellValue(row, col) == '1')
-        self.status.SetLabel('Layer mapping and permissions accepted. Validation and preview invalidated.')
+        self.status.SetLabel('Layer assignments and validation policy applied. Validation and preview invalidated.')
 
     def build_validation(self, panel):
         self.task_box(

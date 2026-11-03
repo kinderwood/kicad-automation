@@ -1,6 +1,6 @@
 # Workflow boundaries
 
-The native modeless wx dialog follows Netlist Source → Layer rules → Validation →
+The native modeless wx dialog follows Netlist Source → Layer assignment → Validation →
 Gangs → DXF Anchors → Board Outline → Review Changes → Apply / Results. A
 read-only virtual grid displays the complete parsed workbook in a separate
 popup. Every page begins with a blue task-description panel whose title exactly
