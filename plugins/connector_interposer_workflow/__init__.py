@@ -1,7 +1,7 @@
 """Connector to Interposer Workflow: read-only library consumption and project instances."""
 import os
 
-__version__ = '0.2.5'
+__version__ = '0.2.6'
 PLUGIN = None
 # Core modules are also usable in a plain Python interpreter and isolated workers.
 if not os.environ.get('CONNECTOR_INTERPOSER_WORKFLOW_WORKER'):

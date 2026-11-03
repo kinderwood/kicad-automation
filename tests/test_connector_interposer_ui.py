@@ -161,8 +161,11 @@ class NativeDialogTests(unittest.TestCase):
         popup = DataDialog(dialog, table)
         native_grid = next(child for child in popup.GetChildren() if isinstance(child, self.wx.grid.Grid))
         self.assertEqual(native_grid.GetNumberRows(), 10000)
+        self.assertEqual(native_grid.GetNumberCols(), 8)
+        self.assertEqual(tuple(native_grid.GetColLabelValue(column) for column in range(8)),
+                         ('Source row',) + HEADERS)
         self.assertEqual(native_grid.GetCellValue(9999, 0), '10001')
-        self.assertEqual(native_grid.GetCellValue(9999, 3), 'S10000')
+        self.assertEqual(native_grid.GetCellValue(9999, 1), 'S10000')
         self.assertFalse(native_grid.IsEditable())
         popup.Destroy()
         dialog.Destroy()
@@ -170,6 +173,7 @@ class NativeDialogTests(unittest.TestCase):
 
     def test_spreadsheet_auto_mapping_uses_populated_columns_and_live_examples(self):
         from plugins.connector_interposer_workflow.ui import WorkflowDialog
+        from plugins.connector_interposer_workflow.core.model import HEADERS
         with tempfile.TemporaryDirectory() as temporary:
             workbook = Path(temporary) / 'signals.csv'
             workbook.write_text(
@@ -207,6 +211,30 @@ class NativeDialogTests(unittest.TestCase):
                 self.assertEqual(dialog.controller.table.mapping['NetClass'], 0)
                 self.assertIsNone(self.wx.FindWindowByLabel('Load / parse', dialog))
                 self.assertIsNone(self.wx.FindWindowByLabel('Apply manual mapping', dialog))
+
+                wide = Path(temporary) / 'wide.csv'
+                headings = [f'Other {index}' for index in range(1, 18)] + [
+                    'Wire', 'Kind', 'Device', 'Ball', 'Gang', 'Position', 'Route',
+                ]
+                values = [f'ignored-{index}' for index in range(1, 18)] + [
+                    'CLOCK7', 'CLOCK', 'E1', 'K3', 'J101', '1', 'L2',
+                ]
+                wide.write_text(','.join(headings) + '\n' + ','.join(values) + '\n', encoding='utf-8')
+                dialog.workbook_path.SetValue(str(wide))
+                deadline = time.monotonic() + 2
+                while (dialog.controller.table is None or dialog.controller.table.worksheet != 'wide') and time.monotonic() < deadline:
+                    self.app.Yield()
+                    time.sleep(.01)
+                self.assertEqual([dialog.mapper.GetCellValue(row, 1) for row in range(7)], [''] * 7)
+                dialog.mapper.SetCellValue(0, 1, 'R · Wire')
+                self.assertTrue(dialog._autofill_consecutive_mapping())
+                self.assertEqual(
+                    [dialog.mapper.GetCellValue(row, 1).split(' · ', 1)[0] for row in range(7)],
+                    ['R', 'S', 'T', 'U', 'V', 'W', 'X'],
+                )
+                dialog._parse_spreadsheet('mapping')
+                self.assertEqual(tuple(dialog.controller.table.mapping[name] for name in HEADERS),
+                                 tuple(range(17, 24)))
             finally:
                 dialog.Destroy()
                 self.app.Yield()

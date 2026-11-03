@@ -28,20 +28,17 @@ class DataDialog(wx.Dialog):
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(wx.StaticText(self, label=f'{table.included_count} included · {table.ignored_count} excluded. Source rows retain worksheet numbering.'), 0, wx.ALL, 10)
-        rows = []
-        width = max((len(r.values) for r in table.rows), default=0)
-        for row in table.rows:
-            rows.append((row.source_row, 'Excluded' if row.ignored else 'Included',
-                         '; '.join(i.message for i in row.issues), *row.values, *([''] * (width-len(row.values)))))
-        mapped = {column: name for name, column in table.mapping.items()}
-        headings = ('Source row', 'Status', 'Validation issues') + tuple(mapped.get(i, f'Column {i+1}') for i in range(width))
+        rows = [
+            (row.source_row, *(row.values[table.mapping[name]] if table.mapping[name] < len(row.values) else ''
+                               for name in HEADERS))
+            for row in table.rows
+        ]
+        headings = ('Source row',) + tuple(HEADERS)
         view = grid.Grid(self)
         view.SetTable(ReadOnlyTable(headings, rows), True)
         view.EnableEditing(False)
         view.SetColSize(0, 90)
-        view.SetColSize(1, 85)
-        view.SetColSize(2, 330)
-        for col in range(3, len(headings)):
+        for col in range(1, len(headings)):
             view.SetColSize(col, 145)
         sizer.Add(view, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
         sizer.Add(self.CreateButtonSizer(wx.CLOSE), 0, wx.ALIGN_RIGHT | wx.ALL, 10)
@@ -563,8 +560,29 @@ class WorkflowDialog(wx.Dialog):
 
     def mapping_changed(self, event):
         if not self._updating_spreadsheet and event.GetCol() == 1:
+            if event.GetRow() == 0:
+                self._autofill_consecutive_mapping()
             self._schedule_spreadsheet_parse('mapping', 0)
         event.Skip()
+
+    def _autofill_consecutive_mapping(self):
+        """Fill a wholly blank mapping from a user-selected Signal column."""
+        if any(self.mapper.GetCellValue(row, 1).strip() for row in range(1, len(HEADERS))):
+            return False
+        signal_label = self.mapper.GetCellValue(0, 1).strip()
+        if signal_label not in self._spreadsheet_columns:
+            return False
+        start = self._spreadsheet_columns[signal_label]
+        labels = {column: label for label, column in self._spreadsheet_columns.items()}
+        if any(start + offset not in labels for offset in range(len(HEADERS))):
+            return False
+        self._updating_spreadsheet = True
+        try:
+            for row, column in enumerate(range(start, start + len(HEADERS))):
+                self.mapper.SetCellValue(row, 1, labels[column])
+        finally:
+            self._updating_spreadsheet = False
+        return True
 
     def _cancel_spreadsheet_timer(self):
         if self._spreadsheet_timer is not None:
