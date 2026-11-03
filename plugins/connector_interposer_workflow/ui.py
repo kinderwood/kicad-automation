@@ -37,13 +37,29 @@ class DataDialog(wx.Dialog):
         view = grid.Grid(self)
         view.SetTable(ReadOnlyTable(headings, rows), True)
         view.EnableEditing(False)
-        view.SetColSize(0, 90)
-        for col in range(1, len(headings)):
-            view.SetColSize(col, 145)
+        view.SetRowLabelSize(0)
+        view.AutoSizeColumns(False)
         sizer.Add(view, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
         sizer.Add(self.CreateButtonSizer(wx.CLOSE), 0, wx.ALIGN_RIGHT | wx.ALL, 10)
         self.SetSizer(sizer)
         self.Bind(wx.EVT_BUTTON, lambda event: self.EndModal(wx.ID_CLOSE), id=wx.ID_CLOSE)
+        self._size_for_table(view, len(rows))
+
+    def _size_for_table(self, view, row_count):
+        display_index = wx.Display.GetFromWindow(self)
+        area = (wx.Display(display_index).GetClientArea()
+                if display_index != wx.NOT_FOUND else wx.GetClientDisplayRect())
+        maximum_width = min(1600, max(480, int(area.width * .9)))
+        maximum_height = min(900, max(360, int(area.height * .9)))
+        scrollbar = max(0, wx.SystemSettings.GetMetric(wx.SYS_VSCROLL_X))
+        desired_width = sum(view.GetColSize(column) for column in range(view.GetNumberCols())) + scrollbar + 34
+        visible_rows = min(max(row_count, 1), 24)
+        desired_height = view.GetColLabelSize() + visible_rows * view.GetDefaultRowSize() + 125
+        width = max(min(760, maximum_width), min(desired_width, maximum_width))
+        height = max(min(450, maximum_height), min(desired_height, maximum_height))
+        self.SetMinSize((min(700, maximum_width), min(420, maximum_height)))
+        self.SetSize((width, height))
+        self.CentreOnParent()
 
 
 class PatternPreview(wx.Panel):
