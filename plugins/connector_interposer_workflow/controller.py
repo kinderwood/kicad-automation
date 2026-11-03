@@ -288,24 +288,127 @@ def library_id(path):
 class NativeProcessBackend:
     """Run pcbnew in an isolated interpreter, keeping SWIG off wx worker threads."""
     def __init__(self, python=None):
+        import os
+        import subprocess
         import sys
         module = sys.modules.get('pcbnew')
         self.expected_version = module.Version() if module else None
-        if python:
-            self.python = [str(value) for value in python] if isinstance(python, (list, tuple)) else [str(python)]
+        if python is not None:
+            command = [str(value) for value in python] if isinstance(python, (list, tuple)) else [str(python)]
+            if not command or not command[0]:
+                raise RuntimeError('Explicit KiCad Python interpreter command is empty')
+            self._validate_interpreter(command, subprocess, os, explicit=True)
+            self.python = command
             return
+        checked = []
+        for description, command in self._interpreter_candidates(module, sys):
+            executable = Path(command[0])
+            if not executable.is_file():
+                checked.append(f'{description}: {executable} was not found')
+                continue
+            try:
+                self._validate_interpreter(command, subprocess, os)
+            except RuntimeError as error:
+                checked.append(f'{description}: {error}')
+                continue
+            self.python = command
+            return
+        expected = f' KiCad {self.expected_version}' if self.expected_version else ''
+        shown = checked[:12]
+        if len(checked) > len(shown):
+            shown.append(f'{len(checked) - len(shown)} additional runtime-relative locations were not usable')
+        detail = '\n'.join('  - ' + item for item in shown) or '  - no runtime-relative candidates were available'
+        raise RuntimeError(
+            f'Cannot locate a bundled Python interpreter matching the active{expected} editor. Checked:\n{detail}\n'
+            'Install the matching KiCad Python runtime or configure an explicit command with '
+            'NativeProcessBackend(python=...). System PATH interpreters are not selected automatically.'
+        )
+
+    @staticmethod
+    def _interpreter_candidates(module, sys_module):
+        """Yield runtime-relative commands without consulting the system PATH."""
+        major, minor = sys_module.version_info.major, sys_module.version_info.minor
         origin = Path(module.__file__).resolve() if module and getattr(module, '__file__', None) else None
-        runtime = next((parent / 'AppRun' for parent in origin.parents if (parent / 'AppRun').is_file()), None) if origin else None
-        if runtime:
-            self.python = [str(runtime), 'python' + str(sys.version_info.major) + '.' + str(sys.version_info.minor)]
-            return
-        candidate = Path(sys.prefix) / 'bin' / ('python' + str(sys.version_info.major) + '.' + str(sys.version_info.minor))
-        if candidate.is_file():
-            self.python = [str(candidate)]
-        elif sys.executable and Path(sys.executable).name.startswith('python') and Path(sys.executable).resolve().is_relative_to(Path(sys.prefix).resolve()):
-            self.python = [sys.executable]
-        else:
-            raise RuntimeError('Cannot locate this KiCad runtime Python interpreter for isolated analysis; configure an explicit matching interpreter')
+        candidates = []
+        if origin:
+            runtime = next((parent / 'AppRun' for parent in origin.parents if (parent / 'AppRun').is_file()), None)
+            if runtime:
+                candidates.append(('KiCad AppImage runtime', [str(runtime), f'python{major}.{minor}']))
+
+        executable = Path(sys_module.executable).resolve() if getattr(sys_module, 'executable', None) else None
+        windows_layout = bool(executable and executable.suffix.casefold() == '.exe')
+        windows_names = ('python.exe', f'python{major}.{minor}.exe', 'python3.exe',
+                         'pythonw.exe', f'pythonw{major}.{minor}.exe')
+        posix_names = (f'python{major}.{minor}', 'python3', 'python')
+        names = windows_names + posix_names if windows_layout else posix_names + windows_names
+        roots = []
+        if executable:
+            roots.append(('active editor executable directory', executable.parent))
+        for label, value in (('Python prefix', getattr(sys_module, 'prefix', None)),
+                             ('Python execution prefix', getattr(sys_module, 'exec_prefix', None))):
+            if value:
+                root = Path(value).resolve()
+                if root != Path(root.anchor):
+                    roots.append((label, root))
+
+        if executable and executable.name.casefold().startswith('python'):
+            candidates.append(('active Python executable', [str(executable)]))
+        for label, root in roots:
+            for directory in (root, root / 'bin'):
+                for name in names:
+                    candidates.append((label, [str(directory / name)]))
+
+        seen = set()
+        for description, command in candidates:
+            key = tuple(value.casefold() if windows_layout else value for value in command)
+            if key not in seen:
+                seen.add(key)
+                yield description, command
+
+    @staticmethod
+    def _subprocess_options(subprocess_module, os_module):
+        if os_module.name == 'nt' and hasattr(subprocess_module, 'CREATE_NO_WINDOW'):
+            return {'creationflags': subprocess_module.CREATE_NO_WINDOW}
+        return {}
+
+    def _validate_interpreter(self, command, subprocess_module, os_module, explicit=False):
+        import tempfile
+        probe = '''import json,pathlib,traceback
+target=pathlib.Path(__import__("sys").argv[1])
+try:
+ import pcbnew
+ payload={"ok":True,"version":pcbnew.Version()}
+except Exception as error:
+ payload={"ok":False,"error":str(error),"traceback":traceback.format_exc()}
+target.write_text(json.dumps(payload),encoding="utf-8")
+raise SystemExit(0 if payload["ok"] else 3)
+'''
+        with tempfile.TemporaryDirectory(prefix='connector-interposer-runtime-') as temporary:
+            result = Path(temporary) / 'probe.json'
+            environment = dict(os_module.environ, CONNECTOR_INTERPOSER_WORKFLOW_WORKER='1')
+            try:
+                process = subprocess_module.run(
+                    command + ['-c', probe, str(result)], env=environment, capture_output=True,
+                    text=True, timeout=30, **self._subprocess_options(subprocess_module, os_module)
+                )
+            except (OSError, subprocess_module.SubprocessError) as error:
+                qualifier = 'Explicit interpreter' if explicit else 'Interpreter'
+                raise RuntimeError(f'{qualifier} {command[0]} could not start: {error}') from error
+            payload = None
+            if result.is_file():
+                try:
+                    payload = json.loads(result.read_text(encoding='utf-8'))
+                except (OSError, ValueError):
+                    pass
+            if process.returncode or not payload or not payload.get('ok'):
+                reason = payload.get('error') if isinstance(payload, dict) else None
+                reason = reason or process.stderr.strip() or 'the pcbnew validation probe returned no result'
+                raise RuntimeError(f'{command[0]} cannot run the KiCad pcbnew worker: {reason}')
+            actual = str(payload.get('version', ''))
+            if self.expected_version and actual != self.expected_version:
+                raise RuntimeError(
+                    f'{command[0]} reports KiCad {actual or "unknown"}; active editor is KiCad {self.expected_version}'
+                )
 
     def call(self, operation, **request):
         import os
@@ -335,7 +438,8 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
             source, result = Path(temporary)/'request.json', Path(temporary)/'result.json'
             source.write_text(json.dumps(request), encoding='utf-8')
             process = subprocess.run(self.python + ['-c', script, str(package_dir), str(source), str(result)],
-                                     env=environment, capture_output=True, text=True, timeout=300)
+                                     env=environment, capture_output=True, text=True, timeout=300,
+                                     **self._subprocess_options(subprocess, os))
             if process.returncode:
                 raise RuntimeError('Native project analysis failed: ' + process.stderr[-6000:])
             if not result.exists():

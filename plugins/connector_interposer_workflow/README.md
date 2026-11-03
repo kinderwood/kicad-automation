@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.2.2**, testing release. The package targets KiCad 9.0.0 through
+Version **0.2.3**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -97,6 +97,15 @@ primary user interface. RF transition artifacts remain separate immutable
 catalog files in this release. This release browses native `.pretty` footprint
 libraries and `.kicad_sym` symbol libraries; database, legacy and other
 non-native library types are not offered.
+
+Native board inspection and application remain in an isolated subprocess. The
+workflow discovers that interpreter relative to the active KiCad runtime:
+AppImage `AppRun` on Linux, the active Python installation prefix, or the
+bundled `python.exe`/`pythonw.exe` beside the PCB Editor on Windows. Each
+candidate must import `pcbnew` and report the active editor's exact KiCad
+version before use. Automatic discovery never selects an interpreter merely
+because it appears on the system `PATH`; an explicit constructor override is
+validated by the same probe.
 
 ## Limits of this testing release
 
