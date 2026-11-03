@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.2.8**, testing release. The package targets KiCad 9.0.0 through
+Version **0.2.9**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -35,9 +35,11 @@ an already-open source board does not update the output copy.
    changes. When the mapping is otherwise blank, choosing the Signal column
    fills the remaining six fields from consecutive populated columns. All seven
    fields must map uniquely. **View all parsed data…** shows source-row numbers
-   and the seven mapped workflow fields in workflow order. Its columns fit the
-   longest header or displayed value, and its window is bounded to the active
-   display with a 1600×900 ceiling. Malformed included rows remain blocking
+   and the seven mapped workflow fields in workflow order for included rows
+   only. The grid gutter is a sequential preview index while **Source row** is
+   the original worksheet row. Its columns fit the longest header or displayed
+   value, and its window is bounded to the active display with a 1600×900
+   ceiling. Malformed included rows remain blocking
    errors; sorting has no electrical meaning. **Reload**
    rereads an edited workbook at the same path while retaining the selected
    worksheet when it still exists, header row and excluded rows. It redetects

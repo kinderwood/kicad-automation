@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.2.8 and the
+are authorized. Connector to Interposer Workflow is version 0.2.9 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -75,6 +75,10 @@ The 0.2.8 Workflow sizes parsed-data columns from their longest header or cell
 value and sizes the popup to the resulting table. The window remains within
 90 percent of the active display's usable area and never exceeds 1600×900;
 wider content remains available through native grid scrolling.
+
+The 0.2.9 Workflow retains the parsed-data grid gutter as a sequential preview
+index, keeps original worksheet numbering in **Source row**, and omits excluded
+rows from the preview so it reflects the records the workflow consumes.
 
 Completion requires integration and observed behavior, not only unit-test or
 file-format acceptance. Stage 0 evidence and its pass/fail/blocked matrix remain
