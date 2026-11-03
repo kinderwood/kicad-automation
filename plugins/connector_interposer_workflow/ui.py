@@ -507,12 +507,7 @@ class WorkflowDialog(wx.Dialog):
         font = self.workbook_filename.GetFont()
         font.SetWeight(wx.FONTWEIGHT_BOLD)
         self.workbook_filename.SetFont(font)
-        workbook.Add(self.workbook_filename, 0, wx.BOTTOM, 2)
-        self.workbook_display_path = wx.StaticText(source_box, label='', style=wx.ST_ELLIPSIZE_MIDDLE)
-        self.workbook_display_path.SetMinSize((240, -1))
-        self.workbook_display_path.SetMaxSize((280, -1))
-        self.workbook_display_path.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
-        workbook.Add(self.workbook_display_path, 0, wx.EXPAND)
+        workbook.Add(self.workbook_filename, 0)
         row.Add(workbook, 1, wx.EXPAND | wx.RIGHT, 12)
         self.workbook_browse = self.button(source_box, 'Browse…', self.choose_workbook)
         row.Add(self.workbook_browse, 0, wx.ALIGN_BOTTOM | wx.RIGHT, 8)
@@ -631,14 +626,10 @@ class WorkflowDialog(wx.Dialog):
         if value:
             path = Path(value).expanduser()
             self.workbook_filename.SetLabel(path.name or value)
-            self.workbook_display_path.SetLabel(str(path))
             self.workbook_filename.SetToolTip(str(path))
-            self.workbook_display_path.SetToolTip(str(path))
         else:
             self.workbook_filename.SetLabel('No netlist workbook selected')
-            self.workbook_display_path.SetLabel('')
             self.workbook_filename.SetToolTip('')
-            self.workbook_display_path.SetToolTip('')
         self.workbook_filename.GetParent().Layout()
 
     def worksheet_changed(self, event):
