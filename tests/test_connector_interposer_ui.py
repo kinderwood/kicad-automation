@@ -133,10 +133,20 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(PAGES[2], 'Routing permissions')
         for page_index, page_name in enumerate(PAGES):
             self.assertIsNotNone(self.wx.FindWindowByLabel(page_name, dialog.pages[page_index]))
-        self.assertIsNotNone(self.wx.FindWindowByLabel('Apply layer assignments', dialog))
+        self.assertIsNone(self.wx.FindWindowByLabel('Apply layer assignments', dialog))
         self.assertIsNotNone(self.wx.FindWindowByLabel('Apply routing permissions', dialog))
-        self.assertIs(dialog.layer_map.GetParent(), dialog.pages[1])
+        self.assertIs(dialog.layer_map.GetParent().GetParent(), dialog.pages[1])
         self.assertIs(dialog.rules.GetParent(), dialog.pages[2])
+        self.assertEqual(dialog.step_list.GetCount(), len(PAGES))
+        longest_step = max(PAGES, key=len)
+        step_extent = self.wx.ClientDC(dialog.step_list).GetTextExtent(longest_step)[0]
+        self.assertGreater(dialog.step_list.GetSize().width, step_extent)
+        self.assertLess(dialog.step_list.GetSize().height, dialog.GetClientSize().height // 2)
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Save workflow draft', dialog))
+        self.assertIn('without applying board changes', dialog.save_button.GetToolTipText())
+        self.assertEqual(dialog.layer_map.GetRowLabelSize(), 0)
+        self.assertEqual(dialog.layer_map.GetColLabelValue(0), 'Netlist layer')
+        self.assertEqual(dialog.layer_map.GetColLabelValue(1), 'KiCad layer')
         self.assertFalse(dialog.view_button.IsEnabled())
         self.assertFalse(dialog.apply_button.IsEnabled())
         self.assertFalse(dialog.workbook_path.IsShown())
@@ -173,6 +183,23 @@ class NativeDialogTests(unittest.TestCase):
         picker.Destroy()
         rows = (HEADERS,) + tuple((f'SIGNAL_NAME_{i:05}', 'RF', 'U1', f'A{i}', 'J101', str(i), 'L1') for i in range(1, 10001))
         table = parse_sheet(Worksheet('Signals', rows), ignored_rows=(2, 5001))
+        dialog.controller.table = table
+        dialog.controller.set_layers(('F.Cu', 'In1.Cu', 'B.Cu'))
+        dialog.refresh_layers()
+        self.assertEqual(dialog.layer_map.GetNumberRows(), 1)
+        self.assertLess(dialog.layer_map.GetSize().height, 100)
+        dialog.layer_map.SetCellValue(0, 1, 'In1.Cu')
+        class LayerEvent:
+            @staticmethod
+            def GetCol(): return 1
+            @staticmethod
+            def GetRow(): return 0
+            @staticmethod
+            def Skip(): return None
+        dialog.layer_assignment_changed(LayerEvent())
+        self.assertEqual(dialog.controller.config['layer_mapping']['L1'], 'In1.Cu')
+        self.assertEqual(dialog.layer_mapping_status.GetLabel(), '1 of 1 assigned')
+        self.assertIn('board files were not modified', dialog.status.GetLabel())
         popup = DataDialog(dialog, table)
         native_grid = next(child for child in popup.GetChildren() if isinstance(child, self.wx.grid.Grid))
         self.assertEqual(native_grid.GetNumberRows(), 9998)

@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.3.5**, testing release. The package targets KiCad 9.0.0 through
+Version **0.3.6**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -18,6 +18,12 @@ Connector to Interposer Workflow**. Save the project before opening the modeless
 native wx dialog. Python core modules also run without KiCad or wx dependencies.
 
 ## Saved-state workflow
+
+The dialog keeps edits in a current in-memory workflow. **Save workflow draft**
+writes those settings, accepted inputs and source snapshot to the project
+sidecar; it does not update the PCB or schematic. Layer assignments take effect
+in the current workflow as soon as they are selected. **Apply** is the separate,
+review-gated operation that creates the output project copy.
 
 Apply operates on a new, separate output project directory. The source project
 is read-only to the native backend. Save source edits before comparison: native
@@ -53,8 +59,10 @@ an already-open source board does not update the output copy.
    rereads an edited workbook at the same path while retaining the selected
    worksheet when it still exists, header row and excluded rows. It redetects
    mappings from the new headers and invalidates any prior review.
-2. **Layer assignment:** map workbook layer names to enabled board copper
-   layers. These assignments drive validation and RF artifact compatibility.
+2. **Layer assignment:** map each distinct netlist layer name to an enabled
+   KiCad copper layer. Each selection updates the current workflow immediately;
+   there is no separate acceptance button. These assignments drive validation
+   and RF artifact compatibility.
 3. **Routing permissions:** review the workflow's current netclass/layer
    validation policy. New combinations start allowed; existing restrictions
    survive subsequent imports and stackup additions. A disallowed combination

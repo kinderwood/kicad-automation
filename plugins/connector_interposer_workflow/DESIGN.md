@@ -5,13 +5,20 @@ Routing permissions → Validation → Gangs → DXF Anchors → Board Outline �
 Review Changes → Apply / Results. A
 read-only virtual grid displays the complete parsed workbook in a separate
 popup. Every page begins with a blue task-description panel whose title exactly
-matches its navigation entry. No browser, webview, authoring wizard or generative recipe editor is
-part of this package's layout flow.
+matches its navigation entry. The dialog header names the tool and its purpose;
+the left step list sizes itself to the native font and stops after the last
+step. The bordered page area and compact status/footer regions establish the
+layout without a full-height navigation pane. The Layer assignment grid fits
+its rows instead of consuming the remaining window. No browser, webview,
+authoring wizard or generative recipe editor is part of this package's layout
+flow.
 
 The editable [UI Design Guide](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=135-37)
 records the current workflow, product principles, approved and retired patterns,
 page anatomy, interaction states and open prototypes. It records durable design
 decisions and reasons; implementation history remains in repository documentation.
+Its editable Layer assignment pattern is at
+[section 08](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=148-37).
 
 `WorkflowController` owns UI drafts and preview invalidation. Core records,
 workbook parsing, geometry, validation and schematic generation stay independent
