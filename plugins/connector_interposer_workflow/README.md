@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.2.6**, testing release. The package targets KiCad 9.0.0 through
+Version **0.2.7**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -36,7 +36,10 @@ an already-open source board does not update the output copy.
    fills the remaining six fields from consecutive populated columns. All seven
    fields must map uniquely. **View all parsed data…** shows source-row numbers
    and the seven mapped workflow fields in workflow order. Malformed included
-   rows remain blocking errors; sorting has no electrical meaning.
+   rows remain blocking errors; sorting has no electrical meaning. **Reload**
+   rereads an edited workbook at the same path while retaining the selected
+   worksheet when it still exists, header row and excluded rows. It redetects
+   mappings from the new headers and invalidates any prior review.
 2. **Layer rules:** map architecture layer names to enabled board copper layers
    and review netclass permissions. New combinations start allowed; existing
    restrictions survive subsequent imports and stackup additions.

@@ -454,7 +454,10 @@ class WorkflowDialog(wx.Dialog):
         self.workbook_path = wx.TextCtrl(source_box)
         row.Add(self.workbook_path, 1, wx.EXPAND | wx.RIGHT, 8)
         self.workbook_browse = self.button(source_box, 'Browse…', self.choose_workbook)
-        row.Add(self.workbook_browse)
+        row.Add(self.workbook_browse, 0, wx.RIGHT, 8)
+        self.workbook_reload = self.button(source_box, 'Reload', self.reload_workbook)
+        self.workbook_reload.SetToolTip('Re-read this file and redetect exact column headers.')
+        row.Add(self.workbook_reload)
         source.Add(row, 0, wx.EXPAND | wx.ALL, 8)
 
         row = wx.BoxSizer(wx.HORIZONTAL)
@@ -519,6 +522,10 @@ class WorkflowDialog(wx.Dialog):
         ) as dialog:
             if dialog.ShowModal() == wx.ID_OK:
                 self.workbook_path.SetValue(dialog.GetPath())
+
+    def reload_workbook(self, event):
+        self._cancel_spreadsheet_timer()
+        self._parse_spreadsheet('manual_reload')
 
     def workbook_changed(self, event):
         if self._updating_spreadsheet:
@@ -675,11 +682,21 @@ class WorkflowDialog(wx.Dialog):
         try:
             resolved = str(path.resolve())
             selected = self.sheet.GetStringSelection()
-            if mode == 'reload' or self.controller.workbook is None or self._loaded_workbook_path != resolved:
+            worksheet_changed = False
+            if mode in ('reload', 'manual_reload') or self.controller.workbook is None or self._loaded_workbook_path != resolved:
                 self._loaded_workbook_path = resolved
-                table = self.controller.load_workbook(
-                    path, selected or None, self.header.GetValue(), self.ignored.GetValue(), None,
-                )
+                try:
+                    table = self.controller.load_workbook(
+                        path, selected or None, self.header.GetValue(), self.ignored.GetValue(), None,
+                    )
+                except StopIteration:
+                    if self.controller.workbook is None or not self.controller.workbook.sheets:
+                        raise ValueError('Workbook contains no worksheets') from None
+                    worksheet_changed = True
+                    table = self.controller.parse(
+                        self.controller.workbook.sheets[0].name,
+                        self.header.GetValue(), self.ignored.GetValue(), None, resolved,
+                    )
                 self._updating_spreadsheet = True
                 try:
                     self.sheet.Set([worksheet.name for worksheet in self.controller.workbook.sheets])
@@ -696,7 +713,19 @@ class WorkflowDialog(wx.Dialog):
                 )
             self.update_mapping(table)
             if table.mapping_complete:
-                self._set_spreadsheet_feedback('Workbook is loaded. Review the live examples and continue when they match your data.')
+                if mode == 'manual_reload':
+                    if worksheet_changed:
+                        self._set_spreadsheet_feedback(
+                            f'Workbook reloaded. The previous worksheet is gone, so {table.worksheet} was selected; '
+                            'header row and excluded rows were retained, and column mappings were redetected.'
+                        )
+                    else:
+                        self._set_spreadsheet_feedback(
+                            'Workbook reloaded. Worksheet, header row and excluded rows were retained; '
+                            'column mappings were redetected.'
+                        )
+                else:
+                    self._set_spreadsheet_feedback('Workbook is loaded. Review the live examples and continue when they match your data.')
             else:
                 self._set_spreadsheet_feedback('Map every required field to a different populated workbook column.', True)
             self.refresh_layers()
@@ -1314,6 +1343,11 @@ class WorkflowDialog(wx.Dialog):
 
     def refresh(self):
         self.view_button.Enable(self.controller.view_data_enabled)
+        workbook_path = Path(self.workbook_path.GetValue()).expanduser()
+        self.workbook_reload.Enable(
+            not self.controller.busy and workbook_path.is_file()
+            and workbook_path.suffix.casefold() in ('.xlsx', '.csv')
+        )
         table = self.controller.table
         if table:
             mapped = len(table.mapping)

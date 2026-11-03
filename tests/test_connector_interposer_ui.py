@@ -211,6 +211,16 @@ class NativeDialogTests(unittest.TestCase):
                 self.assertEqual(dialog.controller.table.mapping['NetClass'], 0)
                 self.assertIsNone(self.wx.FindWindowByLabel('Load / parse', dialog))
                 self.assertIsNone(self.wx.FindWindowByLabel('Apply manual mapping', dialog))
+                self.assertIsNotNone(self.wx.FindWindowByLabel('Reload', dialog))
+
+                workbook.write_text(workbook.read_text(encoding='utf-8').replace('DATA1', 'DATA9'),
+                                    encoding='utf-8')
+                dialog.reload_workbook(None)
+                self.assertEqual(dialog.ignored.GetValue(), '2')
+                self.assertEqual(dialog.mapper.GetCellValue(0, 1), 'A · Signal')
+                self.assertEqual(dialog.mapper.GetCellValue(0, 2), 'DATA9')
+                self.assertEqual(tuple(dialog.controller.table.mapping[name] for name in HEADERS),
+                                 tuple(range(7)))
 
                 wide = Path(temporary) / 'wide.csv'
                 headings = [f'Other {index}' for index in range(1, 18)] + [

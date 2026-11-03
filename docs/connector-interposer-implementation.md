@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.2.6 and the
+are authorized. Connector to Interposer Workflow is version 0.2.7 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -64,6 +64,12 @@ the seven mapped workflow fields. Unique exact headers are redetected after
 workbook, worksheet and header-row changes. A Signal selection can seed a
 wholly blank mapping across seven consecutive populated columns; partial or
 nonconsecutive mappings are not overwritten.
+
+The 0.2.7 Workflow adds an explicit same-path workbook reload. Reload retains
+the selected worksheet when present, header row, excluded rows and downstream
+draft settings, while rereading the file, redetecting exact column headers and
+invalidating the prior review. A removed worksheet falls back visibly to the
+first remaining sheet.
 
 Completion requires integration and observed behavior, not only unit-test or
 file-format acceptance. Stage 0 evidence and its pass/fail/blocked matrix remain
