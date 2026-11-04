@@ -128,6 +128,9 @@ class WorkbookTests(unittest.TestCase):
         for pin in ('²', '01', '0', '-1', '١'):
             self.assertIn('connector_pin', {i.code for i in validate_records([dataclasses.replace(row,connector_pin=pin)])})
         self.assertEqual(diff_snapshots((row,),(dataclasses.replace(row,source_row=9),)).unchanged,('J1-1',))
+        self.assertNotIn('ground_signal', {
+            issue.code for issue in validate_records((dataclasses.replace(row, signal='GND'),))
+        })
 
     def test_layer_rules_default_all_and_persisted_rejection(self):
         rules=LayerRules();self.assertEqual(len(rules.synchronize(['RF'],['F.Cu','B.Cu'])),2)
@@ -166,6 +169,38 @@ class LayerMappingTests(unittest.TestCase):
         self.assertNotIn('L1', mapped)
         self.assertEqual(unresolved['L1'], ('F.Cu', 'metal_1'))
         self.assertEqual(mapped['L2'], 'In1.Cu')
+
+
+class ConnectorTypeTests(unittest.TestCase):
+    def test_conservative_reference_and_netclass_inference(self):
+        records = (
+            SignalRecord('D1', 'POWER', 'E1', 'A1', 'J1', '1', 'L1'),
+            SignalRecord('D2', 'POWER', 'E1', 'A2', 'J2', '1', 'L1'),
+            SignalRecord('R1', 'CLOCK', 'E1', 'A3', 'J101', '1', 'L2'),
+            SignalRecord('A1', 'AMBIGUOUS', 'E1', 'A4', 'J12', '1', 'L2'),
+            SignalRecord('GND', 'DC', 'E1', 'A5', 'J12', '2', 'L1'),
+        )
+        suggestions, conflicts, unresolved = suggest_netclass_types(records)
+        self.assertEqual(suggestions, {'POWER': 'DC', 'CLOCK': 'RF', 'DC': 'DC'})
+        self.assertEqual(conflicts, {})
+        self.assertEqual(unresolved, ('AMBIGUOUS',))
+        self.assertEqual(reference_type('J1'), 'DC')
+        self.assertEqual(reference_type('j101'), 'RF')
+        self.assertIsNone(reference_type('J12'))
+        mapping = {'POWER': 'DC', 'CLOCK': 'RF', 'AMBIGUOUS': 'RF', 'DC': 'DC'}
+        self.assertEqual(connector_type(records, mapping, 'J1'), 'DC')
+        self.assertEqual(connector_type(records, mapping, 'J101'), 'RF')
+        self.assertIsNone(connector_type(records, mapping, 'J12'))
+
+    def test_inference_reports_cross_type_netclass(self):
+        records = (
+            SignalRecord('A', 'MIXED', 'E1', 'A1', 'J1', '1', 'L1'),
+            SignalRecord('B', 'MIXED', 'E1', 'A2', 'J101', '1', 'L1'),
+        )
+        suggestions, conflicts, unresolved = suggest_netclass_types(records)
+        self.assertNotIn('MIXED', suggestions)
+        self.assertEqual(conflicts, {'MIXED': ('DC', 'RF')})
+        self.assertEqual(unresolved, ())
 
 
 class GeometryTests(unittest.TestCase):
@@ -246,7 +281,7 @@ class LibraryTests(unittest.TestCase):
     def test_project_schema_identity(self):
         config=ProjectConfig();self.assertEqual(ProjectConfig.from_dict(config.to_dict()).project_id,config.project_id)
         self.assertEqual(stable_uuid(config.project_id,'symbol/J1-1'),stable_uuid(config.project_id,'symbol/J1-1'))
-        with self.assertRaises(ValueError):ProjectConfig.from_dict({'project_id':config.project_id,'schema_version':3})
+        with self.assertRaises(ValueError):ProjectConfig.from_dict({'project_id':config.project_id,'schema_version':2})
 
 
 if __name__=='__main__':unittest.main()

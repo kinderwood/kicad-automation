@@ -21,6 +21,8 @@ class ControllerTests(unittest.TestCase):
         self.workbook.write_text('title\nLayer,Connector Pin,Signal,Connector,Interposer Pin,NetClass,Interposer\nL1,1,CLOCK,J101,A1,RF,U1\nL1,2,DATA,J101,A2,RF,U1\nL1,1,ENABLE,J202,A3,Control,U1\n')
         self.controller = WorkflowController(self.board)
         self.controller.load_workbook(self.workbook, header_row=2)
+        self.controller.set_netclass_type('RF', 'RF')
+        self.controller.set_netclass_type('Control', 'RF')
     def tearDown(self): self.temporary.cleanup()
 
     def test_header_mapping_retains_source_rows_and_explicit_ignored_rows(self):
@@ -131,16 +133,17 @@ class NativeDialogTests(unittest.TestCase):
         dialog = WorkflowDialog()
         self.assertEqual(tuple(dialog.book.GetPageText(i) for i in range(dialog.book.GetPageCount())), PAGES)
         self.assertEqual(PAGES[0], 'Netlist Source')
-        self.assertEqual(PAGES[1], 'Layer assignment')
-        self.assertEqual(PAGES[2], 'Routing permissions')
-        self.assertEqual(PAGES[3], 'Connector assignments')
+        self.assertEqual(PAGES[1], 'Netclass type')
+        self.assertEqual(PAGES[2], 'Layer assignment')
+        self.assertEqual(PAGES[3], 'Routing permissions')
+        self.assertEqual(PAGES[4], 'Connector assignments')
         for page_index, page_name in enumerate(PAGES):
             self.assertIsNotNone(self.wx.FindWindowByLabel(page_name, dialog.pages[page_index]))
         self.assertIsNone(self.wx.FindWindowByLabel('Apply layer assignments', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Apply routing permissions', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Saved permissions retained.', dialog))
-        self.assertIs(dialog.layer_map.GetParent().GetParent(), dialog.pages[1])
-        self.assertIs(dialog.rules.GetParent(), dialog.pages[2])
+        self.assertIs(dialog.layer_map.GetParent().GetParent(), dialog.pages[2])
+        self.assertIs(dialog.rules.GetParent(), dialog.pages[3])
         self.assertEqual(dialog.step_list.GetCount(), len(PAGES))
         longest_step = max(PAGES, key=len)
         step_extent = self.wx.ClientDC(dialog.step_list).GetTextExtent(longest_step)[0]
@@ -151,7 +154,7 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(dialog.layer_map.GetRowLabelSize(), 0)
         self.assertEqual(dialog.layer_map.GetColLabelValue(0), 'Netlist layer')
         self.assertEqual(dialog.layer_map.GetColLabelValue(1), 'KiCad layer')
-        task_heading = self.wx.FindWindowByLabel('Layer assignment', dialog.pages[1])
+        task_heading = self.wx.FindWindowByLabel('Layer assignment', dialog.pages[2])
         self.assertGreater(task_heading.GetFont().GetPointSize(), dialog.GetFont().GetPointSize())
         dialog.Show()
         self.app.Yield()
@@ -189,13 +192,21 @@ class NativeDialogTests(unittest.TestCase):
         dialog.controller.table = table
         dialog.controller.set_layers(('F.Cu', 'In1.Cu', 'B.Cu'))
         dialog.refresh_layers()
+        self.assertEqual(dialog.netclass_type_grid.GetNumberRows(), 1)
+        self.assertEqual(dialog.netclass_type_grid.GetCellBackgroundColour(0, 3).Get()[:3],
+                         (255, 244, 214))
+        dialog.auto_assign_netclass_types(None)
+        self.assertEqual(dialog.controller.config['netclass_types']['RF'], 'RF')
+        self.assertEqual(dialog.netclass_type_status.GetLabel(), '1 of 1 assigned')
+        self.assertEqual(dialog.netclass_type_grid.GetCellBackgroundColour(0, 3).Get()[:3],
+                         (220, 235, 250))
         self.assertTrue(dialog.new_rules.IsShown())
         self.assertIn('new combinations require review', dialog.new_rules.GetLabel())
         self.assertEqual(dialog.layer_map.GetNumberRows(), 1)
         self.assertIsInstance(dialog.layer_map.GetCellRenderer(0, 1), AssignmentRenderer)
         self.assertEqual(dialog.layer_map.GetCellBackgroundColour(0, 1).Get()[:3],
                          (255, 244, 214))
-        self.assertIsNotNone(self.wx.FindWindowByLabel('Auto assign', dialog.pages[1]))
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Auto assign', dialog.pages[2]))
         self.assertLess(dialog.layer_map.GetSize().height, 100)
         self.assertEqual(
             dialog.layer_map.GetSize().height,
@@ -414,6 +425,8 @@ class NativeDialogTests(unittest.TestCase):
 
             controller = WorkflowController(board)
             controller.load_workbook(example / 'inputs/netlist-A.xlsx')
+            for netclass in {record.netclass for record in controller.table.records}:
+                controller.set_netclass_type(netclass, 'RF')
             dialog = WorkflowDialog(controller=controller, pcbnew_module=Pcbnew)
             try:
                 symbols = example / 'library/Example.kicad_sym'
@@ -447,7 +460,7 @@ class NativeDialogTests(unittest.TestCase):
                     dialog.assign_gang_footprint(gang, footprint.selection())
                 self.assertEqual(dialog.gang_assignment_status.GetLabel(),
                                  '2 of 2 gangs assigned')
-                self.assertIsNone(self.wx.FindWindowByLabel('Status', dialog.pages[3]))
+                self.assertIsNone(self.wx.FindWindowByLabel('Status', dialog.pages[4]))
             finally:
                 dialog.Destroy()
                 self.app.Yield()
@@ -501,6 +514,7 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                 for record in records: writer.writerow((record.signal, record.netclass, record.interposer, record.interposer_pin, record.connector, record.connector_pin, record.layer))
             controller = WorkflowController(path, backend=NativeProcessBackend())
             controller.load_workbook(workbook)
+            controller.set_netclass_type('RF', 'RF')
             controller.set_layer_mapping('L1', 'F.Cu')
             symbol = library/'Approved.kicad_sym'
             symbol_sha = hashlib.sha256(symbol.read_bytes()).hexdigest()
@@ -552,6 +566,127 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             import shutil
             shutil.rmtree(library)
             self.assertEqual(reopened.review()['status'], 'NOOP')
+
+    def test_mixed_rf_and_dc_controller_apply_keeps_one_dc_instance_and_nc_pad(self):
+        from plugins.connector_interposer_workflow.controller import NativeProcessBackend
+        from plugins.connector_interposer_workflow.core import SignalRecord, read_footprint
+        from test_connector_interposer_schematic import fixture
+        import csv
+        import hashlib
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'source'; source.mkdir()
+            library = root / 'approved.pretty'; library.mkdir()
+            _fixture_records, gang_parts, interposer_parts = fixture(library, 3)
+            dc_footprint = library / 'DSub.kicad_mod'
+            dc_footprint.write_text(
+                '(footprint "DSub" (layer "F.Cu") '
+                '(pad "1" thru_hole circle (at 5 7) (size 1 1) (drill .5) (layers "*.Cu" "*.Mask")) '
+                '(pad "2" thru_hole circle (at 7 7) (size 1 1) (drill .5) (layers "*.Cu" "*.Mask")) '
+                '(pad "3" thru_hole circle (at 9 7) (size 1 1) (drill .5) (layers "*.Cu" "*.Mask")))'
+            )
+            dc_symbol = root / 'DC.kicad_sym'
+            dc_symbol.write_text('''(kicad_symbol_lib (version 20241209) (generator "test")
+              (symbol "DSub" (pin_names (offset 0)) (in_bom yes) (on_board yes)
+                (property "Reference" "J" (at 0 5 0) (effects (font (size 1 1))))
+                (property "Value" "DSub" (at 0 7 0) (effects (font (size 1 1))))
+                (property "ki_fp_filters" "DSub" (at 0 0 0) (effects (font (size 1 1)) hide))
+                (symbol "DSub_1_1"
+                  (pin passive line (at 0 0 180) (length 2.54) (name "1" (effects (font (size .8 .8)))) (number "1" (effects (font (size .8 .8)))))
+                  (pin passive line (at 0 -5.08 180) (length 2.54) (name "2" (effects (font (size .8 .8)))) (number "2" (effects (font (size .8 .8)))))
+                  (pin passive line (at 0 -10.16 180) (length 2.54) (name "3" (effects (font (size .8 .8)))) (number "3" (effects (font (size .8 .8))))))))''')
+            records = (
+                SignalRecord('RF1', 'RF', 'E1', 'A1', 'J101', '1', 'L1'),
+                SignalRecord('GND', 'DC', 'E1', 'A2', 'J1', '1', 'L1'),
+                SignalRecord('PWR', 'DC', 'E1', 'A3', 'J1', '2', 'L1'),
+            )
+            board = self.p.BOARD()
+            pin1_uuid = None
+            for x, y, label in ((20, 30, 'J101-1'), (50, 50, ''),
+                                (52, 50, ''), (54, 50, '')):
+                center = self.p.VECTOR2I(x * 1000000, y * 1000000)
+                circle = self.p.PCB_SHAPE(board); circle.SetShape(self.p.SHAPE_T_CIRCLE)
+                circle.SetLayer(self.p.Dwgs_User); circle.SetCenter(center)
+                circle.SetEnd(self.p.VECTOR2I(center.x + 500000, center.y)); board.Add(circle)
+                if x == 50:
+                    pin1_uuid = circle.m_Uuid.AsString()
+                if label:
+                    text = self.p.PCB_TEXT(board); text.SetText(label); text.SetLayer(self.p.Dwgs_User)
+                    text.SetPosition(center); board.Add(text)
+            board_path = source / 'mixed.kicad_pcb'
+            self.p.SaveBoard(str(board_path), board)
+            (source / 'mixed.kicad_pro').write_text('{}')
+            workbook = root / 'mixed.csv'
+            with workbook.open('w', newline='') as stream:
+                writer = csv.writer(stream); writer.writerow(
+                    ('Signal', 'NetClass', 'Interposer', 'Interposer Pin',
+                     'Connector', 'Connector Pin', 'Layer')
+                )
+                for record in records:
+                    writer.writerow(tuple(getattr(record, field) for field in
+                                          ('signal', 'netclass', 'interposer', 'interposer_pin',
+                                           'connector', 'connector_pin', 'layer')))
+            controller = WorkflowController(board_path, backend=NativeProcessBackend())
+            controller.load_workbook(workbook)
+            controller.set_netclass_type('RF', 'RF'); controller.set_netclass_type('DC', 'DC')
+            controller.set_layer_mapping('L1', 'F.Cu')
+            approved_symbols = library / 'Approved.kicad_sym'
+            approved_sha = hashlib.sha256(approved_symbols.read_bytes()).hexdigest()
+            controller.set_gang('J101', {
+                'part_id': gang_parts['J101'].footprint.path, 'library_id': 'Approved:GPPO',
+                'part_sha256': gang_parts['J101'].footprint.sha256,
+                'symbol': {'path': str(approved_symbols), 'library_id': 'Approved:GPPO',
+                           'sha256': approved_sha},
+                'row_lengths': [1], 'anchor': [20, 30], 'anchor_accepted': True,
+            })
+            dc_part = read_footprint(dc_footprint, 'Approved:DSub')
+            controller.set_dc_connector('J1', {
+                'path': dc_part.path, 'library_id': dc_part.library_id,
+                'sha256': dc_part.sha256,
+                'symbol': {'path': str(dc_symbol), 'library_id': 'Approved:DSub',
+                           'sha256': hashlib.sha256(dc_symbol.read_bytes()).hexdigest()},
+                'anchor': [50, 50], 'anchor_circle': {'uuid': pin1_uuid, 'center': [50, 50]},
+                'rotation': 0, 'side': 'F', 'anchor_accepted': True,
+            })
+            interposer = interposer_parts['E1'].footprint
+            controller.config['interposers']['E1'] = dict(
+                interposer.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True,
+                symbol={'path': str(approved_symbols), 'library_id': 'Approved:Interposer',
+                        'sha256': approved_sha},
+            )
+            controller.config['mechanical'] = {
+                'layer': 'Dwgs.User', 'accepted': True, 'label_offset': [0, 0],
+            }
+            preview = controller.review()
+            self.assertEqual(set(preview['desired']['instances']), {'J101-1', 'J1', 'E1'})
+            self.assertEqual(preview['desired']['instances']['J1']['pads'], {'1': 'GND', '2': 'PWR'})
+            controller.config['output_dir'] = str(root / 'output')
+            result = controller.apply()
+            output_board = self.p.LoadBoard(result['board_path'])
+            placed = {footprint.GetReference(): footprint for footprint in output_board.GetFootprints()}
+            self.assertEqual(set(placed), {'J101-1', 'J1', 'E1'})
+            dc_pads = {pad.GetNumber(): pad for pad in placed['J1'].Pads()}
+            self.assertEqual((dc_pads['1'].GetPosition().x, dc_pads['1'].GetPosition().y),
+                             (50000000, 50000000))
+            self.assertEqual(dc_pads['3'].GetNetname(), '')
+            import json
+            import shutil
+            import subprocess
+            cli = ([os.environ['KICAD_TEST_APP_RUN'], 'kicad-cli']
+                   if os.environ.get('KICAD_TEST_APP_RUN') else [shutil.which('kicad-cli')])
+            if cli[0]:
+                report_path = root / 'mixed-erc.json'
+                checked = subprocess.run(
+                    cli + ['sch', 'erc', '--format', 'json', '-o', str(report_path),
+                           str(Path(result['board_path']).with_suffix('.kicad_sch'))],
+                    capture_output=True, text=True, timeout=120,
+                )
+                self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+                report = json.loads(report_path.read_text())
+                errors = [violation for sheet in report['sheets']
+                          for violation in sheet['violations']
+                          if violation.get('severity') == 'error']
+                self.assertEqual(errors, [])
 
 
 if __name__ == '__main__': unittest.main()

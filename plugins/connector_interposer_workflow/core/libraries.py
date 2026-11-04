@@ -86,6 +86,7 @@ class ApprovedSymbol:
     footprint_filters: tuple
     value: str = ''
     mpn: str = ''
+    unit_count: int = 1
 
 
 def _descendants(node, kind):
@@ -143,5 +144,10 @@ def read_symbol(path, library_id, expected_sha256=None, require_two_pin=True):
     mpn = next((folded[key] for key in
                 ('mpn', 'manufacturer part number', 'manufacturerpartnumber')
                 if folded.get(key)), '')
+    units = set()
+    for nested in children(symbol, 'symbol'):
+        match = __import__('re').search(r'_(\d+)_(\d+)$', str(nested[1]))
+        if match and int(match.group(1)) > 0:
+            units.add(int(match.group(1)))
     return ApprovedSymbol(library_id, symbol, checksum, tuple(pins), filters,
-                          properties.get('Value', ''), mpn)
+                          properties.get('Value', ''), mpn, max(units or {1}))

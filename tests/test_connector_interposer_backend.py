@@ -96,6 +96,75 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(base, second["registry"]["instances"]["J101-1"]["base"])
         self.assertEqual(first["registry"]["instances"]["J101-1"]["objects"], second["registry"]["instances"]["J101-1"]["objects"])
 
+    def test_dc_pin_one_anchor_uses_native_transform_and_leaves_nc_open(self):
+        library = self.root / 'dc.pretty'
+        library.mkdir()
+        fp = p.FOOTPRINT(None)
+        fp.SetValue('ApprovedDC')
+        for number, x in (('1', 5), ('2', 7)):
+            pad = p.PAD(fp)
+            pad.SetNumber(number)
+            pad.SetAttribute(p.PAD_ATTRIB_PTH)
+            pad.SetShape(p.PAD_SHAPE_CIRCLE)
+            pad.SetSize(p.VECTOR2I(600000, 600000))
+            pad.SetDrillSize(p.VECTOR2I(300000, 300000))
+            pad.SetPosition(p.VECTOR2I(x * 1000000, 7000000))
+            layers = p.LSET(p.LSET.AllCuMask())
+            pad.SetLayerSet(layers)
+            fp.Add(pad)
+        fp.SetFPIDAsString('Approved:DC')
+        p.PCB_IO_KICAD_SEXPR().FootprintSave(str(library), fp)
+        part = library / 'DC.kicad_mod'
+        selection = {
+            'path': str(part), 'sha256': hashlib.sha256(part.read_bytes()).hexdigest(),
+            'approved': True, 'library_id': 'Approved:DC',
+        }
+        board = p.LoadBoard(str(self.board_path))
+        circle_ids = {}
+        for label, x in (('left', 18), ('pin1', 20), ('right', 22)):
+            circle = p.PCB_SHAPE(board)
+            circle.SetShape(p.SHAPE_T_CIRCLE)
+            circle.SetStart(p.VECTOR2I(x * 1000000, 20000000))
+            circle.SetEnd(p.VECTOR2I(x * 1000000 + 500000, 20000000))
+            circle.SetLayer(p.Dwgs_User)
+            board.Add(circle)
+            circle_ids[label] = uuid_of(circle)
+        p.SaveBoard(str(self.board_path), board)
+        del circle, board, pad, fp
+        for side in ('F', 'B'):
+            desired = {'instances': {'J1': {
+                'kind': 'connector', 'connector_type': 'DC', 'gang': 'J1',
+                'footprint': selection, 'pose': [0, 0, 0], 'side': side,
+                'anchor': {'pad': '1', 'at': [20, 20],
+                           'circle_uuid': circle_ids['pin1']},
+                'pads': {'1': 'GND'},
+            }}, 'mechanical': {
+                'source_layer': 'Dwgs.User', 'label_offset': [0, 0],
+                'locations': [], 'rf_keys': [],
+                'dc_anchors': {'J1': {'circle_uuid': circle_ids['pin1'],
+                                      'center': [20, 20]}},
+                'dc_tolerance_mm': 0.000001,
+            }}
+            preview = self.backend.preview(self.board_path, desired)
+            result = self.backend.apply(preview, self.root / ('dc-' + side))
+            placed_board = p.LoadBoard(result['board_path'])
+            placed = next(iter(placed_board.GetFootprints()))
+            pads = {pad.GetNumber(): pad for pad in placed.Pads()}
+            self.assertEqual((pads['1'].GetPosition().x, pads['1'].GetPosition().y),
+                             (20000000, 20000000), side)
+            self.assertEqual(pads['1'].GetNetname(), 'GND')
+            self.assertEqual(pads['2'].GetNetname(), '')
+            del pads, placed, placed_board
+            if side == 'F':
+                changed = copy.deepcopy(desired)
+                changed['instances']['J1']['pads']['1'] = 'POWER'
+                changed_preview = self.backend.preview(result['board_path'], changed)
+                changed_result = self.backend.apply(changed_preview, self.root / 'dc-F-changed')
+                self.assertEqual(
+                    result['registry']['instances']['J1']['base'],
+                    changed_result['registry']['instances']['J1']['base'],
+                )
+
     def test_edited_owned_and_routed_net_change_block(self):
         first = self.apply_first()
         output = Path(first["board_path"])
@@ -319,6 +388,8 @@ class BackendTests(unittest.TestCase):
         self.assertEqual([], accepted["errors"])
         desired = copy.deepcopy(self.desired)
         desired["mechanical"] = {name: accepted[name] for name in ("source_layer", "label_offset", "locations")}
+        desired["mechanical"]["rf_keys"] = ["J101-1"]
+        desired["mechanical"]["dc_anchors"] = {}
         self.assertEqual("PREVIEW", self.backend.preview(self.board_path, desired)["status"])
         desired["instances"] = {}
         with self.assertRaisesRegex(BackendError, "populations"):

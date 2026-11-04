@@ -3,7 +3,7 @@ from dataclasses import asdict, dataclass, field
 import uuid
 from .identities import canonical_json
 
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 @dataclass
 class ProjectConfig:
@@ -15,8 +15,10 @@ class ProjectConfig:
     output_dir: str = ''
     layer_mapping: dict = field(default_factory=dict)
     layer_rules: dict = field(default_factory=dict)
+    netclass_types: dict = field(default_factory=dict)
     drafts: dict = field(default_factory=dict)
     gangs: dict = field(default_factory=dict)
+    dc_connectors: dict = field(default_factory=dict)
     interposers: dict = field(default_factory=dict)
     mechanical: dict = field(default_factory=dict)
     outline: dict = field(default_factory=dict)

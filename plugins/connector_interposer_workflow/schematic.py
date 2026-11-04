@@ -66,6 +66,10 @@ def _label(net, x, y, uid):
     return f'(global_label {q(net)} (shape input) (at {x:g} {y:g} 0) {effects(.8)} (uuid {q(uid)}))'
 
 
+def _no_connect(x, y, uid):
+    return f'(no_connect (at {x:g} {y:g}) (uuid {q(uid)}))'
+
+
 def _instance(ref, lib_id, value, part, x, y, unit, root_id, sheet_id, symbol_id, pins, project_name, uid):
     props = ''.join(f'(property {q(k)} {q(v)} (at {x:g} {yy:g} 0) {effects(1) if k in ("Reference", "Value") else "(effects (font (size 1 1)) (hide yes))"})' for k, v, yy in [('Reference', ref, y-6), ('Value', value, y-3), ('Footprint', part.footprint.library_id, y), ('MPN', part.mpn, y)])
     pin_ids = ''.join(f'(pin {q(pin)} (uuid {q(uid("pin/"+ref+"/"+str(unit)+"/"+pin))}))' for pin in sorted(pins, key=natural_key))
@@ -84,10 +88,12 @@ def _interposer_lib(lib_id, unit_pads):
     return f'(symbol {q(lib_id)} (pin_names (offset 0) (hide yes)) (in_bom yes) (on_board yes) (property "Reference" "E" (at 0 5 0) {effects()}) (property "Value" {q(name)} (at 0 7 0) {effects()}) '+''.join(units)+')'
 
 
-def generate_schematic(records, gang_parts, interposer_parts, project_id, project_name='connector_interposer_workflow'):
+def generate_schematic(records, gang_parts, interposer_parts, project_id,
+                       project_name='connector_interposer_workflow', dc_parts=None):
     """Return all tool-owned file contents; callers stage and review before saving.
 
-    gang_parts maps gang IDs to PartSelection (approved two-pin symbol required).
+    gang_parts maps RF gang IDs to PartSelection (approved two-pin symbol required).
+    dc_parts maps DC connector references to approved single-unit multi-pin parts.
     interposer_parts maps references to PartSelection. Its approved symbol supplies
     identity/BOM metadata; the large-pin graphical presentation is generated locally.
     A persistent UUID namespace belongs to the project, never to a workbook.
@@ -95,14 +101,17 @@ def generate_schematic(records, gang_parts, interposer_parts, project_id, projec
     if not re.fullmatch(r'[A-Za-z0-9_-]+', project_name):
         raise ValueError('Project name must contain letters, digits, underscores or hyphens')
     records = tuple(records)
+    dc_parts = dc_parts or {}
     issues = validate_records(records, {ref: p.footprint.pad_numbers for ref, p in interposer_parts.items()})
     if issues:
         raise ValueError('; '.join(f'row {i.source_row}: {i.message}' for i in issues))
-    missing = {r.connector for r in records}-set(gang_parts)
+    missing = {r.connector for r in records}-set(gang_parts)-set(dc_parts)
     if missing:
         raise ValueError(f'Select approved connector parts for {sorted(missing)}')
+    if set(gang_parts) & set(dc_parts):
+        raise ValueError('A connector cannot be both an RF gang and a DC connector')
     if {r.connector for r in records} & set(interposer_parts):
-        raise ValueError('Gang and interposer designations must be distinct')
+        raise ValueError('Connector and interposer designations must be distinct')
     uid = lambda key: stable_uuid(project_id, key)
     root_id = uid('schematic/root')
     files, paths, sheets, bom, identities = {}, {}, [], [], {}
@@ -114,7 +123,7 @@ def generate_schematic(records, gang_parts, interposer_parts, project_id, projec
         if name in footprint_libraries and footprint_libraries[name] != path:
             raise ValueError(f'Approved footprint library alias {name} resolves to conflicting paths')
         footprint_libraries[name] = path
-    for gang in sorted({r.connector for r in records}, key=natural_key):
+    for gang in sorted(gang_parts, key=natural_key):
         part = gang_parts[gang]
         if not part.symbol:
             raise ValueError(f'Select the librarian-authored two-pin connector symbol for {gang}')
@@ -157,6 +166,55 @@ def generate_schematic(records, gang_parts, interposer_parts, project_id, projec
             content.append('(embedded_fonts no))\n')
             files[filename] = '\n'.join(content)
             sheets.append((key, sid, filename, gang+(' / '+str(page+1) if len(pages)>1 else '')))
+    for ref in sorted(dc_parts, key=natural_key):
+        part = dc_parts[ref]
+        if not part.symbol:
+            raise ValueError(f'Select the librarian-authored DC connector symbol for {ref}')
+        if part.symbol.unit_count != 1:
+            raise ValueError(f'DC connector {ref} must use a single-unit symbol')
+        numbers = {pin[0] for pin in part.symbol.pin_numbers}
+        if numbers != set(part.footprint.pad_numbers):
+            raise ValueError(f'DC connector {ref} symbol and footprint electrical pads are incompatible')
+        assignments = {r.connector_pin: r.signal for r in records if r.connector == ref}
+        if not set(assignments) <= numbers:
+            raise ValueError(f'DC connector {ref} is missing workbook pins')
+        footprint_library(part)
+        snapshot_alias = 'WorkflowApproved_'+part.symbol.sha256[:16]
+        lib_id = snapshot_alias+':'+part.symbol.library_id.split(':', 1)[1]
+        expression = copy.deepcopy(part.symbol.expression)
+        expression[1] = lib_id
+        library = dumps(expression)
+        bare = copy.deepcopy(expression)
+        bare[1] = lib_id.split(':', 1)[1]
+        symbols = symbol_libraries.setdefault(snapshot_alias, {})
+        if bare[1] in symbols and symbols[bare[1]] != dumps(bare):
+            raise ValueError('Approved symbol identity has conflicting content')
+        symbols[bare[1]] = dumps(bare)
+        key = f'dc/{ref}'
+        sid = uid('sheet/'+key)
+        filename = _safe_name('dc', ref, 1)
+        content = [_header(uid('document/'+key), library)]
+        x, y = 50.8, 50.8
+        symbol_id = uid('symbol/'+ref)
+        paths[ref] = '/'+sid+'/'+symbol_id
+        identities[ref] = symbol_id
+        content.append(_instance(ref, lib_id, part.value or lib_id.split(':', 1)[1],
+                                 part, x, y, 1, root_id, sid, symbol_id,
+                                 numbers, project_name, uid))
+        for pin, px, py, angle in part.symbol.pin_numbers:
+            at_x, at_y = x+px, y-py
+            if pin in assignments:
+                content.append(_label(assignments[pin], at_x, at_y,
+                                      uid('label/'+ref+'/'+pin)))
+            else:
+                content.append(_no_connect(at_x, at_y,
+                                           uid('no-connect/'+ref+'/'+pin)))
+        content.append('(embedded_fonts no))\n')
+        files[filename] = '\n'.join(content)
+        sheets.append((key, sid, filename, ref))
+        bom.append({'Reference': ref, 'Value': part.value or lib_id.split(':', 1)[1],
+                    'Footprint': part.footprint.library_id, 'MPN': part.mpn,
+                    'Quantity': 1})
     for ref in sorted(interposer_parts, key=natural_key):
         part = interposer_parts[ref]
         footprint_library(part)

@@ -10,7 +10,9 @@ from .core.workbook import read_workbook, parse_sheet
 from .core.layers import LayerRules, validate_layers
 from .core.model import HEADERS, Issue
 
-PAGES = ("Netlist Source", "Layer assignment", "Routing permissions", "Connector assignments", "Gangs", "DXF Anchors", "Board Outline", "Review Changes", "Apply / Results")
+PAGES = ("Netlist Source", "Netclass type", "Layer assignment", "Routing permissions",
+         "Connector assignments", "Gangs", "DXF Anchors", "Board Outline",
+         "Review Changes", "Apply / Results")
 
 
 def row_ranges(text):
@@ -37,9 +39,9 @@ class WorkflowController:
         self.config_path = self.board_path.with_suffix('.connector-interposer-workflow.json') if self.board_path else None
         self.backend = backend
         self.dispatch = dispatch or (lambda fn, *args: fn(*args))
-        self.config = {"schema_version": 2, "project_id": str(uuid.uuid4()), "workbook": {}, "layer_mapping": {}, "layer_rules": {},
-                       "gangs": {}, "interposers": {}, "mechanical": {}, "mounting_holes": [],
-                       "outline": {"enabled": False}, "presentation": "labels"}
+        from .core.config import ProjectConfig
+        self.config = ProjectConfig(project_id=str(uuid.uuid4())).to_dict()
+        self.config['outline'] = {"enabled": False}
         self.workbook = None
         self.workbook_sha256 = None
         self.table = None
@@ -53,10 +55,7 @@ class WorkflowController:
         self._generation = 0
         if self.config_path and self.config_path.exists():
             saved = json.loads(self.config_path.read_text(encoding='utf-8'))
-            from .core.config import ProjectConfig
             saved = ProjectConfig.from_dict(saved).to_dict()
-            if saved.get('schema_version') != 2:
-                raise ValueError('Unsupported Workflow draft version; migrate explicitly before opening')
             self.config.update(saved)
 
     def changed(self):
@@ -141,8 +140,28 @@ class WorkflowController:
         self.config['layer_mapping'][architecture] = copper_layer
         self.changed()
 
-    def gang_names(self):
+    def connector_names(self):
         return tuple(sorted({r.connector for r in self.table.records})) if self.table else ()
+
+    def connector_type(self, name):
+        from .core.connector_types import connector_type
+        return connector_type(self.table.records if self.table else (),
+                              self.config['netclass_types'], name)
+
+    def gang_names(self):
+        return tuple(name for name in self.connector_names()
+                     if self.connector_type(name) == 'RF')
+
+    def dc_connector_names(self):
+        return tuple(name for name in self.connector_names()
+                     if self.connector_type(name) == 'DC')
+
+    def set_netclass_type(self, netclass, kind):
+        from .core.connector_types import VALID_TYPES
+        if kind not in VALID_TYPES:
+            raise ValueError('Netclass type must be RF or DC')
+        self.config['netclass_types'][netclass] = kind
+        self.changed()
 
     def gang(self, name):
         if name not in self.config['gangs']:
@@ -169,6 +188,23 @@ class WorkflowController:
         if values.get('rf_artifacts'):
             merged['rf_artifact_pins'] = {pin: previous.get('rf_artifact_pins', {}).get(pin) if path == previous.get('rf_artifacts', {}).get(pin) and previous.get('rf_artifact_pins', {}).get(pin) else json.loads(Path(path).read_text()).get('hashes', {}).get('artifact') for pin, path in values['rf_artifacts'].items() if Path(path).is_file()}
         self.config['gangs'][name] = merged
+        self.changed()
+
+    def dc_connector(self, name):
+        if name not in self.config['dc_connectors']:
+            self.config['dc_connectors'][name] = {
+                'reference': name, 'symbol': {}, 'path': '', 'library_id': '',
+                'sha256': '', 'anchor_pad': '1', 'anchor': [0, 0],
+                'rotation': 0, 'side': 'F', 'anchor_circle': {},
+                'anchor_accepted': False,
+            }
+        return deepcopy(self.config['dc_connectors'][name])
+
+    def set_dc_connector(self, name, values):
+        merged = self.dc_connector(name)
+        merged.update(deepcopy(values))
+        merged['reference'] = name
+        self.config['dc_connectors'][name] = merged
         self.changed()
 
     def pattern(self, name):
@@ -214,6 +250,44 @@ class WorkflowController:
         if self.config.get('drafts'):
             issues.append(Issue('unaccepted_draft', 'Accept or correct each modified gang pattern before reviewing changes'))
         if self.table:
+            from .core.connector_types import (VALID_TYPES, reference_type,
+                                               suggest_netclass_types)
+            encountered = sorted({record.netclass for record in self.table.records})
+            _suggestions, inference_conflicts, _unresolved = suggest_netclass_types(self.table.records)
+            for netclass in encountered:
+                kind = self.config['netclass_types'].get(netclass)
+                if kind not in VALID_TYPES:
+                    issues.append(Issue('netclass_type_missing',
+                                        f'{netclass}: assign RF or DC in Netclass type'))
+                if netclass in inference_conflicts:
+                    issues.append(Issue(
+                        'netclass_type_conflict',
+                        f'{netclass}: connector naming supplies conflicting RF/DC evidence',
+                    ))
+                if netclass.strip().casefold() == 'dc' and kind and kind != 'DC':
+                    issues.append(Issue('netclass_type_conflict',
+                                        f'{netclass}: the exact DC netclass cannot be classified as RF'))
+            for reference in self.connector_names():
+                kinds = {self.config['netclass_types'].get(record.netclass)
+                         for record in self.table.records if record.connector == reference}
+                if None in kinds or not kinds:
+                    continue
+                if len(kinds) != 1:
+                    issues.append(Issue('connector_type_conflict',
+                                        f'{reference}: attached netclasses must all be RF or all be DC'))
+                    continue
+                inferred = reference_type(reference)
+                if inferred and next(iter(kinds)) != inferred:
+                    issues.append(Issue(
+                        'connector_type_conflict',
+                        f'{reference}: project naming identifies this as {inferred}, but its netclasses are {next(iter(kinds))}',
+                    ))
+            for record in self.table.records:
+                if (self.config['netclass_types'].get(record.netclass) == 'RF' and
+                        record.signal.casefold() == 'gnd'):
+                    issues.append(Issue('rf_ground_signal',
+                                        'RF signal locations cannot use GND as their signal net',
+                                        record.source_row, 'signal'))
             issues.extend(validate_layers(self.table.records, self.config['layer_mapping'], self.copper_layers,
                                          LayerRules(self.config['layer_rules'])))
             for name in self.gang_names():
@@ -243,6 +317,45 @@ class WorkflowController:
                         issues.append(Issue('gang_population', f'{name}: numbering must exactly match workbook locations'))
                 except (ValueError, TypeError) as error:
                     issues.append(Issue('gang_pattern', f'{name}: {error}'))
+            for name in self.dc_connector_names():
+                selection = self.dc_connector(name)
+                if not selection.get('symbol', {}).get('path'):
+                    issues.append(Issue('symbol_missing', f'{name}: select an approved DC connector symbol'))
+                if not selection.get('path'):
+                    issues.append(Issue('part_missing', f'{name}: select an approved DC connector footprint'))
+                detail = assignment_issue(name, selection.get('symbol', {}), selection, False)
+                if detail:
+                    issues.append(Issue('part_incompatible', detail))
+                try:
+                    symbol = read_symbol(
+                        self.resolve_path(selection.get('symbol', {}).get('path', ''),
+                                          selection.get('symbol', {}).get('sha256'),
+                                          'symbols', '.kicad_sym'),
+                        selection.get('symbol', {}).get('library_id', ''),
+                        selection.get('symbol', {}).get('sha256'), require_two_pin=False,
+                    )
+                    if symbol.unit_count != 1:
+                        issues.append(Issue('dc_multi_unit',
+                                            f'{name}: this release supports single-unit DC symbols only'))
+                    used = {record.connector_pin for record in self.table.records
+                            if record.connector == name}
+                    available = {pin[0] for pin in symbol.pin_numbers}
+                    if not used <= available:
+                        issues.append(Issue('dc_pin_missing',
+                                            f'{name}: symbol is missing workbook pins {sorted(used-available)}'))
+                except (KeyError, OSError, ValueError):
+                    pass
+                if not selection.get('anchor_accepted'):
+                    issues.append(Issue('anchor_missing',
+                                        f'{name}: accept the DC pin 1 DXF anchor'))
+                if not selection.get('symbol_mpn') and not selection.get('footprint_mpn'):
+                    issues.append(Issue('mpn_missing',
+                                        f'{name}: selected library parts have no MPN metadata',
+                                        severity='warning'))
+                if (selection.get('symbol_mpn') and selection.get('footprint_mpn') and
+                        selection['symbol_mpn'] != selection['footprint_mpn']):
+                    issues.append(Issue('mpn_conflict',
+                                        f'{name}: symbol and footprint MPN metadata disagree'))
             references = sorted({record.interposer for record in self.table.records})
             if len(references) != 1:
                 issues.append(Issue('interposer_population', 'This release requires exactly one interposer reference'))
@@ -282,6 +395,9 @@ class WorkflowController:
             paths.extend(self.board_path.with_suffix(suffix) for suffix in ('.kicad_pro', '.connector-interposer-instances.json'))
         paths.extend(Path(g[key]) for g in self.config['gangs'].values() for key in ('part_id', 'rf_artifact') if g.get(key))
         paths.extend(Path(g['symbol']['path']) for g in self.config['gangs'].values() if g.get('symbol', {}).get('path'))
+        paths.extend(Path(v['path']) for v in self.config['dc_connectors'].values() if v.get('path'))
+        paths.extend(Path(v['symbol']['path']) for v in self.config['dc_connectors'].values()
+                     if v.get('symbol', {}).get('path'))
         paths.extend(Path(path) for g in self.config['gangs'].values() for path in g.get('rf_artifacts', {}).values() if path)
         paths.extend(Path(v['path']) for v in self.config['interposers'].values() if v.get('path'))
         paths.extend(Path(v['symbol']['path']) for v in self.config['interposers'].values() if v.get('symbol', {}).get('path'))
@@ -515,7 +631,7 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
         if not controller.board_path or not controller.board_path.exists():
             raise ValueError('Save the source PCB before comparing')
         cfg, records = controller.config, controller.table.records
-        gang_parts, interposer_parts = {}, {}
+        gang_parts, dc_parts, interposer_parts = {}, {}, {}
         selected_symbols = {}
         for gang in controller.gang_names():
             settings = controller.gang(gang)
@@ -535,6 +651,44 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
                 raise ValueError(f'{gang}: symbol and footprint MPN metadata disagree')
             gang_parts[gang] = PartSelection(
                 footprint, symbol, settings.get('value') or symbol.value or footprint.value,
+                next(iter(mpns), ''),
+            )
+            selected_symbols[symbol.sha256] = symbol_path
+        for reference in controller.dc_connector_names():
+            selection = controller.dc_connector(reference)
+            symbol_spec = selection.get('symbol', {})
+            if not symbol_spec.get('path') or not symbol_spec.get('library_id'):
+                raise ValueError(f'{reference}: select the approved DC connector symbol')
+            symbol_path = controller.resolve_path(symbol_spec['path'], symbol_spec.get('sha256'),
+                                                  'symbols', '.kicad_sym')
+            symbol = read_symbol(symbol_path, symbol_spec['library_id'],
+                                 symbol_spec.get('sha256'), require_two_pin=False)
+            if symbol.unit_count != 1:
+                raise ValueError(f'{reference}: this release supports single-unit DC symbols only')
+            footprint = read_footprint(
+                controller.resolve_path(selection['path'], selection.get('sha256')),
+                selection['library_id'], selection.get('sha256'),
+            )
+            if not symbol.footprint_filters:
+                raise ValueError(f'{reference}: selected symbol has no footprint filters')
+            if not footprint_matches_filters(footprint.library_id, symbol.footprint_filters):
+                raise ValueError(f'{reference}: {footprint.library_id} is not allowed by {symbol.library_id}')
+            if {pin[0] for pin in symbol.pin_numbers} != set(footprint.pad_numbers):
+                raise ValueError(f'{reference}: symbol pins do not exactly match footprint electrical pads')
+            used = {record.connector_pin for record in records if record.connector == reference}
+            if not used <= set(footprint.pad_numbers):
+                raise ValueError(f'{reference}: selected part is missing workbook pins')
+            footprint = replace(
+                footprint,
+                library_id='WorkflowPart_' + footprint.sha256[:16] + ':' +
+                           footprint.library_id.split(':', 1)[1],
+            )
+            mpns = {value for value in (selection.get('symbol_mpn', ''),
+                                        selection.get('footprint_mpn', '')) if value}
+            if len(mpns) > 1:
+                raise ValueError(f'{reference}: symbol and footprint MPN metadata disagree')
+            dc_parts[reference] = PartSelection(
+                footprint, symbol, selection.get('value') or symbol.value or footprint.value,
                 next(iter(mpns), ''),
             )
             selected_symbols[symbol.sha256] = symbol_path
@@ -568,8 +722,24 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
         native = self.call('inspect', board_path=str(controller.board_path), source_layer=mechanical.get('layer', 'Dwgs.User'), label_offset=mechanical.get('label_offset', [0, 0]))
         if native.get('errors'): raise ValueError('; '.join(str(i) for i in native['errors']))
         if 'locations' not in native: raise RuntimeError('Native inspector returned no mechanical association data')
-        validate_mechanical_population(records, [p['key'] if isinstance(p, dict) else p for p in native['locations']])
-        actual_locations = {location['key']: tuple(location['center']) for location in native['locations']}
+        rf_records = tuple(record for record in records
+                           if controller.connector_type(record.connector) == 'RF')
+        rf_keys = {record.key for record in rf_records}
+        dc_location_keys = {
+            reference + '-' + pad
+            for reference, part in dc_parts.items()
+            for pad in part.footprint.pad_numbers
+        }
+        unexpected_locations = sorted(
+            {location['key'] for location in native['locations']} - rf_keys - dc_location_keys
+        )
+        if unexpected_locations:
+            raise ValueError(f'Unexpected labelled mechanical locations: {unexpected_locations}')
+        rf_locations = [location for location in native['locations']
+                        if location['key'] in rf_keys]
+        validate_mechanical_population(rf_records, [p['key'] for p in rf_locations])
+        actual_locations = {location['key']: tuple(location['center'])
+                            for location in rf_locations}
         import math
         for gang in controller.gang_names():
             for pin, position in controller.pattern(gang).items():
@@ -577,15 +747,18 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
                 if math.dist(position, actual_locations[key]) > 1e-6:
                     raise ValueError(f'{key}: configured position {position} does not match mechanical circle {actual_locations[key]}; correct anchor, pattern or numbering')
         name = controller.board_path.stem
-        bundle = generate_schematic(records, gang_parts, interposer_parts, cfg['project_id'], project_name=name)
+        bundle = generate_schematic(records, gang_parts, interposer_parts, cfg['project_id'],
+                                    project_name=name, dc_parts=dc_parts)
         bom_by_reference = {row['Reference']: row for row in bundle.bom}
         symbol_fields = lambda reference: {name: bom_by_reference[reference][name] for name in ('Value', 'MPN')}
         instances = {}
         for record in records:
+            if controller.connector_type(record.connector) != 'RF':
+                continue
             settings = controller.gang(record.connector)
             part = gang_parts[record.connector]
             x, y = controller.pattern(record.connector)[record.connector_pin]
-            instance = {'kind': 'connector', 'gang': record.connector,
+            instance = {'kind': 'connector', 'connector_type': 'RF', 'gang': record.connector,
                 'footprint': dict(part.footprint.pin(), approved=True, source_library_id=settings.get('library_id') or library_id(settings['part_id'])),
                 'pose': [x, y, settings['rotation']], 'pads': {'1': record.signal, '2': 'GND'},
                 'symbol_path': bundle.paths[record.key], 'symbol_fields': symbol_fields(record.key), 'netclass': record.netclass,
@@ -604,6 +777,27 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
                 instance['rf'] = {'artifact': artifact, 'nets': {'signal': record.signal, 'ground': 'GND'},
                                   'layers': {}, 'clock': settings.get('rf_overrides', {}).get(record.connector_pin, settings['rf_clock'])}
             instances[record.key] = instance
+        for reference, part in dc_parts.items():
+            selection = controller.dc_connector(reference)
+            assignments = {record.connector_pin: record.signal for record in records
+                           if record.connector == reference}
+            anchor = selection.get('anchor', [])
+            circle = selection.get('anchor_circle', {})
+            instances[reference] = {
+                'kind': 'connector', 'connector_type': 'DC', 'gang': reference,
+                'footprint': dict(
+                    part.footprint.pin(), approved=True,
+                    source_library_id=selection.get('library_id'),
+                ),
+                'pose': [0, 0, float(selection.get('rotation', 0))],
+                'anchor': {
+                    'pad': '1', 'at': list(anchor),
+                    'circle_uuid': circle.get('uuid', ''),
+                },
+                'pads': assignments, 'symbol_path': bundle.paths[reference],
+                'symbol_fields': symbol_fields(reference),
+                'side': selection.get('side', 'F'),
+            }
         for reference, part in interposer_parts.items():
             signals = {r.interposer_pin: r.signal for r in records if r.interposer == reference}
             selection = cfg['interposers'][reference]
@@ -637,7 +831,21 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
         project = merge_project_settings(project, records)
         project_files[name + '.kicad_pro'] = json.dumps(project, sort_keys=True, indent=2) + '\n'
         desired = {'instances': instances, 'outline': outline, 'project_files': project_files, 'project_file_merges': [name + '.kicad_pro', 'sym-lib-table', 'fp-lib-table'],
-                   'mechanical': {'source_layer': mechanical.get('layer', 'Dwgs.User'), 'label_offset': mechanical.get('label_offset', [0, 0]), 'locations': native['locations']}}
+                   'mechanical': {
+                       'source_layer': mechanical.get('layer', 'Dwgs.User'),
+                       'label_offset': mechanical.get('label_offset', [0, 0]),
+                       'locations': rf_locations,
+                       'rf_keys': sorted(rf_keys),
+                       'allowed_location_keys': sorted(rf_keys | dc_location_keys),
+                       'dc_anchors': {
+                           reference: {
+                               'circle_uuid': controller.dc_connector(reference).get('anchor_circle', {}).get('uuid', ''),
+                               'center': controller.dc_connector(reference).get('anchor', []),
+                           }
+                           for reference in controller.dc_connector_names()
+                       },
+                       'dc_tolerance_mm': 0.000001,
+                   }}
         return self.call('preview', board_path=str(controller.board_path), desired=desired)
 
     def apply(self, controller, preview):

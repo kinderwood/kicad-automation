@@ -60,6 +60,48 @@ def fixture(directory, count=70):
 
 
 class SchematicTests(unittest.TestCase):
+    def test_dc_connector_is_one_selected_part_with_explicit_nc_pin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            _records, rf_parts, interposers = fixture(directory, 4)
+            footprint = directory / 'DSub.kicad_mod'
+            footprint.write_text(
+                '(footprint "DSub" (layer "F.Cu") '
+                '(pad "1" thru_hole circle (at 5 7) (size 1 1) (drill .5) (layers "*.Cu" "*.Mask")) '
+                '(pad "2" thru_hole circle (at 7 7) (size 1 1) (drill .5) (layers "*.Cu" "*.Mask")) '
+                '(pad "3" thru_hole circle (at 9 7) (size 1 1) (drill .5) (layers "*.Cu" "*.Mask")))'
+            )
+            symbol_path = directory / 'DC.kicad_sym'
+            symbol_path.write_text('''(kicad_symbol_lib (version 20241209) (generator "test")
+              (symbol "DSub" (pin_names (offset 0)) (in_bom yes) (on_board yes)
+                (property "Reference" "J" (at 0 5 0) (effects (font (size 1 1))))
+                (property "Value" "DSub" (at 0 7 0) (effects (font (size 1 1))))
+                (property "ki_fp_filters" "DSub" (at 0 0 0) (effects (font (size 1 1)) hide))
+                (symbol "DSub_1_1"
+                  (pin passive line (at 0 0 180) (length 2.54) (name "1" (effects (font (size .8 .8)))) (number "1" (effects (font (size .8 .8)))))
+                  (pin passive line (at 0 -5.08 180) (length 2.54) (name "2" (effects (font (size .8 .8)))) (number "2" (effects (font (size .8 .8)))))
+                  (pin passive line (at 0 -10.16 180) (length 2.54) (name "3" (effects (font (size .8 .8)))) (number "3" (effects (font (size .8 .8))))))))''')
+            dc = PartSelection(
+                read_footprint(footprint, 'Approved:DSub'),
+                read_symbol(symbol_path, 'Approved:DSub', require_two_pin=False),
+                mpn='APPROVED-DSUB',
+            )
+            records = (
+                SignalRecord('CLOCK', 'RF', 'E1', 'A1', 'J101', '1', 'L2'),
+                SignalRecord('GND', 'DC', 'E1', 'A2', 'J1', '1', 'L1'),
+                SignalRecord('POWER', 'DC', 'E1', 'A3', 'J1', '2', 'L1'),
+            )
+            bundle = generate_schematic(
+                records, rf_parts, interposers, PROJECT_ID, dc_parts={'J1': dc},
+            )
+            self.assertIn('J1', bundle.paths)
+            self.assertEqual([row['Reference'] for row in bundle.bom].count('J1'), 1)
+            dc_sheet = next(text for name, text in bundle.files.items()
+                            if name.startswith('dc_'))
+            parsed = loads(dc_sheet)
+            self.assertEqual(len(children(parsed, 'no_connect')), 1)
+            self.assertIn('APPROVED-DSUB', bundle.bom_csv())
+
     def test_determinism_stable_identity_removal_and_bom(self):
         with tempfile.TemporaryDirectory() as tmp:
             records,gp,ip=fixture(tmp)

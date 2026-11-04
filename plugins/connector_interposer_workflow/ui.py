@@ -524,14 +524,15 @@ class WorkflowDialog(wx.Dialog):
             self.book.AddPage(panel, title)
             self.pages.append(panel)
         self.build_spreadsheet(self.pages[0])
-        self.build_layer_assignment(self.pages[1])
-        self.build_routing_permissions(self.pages[2])
-        self.build_connector_assignments(self.pages[3])
-        self.build_gangs(self.pages[4])
-        self.build_anchors(self.pages[5])
-        self.build_outline(self.pages[6])
-        self.build_review(self.pages[7])
-        self.build_results(self.pages[8])
+        self.build_netclass_types(self.pages[1])
+        self.build_layer_assignment(self.pages[2])
+        self.build_routing_permissions(self.pages[3])
+        self.build_connector_assignments(self.pages[4])
+        self.build_gangs(self.pages[5])
+        self.build_anchors(self.pages[6])
+        self.build_outline(self.pages[7])
+        self.build_review(self.pages[8])
+        self.build_results(self.pages[9])
         self.book.Bind(wx.EVT_BOOKCTRL_PAGE_CHANGED, self.page_changed)
         body.Add(self.book, 1, wx.EXPAND | wx.RIGHT | wx.BOTTOM, 10)
         outer.Add(body, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
@@ -1118,6 +1119,139 @@ class WorkflowDialog(wx.Dialog):
             with DataDialog(self, self.controller.table) as dialog:
                 dialog.ShowModal()
 
+    def build_netclass_types(self, panel):
+        self.task_box(
+            panel, 'Netclass type', 'Classify each imported netclass as RF or DC',
+            'Type controls connector handling: RF uses individual arrayed connector locations; DC uses one approved multi-pin connector. Auto assign follows the project reference convention only when its evidence is unambiguous.',
+        )
+        box = wx.StaticBox(panel, label='Netclass classifications')
+        sizer = wx.StaticBoxSizer(box, wx.VERTICAL)
+        instruction = wx.BoxSizer(wx.HORIZONTAL)
+        instruction.Add(wx.StaticText(box, label='Assign an electrical type to every imported netclass.'),
+                        1, wx.ALIGN_CENTER_VERTICAL)
+        self.netclass_auto_assign = self.button(box, 'Auto assign', self.auto_assign_netclass_types)
+        self.netclass_auto_assign.SetToolTip(
+            'Fill blank types from exact J# / J### reference conventions and the exact DC netclass; preserve manual selections.'
+        )
+        instruction.Add(self.netclass_auto_assign, 0, wx.LEFT, 12)
+        sizer.Add(instruction, 0, wx.EXPAND | wx.ALL, 8)
+        self.netclass_type_grid = grid.Grid(box)
+        self.netclass_type_grid.CreateGrid(0, 4)
+        self.netclass_type_grid.SetRowLabelSize(0)
+        for column, (label, width) in enumerate(
+            (('Netclass', 260), ('Nets', 90), ('Connectors', 220), ('Type', 180)),
+        ):
+            self.netclass_type_grid.SetColLabelValue(column, label)
+            self.netclass_type_grid.SetColSize(column, width)
+        self.netclass_type_grid.SetMinSize((-1, self.netclass_type_grid.GetColLabelSize() + 2))
+        self.netclass_type_grid.SetMaxSize((-1, self.netclass_type_grid.GetColLabelSize() + 2))
+        self.netclass_type_grid.Bind(grid.EVT_GRID_CELL_CHANGED, self.netclass_type_changed)
+        self.netclass_type_grid.Bind(grid.EVT_GRID_CELL_LEFT_CLICK, self.netclass_type_clicked)
+        sizer.Add(self.netclass_type_grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+        self.netclass_type_status = self.status_label(box, '0 of 0 assigned')
+        sizer.Add(self.netclass_type_status, 0, wx.ALL, 8)
+        panel.GetSizer().Add(sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
+    def refresh_netclass_types(self):
+        view = self.netclass_type_grid
+        if view.GetNumberRows():
+            view.DeleteRows(0, view.GetNumberRows())
+        records = self.controller.table.records if self.controller.table else ()
+        names = sorted({record.netclass for record in records})
+        if names:
+            view.AppendRows(len(names))
+        for row, name in enumerate(names):
+            matching = [record for record in records if record.netclass == name]
+            values = (name, str(len(matching)),
+                      ', '.join(sorted({record.connector for record in matching})),
+                      self.controller.config['netclass_types'].get(name, ''))
+            for column, value in enumerate(values):
+                view.SetCellValue(row, column, value)
+                if column < 3:
+                    view.SetReadOnly(row, column)
+            view.SetCellEditor(row, 3, grid.GridCellChoiceEditor(['RF', 'DC'], False))
+            self._style_netclass_type_cell(row)
+        height = view.GetColLabelSize() + sum(view.GetRowSize(row) for row in range(len(names))) + 2
+        view.SetMinSize((-1, height)); view.SetMaxSize((-1, height))
+        assigned = sum(self.controller.config['netclass_types'].get(name) in ('RF', 'DC')
+                       for name in names)
+        self.netclass_type_status.SetLabel(f'{assigned} of {len(names)} assigned')
+        complete = bool(names) and assigned == len(names)
+        self.netclass_type_status.SetBackgroundColour(
+            wx.Colour(232, 244, 234) if complete else wx.Colour(255, 244, 214)
+        )
+        self.netclass_type_status.SetForegroundColour(
+            wx.Colour(40, 122, 61) if complete else wx.Colour(140, 87, 8)
+        )
+        self.pages[1].FitInside()
+
+    def _style_netclass_type_cell(self, row):
+        assigned = self.netclass_type_grid.GetCellValue(row, 3) in ('RF', 'DC')
+        self.netclass_type_grid.SetCellBackgroundColour(
+            row, 3, wx.Colour(220, 235, 250) if assigned else wx.Colour(255, 244, 214),
+        )
+        self.netclass_type_grid.SetCellRenderer(row, 3, AssignmentRenderer(True))
+        self.netclass_type_grid.ForceRefresh()
+
+    def auto_assign_netclass_types(self, event):
+        if not self.controller.table:
+            raise ValueError('Import a netlist before auto assigning netclass types')
+        from .core.connector_types import suggest_netclass_types
+        suggestions, conflicts, _unresolved = suggest_netclass_types(self.controller.table.records)
+        assigned = preserved = 0
+        for row in range(self.netclass_type_grid.GetNumberRows()):
+            name = self.netclass_type_grid.GetCellValue(row, 0)
+            if self.netclass_type_grid.GetCellValue(row, 3):
+                preserved += 1
+                continue
+            if name in suggestions:
+                self.netclass_type_grid.SetCellValue(row, 3, suggestions[name])
+                self.controller.config['netclass_types'][name] = suggestions[name]
+                self._style_netclass_type_cell(row)
+                assigned += 1
+        if assigned:
+            self.controller.changed()
+        self.refresh_netclass_types()
+        self.refresh_gangs()
+        self.refresh_connector_assignments(True)
+        remaining = self.netclass_type_grid.GetNumberRows() - sum(
+            bool(self.netclass_type_grid.GetCellValue(row, 3))
+            for row in range(self.netclass_type_grid.GetNumberRows())
+        )
+        message = f'Auto assigned {assigned} netclass type{("" if assigned == 1 else "s")}.'
+        if preserved:
+            message += f' Preserved {preserved} existing assignment{("" if preserved == 1 else "s")}.'
+        if conflicts:
+            message += f' {len(conflicts)} conflicting netclass{("" if len(conflicts) == 1 else "es")} require review.'
+        elif remaining:
+            message += f' {remaining} require manual selection.'
+        self.status.SetLabel(message)
+
+    def netclass_type_clicked(self, event):
+        if event.GetCol() == 3:
+            wx.CallAfter(self._enable_netclass_type_editor, event.GetRow())
+        event.Skip()
+
+    def _enable_netclass_type_editor(self, row):
+        if not self._closing:
+            self.netclass_type_grid.SetGridCursor(row, 3)
+            self.netclass_type_grid.MakeCellVisible(row, 3)
+            self.netclass_type_grid.EnableCellEditControl()
+
+    def netclass_type_changed(self, event):
+        if event.GetCol() != 3:
+            event.Skip(); return
+        row = event.GetRow()
+        name = self.netclass_type_grid.GetCellValue(row, 0)
+        kind = self.netclass_type_grid.GetCellValue(row, 3)
+        self.controller.set_netclass_type(name, kind)
+        self._style_netclass_type_cell(row)
+        self.refresh_netclass_types()
+        self.refresh_gangs()
+        self.refresh_connector_assignments(True)
+        self.status.SetLabel(f'{name} classified as {kind}. Board files were not modified.')
+        event.Skip()
+
     def build_layer_assignment(self, panel):
         self.task_box(
             panel, 'Layer assignment', 'Assign each netlist layer to the board stackup',
@@ -1169,6 +1303,7 @@ class WorkflowDialog(wx.Dialog):
         self.new_rules.Hide()
 
     def refresh_layers(self):
+        self.refresh_netclass_types()
         self._updating_layers = True
         try:
             if self.layer_map.GetNumberRows(): self.layer_map.DeleteRows(0, self.layer_map.GetNumberRows())
@@ -1189,7 +1324,7 @@ class WorkflowDialog(wx.Dialog):
             assigned = sum(bool(self.controller.config['layer_mapping'].get(name)) for name in names)
             self.layer_mapping_status.SetLabel(f'{assigned} of {len(names)} assigned')
             self.layer_map.GetParent().Layout()
-            self.pages[1].FitInside()
+            self.pages[2].FitInside()
 
             if self.rules.GetNumberRows(): self.rules.DeleteRows(0, self.rules.GetNumberRows())
             count = self.rules.GetNumberCols()
@@ -1217,7 +1352,7 @@ class WorkflowDialog(wx.Dialog):
             else:
                 self.new_rules.SetLabel('')
                 self.new_rules.Hide()
-            self.pages[2].Layout()
+            self.pages[3].Layout()
         finally:
             self._updating_layers = False
 
@@ -1319,7 +1454,7 @@ class WorkflowDialog(wx.Dialog):
     def build_connector_assignments(self, panel):
         self.task_box(
             panel, 'Connector assignments', 'Map library symbols to their allowed footprints',
-            'Assign the workbook interposer and each connector gang to read-only KiCad library parts. '
+            'Assign the workbook interposer, RF gangs and DC connectors to read-only KiCad library parts. '
             'Use Select… inside a symbol cell to open the library picker; the footprint cell then offers '
             'only matching choices. No placement or BOM overrides are entered here.',
         )
@@ -1352,7 +1487,7 @@ class WorkflowDialog(wx.Dialog):
         interposer.Add(self.interposer_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         panel.GetSizer().Add(interposer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        gangs_box = wx.StaticBox(panel, label='Connector gang assignments')
+        gangs_box = wx.StaticBox(panel, label='RF connector gang assignments')
         gangs = wx.StaticBoxSizer(gangs_box, wx.VERTICAL)
         self.assignment_filter = wx.SearchCtrl(gangs_box, style=wx.TE_PROCESS_ENTER)
         self.assignment_filter.SetDescriptiveText('Filter gangs')
@@ -1369,6 +1504,18 @@ class WorkflowDialog(wx.Dialog):
         gangs.Add(self.gang_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         panel.GetSizer().Add(gangs, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         self.gang_assignment_controls = {}
+
+        dc_box = wx.StaticBox(panel, label='DC connector assignments')
+        dc = wx.StaticBoxSizer(dc_box, wx.VERTICAL)
+        self.dc_assignment_rows = wx.Panel(dc_box)
+        dc_grid = wx.FlexGridSizer(cols=4, hgap=0, vgap=0)
+        dc_grid.AddGrowableCol(2, 1); dc_grid.AddGrowableCol(3, 1)
+        self.dc_assignment_rows.SetSizer(dc_grid)
+        dc.Add(self.dc_assignment_rows, 0, wx.EXPAND | wx.ALL, 8)
+        self.dc_assignment_status = self.status_label(dc_box, '0 of 0 DC connectors assigned')
+        dc.Add(self.dc_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        panel.GetSizer().Add(dc, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.dc_assignment_controls = {}
 
     def _symbol_from_spec(self, selection, require_two_pin):
         from .core.libraries import read_symbol
@@ -1465,6 +1612,40 @@ class WorkflowDialog(wx.Dialog):
         })
         self._refresh_assignment_status()
 
+    def assign_dc_symbol(self, reference, selection, symbol):
+        prior = self.controller.dc_connector(reference)
+        self.controller.set_dc_connector(reference, {
+            'symbol': dict(selection), 'path': '', 'library_id': '', 'sha256': '',
+            'footprint_mpn': '', 'value': symbol.value, 'symbol_mpn': symbol.mpn,
+            'anchor': prior.get('anchor', [0, 0]),
+            'anchor_circle': prior.get('anchor_circle', {}),
+            'anchor_accepted': prior.get('anchor_accepted', False),
+        })
+        controls = self.dc_assignment_controls.get(reference)
+        options = self._allowed_footprint_specs(symbol)
+        if controls:
+            controls['footprint'].set_options(options, {})
+            controls['footprint'].Enable(True)
+        if symbol.unit_count != 1:
+            self.status.SetLabel(f'{symbol.library_id} is multi-unit; choose a single-unit DC connector symbol.')
+        elif not symbol.footprint_filters:
+            self.status.SetLabel(f'{symbol.library_id} has no footprint filters; ask the librarian to add them.')
+        elif not options:
+            self.status.SetLabel(f'No loaded footprint matches {symbol.library_id} and its electrical pins.')
+        self._refresh_assignment_status()
+
+    def assign_dc_footprint(self, reference, selection):
+        if not selection:
+            return
+        from .core.libraries import read_footprint
+        approved = read_footprint(selection['path'], selection['library_id'],
+                                  selection.get('sha256'))
+        self.controller.set_dc_connector(reference, {
+            'path': approved.path, 'library_id': approved.library_id,
+            'sha256': approved.sha256, 'footprint_mpn': approved.mpn,
+        })
+        self._refresh_assignment_status()
+
     def _configured_symbol(self, selection, require_two_pin):
         if not selection.get('path') or not selection.get('library_id'):
             return None
@@ -1476,8 +1657,9 @@ class WorkflowDialog(wx.Dialog):
     def refresh_connector_assignments(self, force=False):
         reference = self._interposer_reference()
         names = self.controller.gang_names()
+        dc_names = self.controller.dc_connector_names()
         query = self.assignment_filter.GetValue().casefold() if hasattr(self, 'assignment_filter') else ''
-        signature = (reference, names, query)
+        signature = (reference, names, dc_names, query)
         if not force and signature == self._assignment_signature:
             self._refresh_assignment_status()
             return
@@ -1542,7 +1724,45 @@ class WorkflowDialog(wx.Dialog):
                 'symbol': symbol_control, 'footprint': footprint_control,
             }
         self.gang_assignment_rows.Layout()
-        self.pages[3].FitInside()
+
+        dc_sizer = self.dc_assignment_rows.GetSizer()
+        dc_sizer.Clear(True)
+        self.dc_assignment_controls = {}
+        for label, width in (('Ref des', 120), ('Pins used', 100), ('Symbol', 340), ('Footprint', 380)):
+            heading = wx.StaticText(self.dc_assignment_rows, label=label, style=wx.BORDER_SIMPLE)
+            font = heading.GetFont(); font.SetWeight(wx.FONTWEIGHT_BOLD); heading.SetFont(font)
+            heading.SetBackgroundColour(wx.Colour(246, 246, 246)); heading.SetMinSize((width, 34))
+            dc_sizer.Add(heading, 1 if label in ('Symbol', 'Footprint') else 0, wx.EXPAND)
+        for name in dc_names:
+            if query and query not in name.casefold():
+                continue
+            selection = self.controller.dc_connector(name)
+            used = sum(record.connector == name for record in self.controller.table.records)
+            reference_label = wx.StaticText(self.dc_assignment_rows, label=name, style=wx.BORDER_SIMPLE)
+            reference_label.SetMinSize((120, 38))
+            pins = wx.StaticText(self.dc_assignment_rows, label=str(used), style=wx.BORDER_SIMPLE)
+            pins.SetMinSize((100, 38))
+            symbol_control = SymbolAssignmentCtrl(
+                self.dc_assignment_rows, self, 'Choose DC connector symbol', False,
+                lambda spec, symbol, connector=name: self.assign_dc_symbol(connector, spec, symbol),
+            )
+            footprint_control = FootprintAssignmentCtrl(
+                self.dc_assignment_rows,
+                lambda spec, connector=name: self.assign_dc_footprint(connector, spec),
+            )
+            symbol_spec = selection.get('symbol', {})
+            symbol_control.set_selection(symbol_spec)
+            symbol = self._configured_symbol(symbol_spec, False)
+            footprint_control.set_options(self._allowed_footprint_specs(symbol), selection)
+            footprint_control.Enable(bool(symbol))
+            for control in (reference_label, pins, symbol_control, footprint_control):
+                dc_sizer.Add(control, 1 if control in (symbol_control, footprint_control) else 0,
+                             wx.EXPAND)
+            self.dc_assignment_controls[name] = {
+                'symbol': symbol_control, 'footprint': footprint_control,
+            }
+        self.dc_assignment_rows.Layout()
+        self.pages[4].FitInside()
         self._refresh_assignment_status()
 
     def _refresh_assignment_status(self):
@@ -1558,9 +1778,17 @@ class WorkflowDialog(wx.Dialog):
         assigned_gangs = sum(bool(self.controller.gang(name).get('symbol', {}).get('library_id') and
                                   self.controller.gang(name).get('library_id')) for name in names)
         self.gang_assignment_status.SetLabel(f'{assigned_gangs} of {len(names)} gangs assigned')
+        dc_names = self.controller.dc_connector_names()
+        assigned_dc = sum(bool(self.controller.dc_connector(name).get('symbol', {}).get('library_id') and
+                               self.controller.dc_connector(name).get('library_id'))
+                          for name in dc_names)
+        self.dc_assignment_status.SetLabel(
+            f'{assigned_dc} of {len(dc_names)} DC connectors assigned'
+        )
         for control, complete in (
             (self.interposer_assignment_status, assigned_interposer == interposer_total and bool(interposer_total)),
             (self.gang_assignment_status, assigned_gangs == len(names) and bool(names)),
+            (self.dc_assignment_status, assigned_dc == len(dc_names) and bool(dc_names)),
         ):
             control.SetBackgroundColour(wx.Colour(232, 244, 234) if complete else wx.Colour(255, 244, 214))
             control.SetForegroundColour(wx.Colour(40, 122, 61) if complete else wx.Colour(140, 87, 8))
@@ -1632,9 +1860,22 @@ class WorkflowDialog(wx.Dialog):
         self.refresh_gang_list()
         names = self.controller.gang_names()
         self.gang_choice.Set(list(names))
+        if hasattr(self, 'anchor_gang'):
+            self.anchor_gang.Set(list(names))
         if names:
             self.gang_choice.SetStringSelection(self.current_gang if self.current_gang in names else names[0])
             self.select_gang(None)
+        else:
+            self.current_gang = None
+            if hasattr(self, 'pattern_view'):
+                self.pattern_view.show('', {})
+        if hasattr(self, 'dc_anchor_connector'):
+            dc_names = list(self.controller.dc_connector_names())
+            current = self.dc_anchor_connector.GetStringSelection()
+            self.dc_anchor_connector.Set(dc_names)
+            if dc_names:
+                self.dc_anchor_connector.SetStringSelection(current if current in dc_names else dc_names[0])
+                self.select_dc_anchor(None)
 
     def refresh_gang_list(self):
         self.gang_list.DeleteAllItems()
@@ -1786,6 +2027,31 @@ class WorkflowDialog(wx.Dialog):
         panel.GetSizer().Add(self.button(panel, 'Use selected circle center', self.capture_circle), 0, wx.ALL, 8)
         panel.GetSizer().Add(self.button(panel, 'Accept anchor', self.accept_anchor), 0, wx.ALL, 8)
         self.anchor_status = self.note(panel, 'No anchor captured.')
+
+        dc_box = wx.StaticBox(panel, label='DC connector pin 1 placement')
+        dc = wx.StaticBoxSizer(dc_box, wx.VERTICAL)
+        self.dc_anchor_connector = wx.Choice(dc_box)
+        self.dc_anchor_connector.Bind(wx.EVT_CHOICE, self.select_dc_anchor)
+        dc.Add(self.dc_anchor_connector, 0, wx.EXPAND | wx.ALL, 8)
+        dc_fields = wx.FlexGridSizer(cols=4, hgap=8, vgap=6)
+        dc_fields.Add(wx.StaticText(dc_box, label='Orientation (degrees)'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.dc_anchor_rotation = wx.TextCtrl(dc_box, value='0')
+        dc_fields.Add(self.dc_anchor_rotation, 1, wx.EXPAND)
+        dc_fields.Add(wx.StaticText(dc_box, label='Board side'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.dc_anchor_side = wx.Choice(dc_box, choices=['Front (F)', 'Back (B)'])
+        self.dc_anchor_side.SetSelection(0)
+        dc_fields.Add(self.dc_anchor_side, 1, wx.EXPAND)
+        dc_fields.AddGrowableCol(1, 1); dc_fields.AddGrowableCol(3, 1)
+        dc.Add(dc_fields, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        dc_buttons = wx.BoxSizer(wx.HORIZONTAL)
+        dc_buttons.Add(self.button(dc_box, 'Use selected pin 1 circle', self.capture_dc_circle),
+                       0, wx.RIGHT, 8)
+        dc_buttons.Add(self.button(dc_box, 'Accept DC placement', self.accept_dc_anchor), 0)
+        dc.Add(dc_buttons, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.dc_anchor_status = self.status_label(dc_box, 'DC pin 1 placement required')
+        dc.Add(self.dc_anchor_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        panel.GetSizer().Add(dc, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
         panel.GetSizer().Add(self.button(panel, 'Inspect saved mechanical population', self.inspect_mechanical), 0, wx.ALL, 8)
         self.mechanical_list = wx.ListCtrl(panel, style=wx.LC_REPORT, size=(-1, 140))
         for col, (name, width) in enumerate((('Physical key', 120), ('Center X (mm)', 130), ('Center Y (mm)', 130), ('Source circle UUID', 280), ('Source text UUID', 280))): self.mechanical_list.InsertColumn(col, name, width=width)
@@ -1826,6 +2092,70 @@ class WorkflowDialog(wx.Dialog):
         self._circle_draft = {'uuid': circle.m_Uuid.AsString(), 'center_nm': [center.x, center.y]}
         self.anchor_status.SetLabel('Draft circle center captured; accept to persist it. Board unchanged.')
 
+    def capture_dc_circle(self, event):
+        if self.pcbnew is None:
+            raise ValueError('Open this workflow from the KiCad PCB Editor')
+        selected = list(self.pcbnew.GetCurrentSelection())
+        if (len(selected) != 1 or not isinstance(selected[0], self.pcbnew.PCB_SHAPE) or
+                selected[0].GetShape() != self.pcbnew.SHAPE_T_CIRCLE):
+            raise ValueError('Select exactly one imported DC pin 1 circle in the PCB canvas')
+        circle = selected[0]
+        if self.pcbnew.GetBoard().GetLayerName(circle.GetLayer()) != self.user_layer.GetValue():
+            raise ValueError('Circle must belong to the selected mechanical user layer')
+        center = circle.GetCenter()
+        self._dc_circle_draft = {
+            'uuid': circle.m_Uuid.AsString(),
+            'center_nm': [center.x, center.y],
+            'center': [center.x / 1e6, center.y / 1e6],
+        }
+        self.dc_anchor_status.SetLabel(
+            'Draft pin 1 circle captured; set orientation and side, then accept placement.'
+        )
+
+    def select_dc_anchor(self, event):
+        reference = self.dc_anchor_connector.GetStringSelection()
+        if not reference:
+            return
+        selection = self.controller.dc_connector(reference)
+        self.dc_anchor_rotation.ChangeValue(str(selection.get('rotation', 0)))
+        self.dc_anchor_side.SetSelection(1 if selection.get('side') == 'B' else 0)
+        self.dc_anchor_status.SetLabel(
+            f'{reference} pin 1 placement accepted' if selection.get('anchor_accepted')
+            else f'{reference} pin 1 placement required'
+        )
+
+    def accept_dc_anchor(self, event):
+        reference = self.dc_anchor_connector.GetStringSelection()
+        if not reference:
+            raise ValueError('Select a DC connector')
+        draft = getattr(self, '_dc_circle_draft', None)
+        if not draft:
+            raise ValueError('Select the DC pin 1 DXF circle and capture its center first')
+        if self.pcbnew:
+            drawings = {item.m_Uuid.AsString(): item for item in self.pcbnew.GetBoard().GetDrawings()}
+            source = drawings.get(draft['uuid'])
+            if (source is None or not isinstance(source, self.pcbnew.PCB_SHAPE) or
+                    source.GetShape() != self.pcbnew.SHAPE_T_CIRCLE or
+                    [source.GetCenter().x, source.GetCenter().y] != draft['center_nm']):
+                raise ValueError('DC pin 1 circle changed; capture it again')
+        rotation = float(self.dc_anchor_rotation.GetValue())
+        if not math.isfinite(rotation):
+            raise ValueError('DC connector orientation must be a finite number')
+        self.controller.set_dc_connector(reference, {
+            'anchor_pad': '1', 'anchor': list(draft['center']),
+            'anchor_circle': {'uuid': draft['uuid'], 'center': list(draft['center'])},
+            'rotation': rotation,
+            'side': 'B' if self.dc_anchor_side.GetSelection() == 1 else 'F',
+            'anchor_accepted': True,
+        })
+        self.controller.config['mechanical']['layer'] = self.user_layer.GetValue()
+        self.controller.config['mechanical']['label_offset'] = [
+            float(self.label_offset_x.GetValue()), float(self.label_offset_y.GetValue()),
+        ]
+        self.controller.config['mechanical']['accepted'] = True
+        self.dc_anchor_status.SetLabel(f'{reference} pin 1 placement accepted')
+        self._dc_circle_draft = None
+
     def accept_anchor(self, event):
         gang = self.anchor_gang.GetStringSelection()
         if not gang: raise ValueError('Select a gang')
@@ -1857,7 +2187,12 @@ class WorkflowDialog(wx.Dialog):
             errors = list(result.get('errors', []))
             if self.controller.table:
                 from .core.geometry import validate_mechanical_population
-                try: validate_mechanical_population(self.controller.table.records, [p['key'] for p in result['locations']])
+                rf_records = tuple(record for record in self.controller.table.records
+                                   if self.controller.connector_type(record.connector) == 'RF')
+                rf_keys = {record.key for record in rf_records}
+                try: validate_mechanical_population(
+                    rf_records, [p['key'] for p in result['locations'] if p['key'] in rf_keys],
+                )
                 except ValueError as error: errors.append(str(error))
             self.anchor_status.SetLabel('Blocked: ' + '; '.join(errors) if errors else f"{len(result['locations'])} exact mechanical identities matched. Review their circle/text associations.")
             self.anchor_status.Wrap(820)
@@ -2036,7 +2371,7 @@ class WorkflowDialog(wx.Dialog):
         self._applying = False
         if self._closing: return
         self.results.ChangeValue(json.dumps(result, indent=2, default=str))
-        self.select_page(8)
+        self.select_page(9)
         self.status.SetLabel('Project copy saved. Review the reconciliation report and validation results.')
         if isinstance(result, dict) and result.get('journal'): self.journal.ChangeValue(str(result['journal']))
         self.refresh()

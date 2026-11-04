@@ -86,6 +86,10 @@ def board_items(board):
 def board_state(board, p):
     """Expected native geometry/net/pose/group projection, keyed by exact UUID."""
     state = {}
+    active_copper = {p.F_Cu, p.B_Cu} | {
+        getattr(p, f"In{index}_Cu") for index in range(1, board.GetCopperLayerCount() - 1)
+    }
+    all_copper = set(range(0, 63, 2))
     for uid, item in board_items(board).items():
         group = item.GetParentGroup()
         value = {"type": item.GetClass(), "xy": _xy(item.GetPosition()),
@@ -101,7 +105,11 @@ def board_state(board, p):
                          pads={uuid_of(q): {"number": q.GetNumber(), "net": q.GetNetname(),
                                "xy": _xy(q.GetPosition()), "size": _xy(q.GetSize()),
                                "drill": _xy(q.GetDrillSize()), "shape": q.GetShape(),
-                               "layers": list(q.GetLayerSet().Seq()),
+                               # A wildcard through-hole layer set may expand to
+                               # all 32 copper IDs only after serialization.
+                               # Inactive copper bits are not board geometry.
+                               "layers": [layer for layer in q.GetLayerSet().Seq()
+                                          if layer not in all_copper or layer in active_copper],
                                "angle": round(q.GetOrientationDegrees() % 360, 8)} for q in item.Pads()})
         elif isinstance(item, p.PCB_TRACK):
             value.update(net=item.GetNetname(), layer=item.GetLayer(), start=_xy(item.GetStart()),
@@ -176,6 +184,11 @@ class NativeBackend:
         for circle in result["circles"]:
             labels = [t for t in result["texts"] if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*", t["text"].strip()) and
                       math.dist([t["at"][i]-offset[i] for i in range(2)], circle["center"]) <= circle["radius"]]
+            if not labels:
+                # Unlabelled circles may be DC connector pad locations. Their
+                # selected pin-1 anchor and full footprint geometry are checked
+                # later; they are not guessed into RF identities here.
+                continue
             if len(labels) != 1:
                 result["errors"].append("Circle " + circle["uuid"] + " needs one explicit gang-pin label")
                 continue
@@ -248,12 +261,45 @@ class NativeBackend:
             native = self.inspect_graphics(board.GetFileName(), mechanical["source_layer"], mechanical.get("label_offset"))
             if native["errors"]:
                 raise BackendError("Unresolved native mechanical associations: " + "; ".join(native["errors"]))
-            physical = {x["key"] for x in native["locations"]}
-            installed = {key for key, spec in instances.items() if spec.get("kind", "connector") == "connector"}
+            rf_keys = set(mechanical.get("rf_keys", []))
+            physical = {x["key"] for x in native["locations"] if x["key"] in rf_keys}
+            installed = {key for key, spec in instances.items()
+                         if spec.get("kind", "connector") == "connector" and
+                         spec.get("connector_type", "RF") == "RF"}
             if physical != installed:
                 raise BackendError("Workbook and complete native mechanical populations differ")
-            if sorted(native["locations"], key=lambda x: x["key"]) != sorted(mechanical["locations"], key=lambda x: x["key"]):
+            accepted_locations = [x for x in native["locations"] if x["key"] in rf_keys]
+            if sorted(accepted_locations, key=lambda x: x["key"]) != sorted(mechanical["locations"], key=lambda x: x["key"]):
                 raise BackendError("Accepted mechanical source geometry or identities changed")
+            allowed_location_keys = set(mechanical.get("allowed_location_keys", rf_keys))
+            unexpected = sorted({x["key"] for x in native["locations"]} - allowed_location_keys)
+            if unexpected:
+                raise BackendError(f"Unexpected labelled mechanical locations: {unexpected}")
+            circles = {circle["uuid"]: circle for circle in native["circles"]}
+            tolerance = float(mechanical.get("dc_tolerance_mm", 0.000001))
+            if not math.isfinite(tolerance) or tolerance < 0:
+                raise BackendError("DC circle matching tolerance must be finite and nonnegative")
+            for reference, accepted in mechanical.get("dc_anchors", {}).items():
+                circle = circles.get(accepted.get("circle_uuid"))
+                if circle is None or circle["center"] != accepted.get("center"):
+                    raise BackendError(f"{reference}: accepted DC pin 1 circle changed or is missing")
+                spec = instances.get(reference)
+                if not spec or spec.get("connector_type") != "DC":
+                    raise BackendError(f"{reference}: DC anchor has no matching connector instance")
+                holder, fp = self._placed_approved(spec)
+                used = set()
+                for pad in fp.Pads():
+                    if not pad.GetNumber():
+                        continue
+                    center = [value / 1e6 for value in _xy(pad.GetPosition())]
+                    matches = [candidate for candidate in native["circles"]
+                               if candidate["uuid"] not in used and
+                               math.dist(candidate["center"], center) <= tolerance]
+                    if len(matches) != 1:
+                        raise BackendError(
+                            f"{reference} pad {pad.GetNumber()}: expected one DXF circle at {center}, found {len(matches)}"
+                        )
+                    used.add(matches[0]["uuid"])
         refs = set()
         library_revisions = {}
         artifact_checks = set()
@@ -399,6 +445,7 @@ class NativeBackend:
                 if rf_pin.exists() and json.loads(rf_pin.read_text()) != artifact:
                     raise BackendError("Pinned RF artifact snapshot integrity failure")
         board = self._load(path)
+        self._resolve_anchor_poses(desired)
         self._normalize_outline(board, desired)
         if (desired.get("outline") or {}).get("enabled"):
             desired["_owned_outline_uuids"] = registry.get("outline_objects", [])
@@ -521,6 +568,49 @@ class NativeBackend:
         net = self.p.NETINFO_ITEM(board, name)
         board.Add(net)
         return net
+
+    def _place_footprint(self, fp, spec):
+        """Apply a resolved native origin pose and side to a footprint object."""
+        p = self.p
+        pose = spec["pose"]
+        want_bottom = spec.get("side", "F") == "B"
+        if fp.IsFlipped() != want_bottom:
+            fp.Flip(fp.GetPosition(), False)
+        fp.SetPosition(p.VECTOR2I(round(pose[0] * 1e6), round(pose[1] * 1e6)))
+        fp.SetOrientationDegrees(pose[2])
+
+    def _placed_approved(self, spec):
+        """Attach a loaded footprint to a temporary board before native flips."""
+        holder = self.p.BOARD()
+        fp = self._approved(spec["footprint"])
+        holder.Add(fp)
+        self._place_footprint(fp, spec)
+        return holder, fp
+
+    def _resolve_anchor_poses(self, desired):
+        """Resolve pad-centre anchors with this exact KiCad runtime."""
+        p = self.p
+        for key, spec in desired.get("instances", {}).items():
+            anchor = spec.get("anchor")
+            if not anchor:
+                continue
+            at = anchor.get("at", [])
+            pad_number = str(anchor.get("pad", ""))
+            if (len(at) != 2 or any(not math.isfinite(value) for value in at) or
+                    not pad_number):
+                raise BackendError(f"{key}: invalid footprint pad anchor")
+            angle = float(spec.get("pose", [0, 0, 0])[2])
+            spec["pose"] = [0, 0, angle]
+            holder, fp = self._placed_approved(spec)
+            pads = [pad for pad in fp.Pads() if pad.GetNumber() == pad_number]
+            if len(pads) != 1:
+                raise BackendError(f"{key}: anchor pad {pad_number} must occur exactly once")
+            offset = _xy(pads[0].GetPosition())
+            spec["pose"] = [at[0] - offset[0] / 1e6,
+                            at[1] - offset[1] / 1e6, angle]
+            self._place_footprint(fp, spec)
+            if _xy(pads[0].GetPosition()) != [round(at[0] * 1e6), round(at[1] * 1e6)]:
+                raise BackendError(f"{key}: KiCad could not place anchor pad {pad_number} at the selected circle")
 
     def _group(self, board, name, old=None, parent=None):
         group = board_items(board).get(old) if old else None
@@ -668,11 +758,7 @@ class NativeBackend:
                 fp.SetFPIDAsString(spec["footprint"]["library_id"])
             pose = spec["pose"]
             # All approved footprint geometry is cloned, never synthesized.
-            want_bottom = spec.get("side", "F") == "B"
-            if fp.IsFlipped() != want_bottom:
-                fp.Flip(fp.GetPosition(), False)
-            fp.SetPosition(p.VECTOR2I(round(pose[0]*1e6), round(pose[1]*1e6)))
-            fp.SetOrientationDegrees(pose[2])
+            self._place_footprint(fp, spec)
             # Schematic commercial/value fields belong to this project instance;
             # the selected librarian footprint remains a read-only input.
             for name, text in spec.get("symbol_fields", {}).items():
@@ -699,7 +785,13 @@ class NativeBackend:
                 fp.SetAttributes(fp.GetAttributes() | p.FP_BOARD_ONLY | p.FP_EXCLUDE_FROM_BOM | p.FP_EXCLUDE_FROM_POS_FILES)
             for pad in fp.Pads():
                 if pad.GetNumber():
-                    pad.SetNet(self._net(board, spec.get("pads", {}).get(pad.GetNumber(), "GND")))
+                    net = spec.get("pads", {}).get(pad.GetNumber())
+                    if net:
+                        pad.SetNet(self._net(board, net))
+                    elif spec.get("connector_type") == "DC":
+                        pad.SetNetCode(0)
+                    else:
+                        pad.SetNet(self._net(board, "GND"))
             objects = {}
             rf = spec.get("rf")
             old_rf = previous.get("rf")
@@ -898,8 +990,18 @@ class NativeBackend:
                         if not native_class.ContainsNetclassWithName(spec["netclass"]):
                             raise BackendError("Saved native netclass does not match workbook assignment: " + name + " (" + net.GetNetClassName() + ")")
                         resolved_classes[name] = spec["netclass"]
-            if any(actual.get(k) != v for k, v in expected.items()):
-                raise BackendError("Saved native object state/net/group verification failed")
+            mismatched = [key for key, value in expected.items()
+                          if actual.get(key) != value]
+            if mismatched:
+                key = mismatched[0]
+                before_item, after_item = expected[key], actual.get(key)
+                fields = sorted(set(before_item or {}) | set(after_item or {}))
+                changed = [field for field in fields
+                           if (before_item or {}).get(field) != (after_item or {}).get(field)]
+                raise BackendError(
+                    "Saved native object state/net/group verification failed for "
+                    f"{key}; changed fields: {', '.join(changed)}"
+                )
             if any(actual.get(k) != v for k, v in foreign.items()):
                 raise BackendError("Native reconciliation changed designer-owned content")
             registry["serialized"] = _serialized(candidate, expected)

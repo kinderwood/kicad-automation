@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.3.10 and the
+are authorized. Connector to Interposer Workflow is version 0.4.0 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -10,16 +10,18 @@ BGA Interposer Wizard remains independent and unchanged.
 
 Librarians author connector and interposer footprints and RF matching artifacts.
 The workflow selects read-only approved artifacts and configures placed
-instances. Its validated connector profile currently consists of one signal
-contact and one ground/shield contact; DC and multi-contact connector profiles
-remain future work. It does not invoke authoring tools, create footprints, or
+instances. RF locations use one signal contact and one ground/shield contact.
+DC connectors use selected single-unit multi-pin library parts with explicit NC
+handling. It does not invoke authoring tools, create footprints, or
 edit library recipes.
 Project-local schematic generation represents the selected footprint pad
 definitions and workbook connectivity. RF authoring is a separate distributable
 plugin with its own native dialog and saved artifact contract.
 
-Physical connector identity is gang ID plus pin index. Nets, netclasses and
-destinations may change without moving surviving connectors. Complete input
+Physical RF connector identity is gang ID plus pin index. Physical DC connector
+identity is its reference, with workbook connector-pin values mapped to pads on
+that one instance. Nets, netclasses and destinations may change without moving
+surviving connectors. Complete input
 snapshots are reconciled incrementally. Ambiguous ownership and affected manual
 routing block mutation. A new artifact revision requires explicit selection and
 a fresh preview. No generator code is executed from a saved artifact.
@@ -198,6 +200,21 @@ physical copper-layer number (`F.Cu` = 1, `In1.Cu` = 2, `B.Cu` = final), and
 matches custom board-layer numbers directly. Existing manual selections are
 preserved. Missing numbers, multiple numeric runs and duplicate board candidates
 remain unassigned and visible for review.
+
+Version 0.4.0 adds explicit RF/DC netclass classification and mixed connector
+topologies. Conservative type assignment recognizes exact `J#` DC references,
+exact `J###` RF references and the exact `DC` netclass while preserving manual
+choices and blocking conflicting evidence. RF gangs retain one symbol and
+footprint per location. Each DC connector selects one librarian-authored,
+single-unit multi-pin symbol and footprint, produces one schematic/PCB/BOM
+instance, permits `GND`, preserves duplicate-net rejection, and marks unused
+pins NC without assigning their PCB pads a net. DXF placement anchors the
+selected footprint by its transformed pad-1 center, independent of library
+origin, with explicit rotation and side. Native KiCad 10.0.8 tests confirm exact
+front/back pad-1 placement, netless NC pad round trips, complete mixed RF/DC
+apply, and generated-schematic ERC. Full DC pad geometry currently uses a
+one-nanometre internal circle-center tolerance; an adjustable tolerance remains
+future work.
 
 Additional actual PCB Editor checks use the selected 9.0.9.1 AppImage and
 10.0.8: normal startup discovers both actions and Workflow opens from the

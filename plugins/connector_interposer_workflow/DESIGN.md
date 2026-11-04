@@ -1,6 +1,6 @@
 # Workflow boundaries
 
-The native modeless wx dialog follows Netlist Source → Layer assignment →
+The native modeless wx dialog follows Netlist Source → Netclass type → Layer assignment →
 Routing permissions → Connector assignments → Gangs → DXF Anchors → Board Outline →
 Review Changes → Apply / Results. A
 read-only virtual grid displays the complete parsed workbook in a separate
@@ -24,12 +24,21 @@ Its explicit Auto assign action fills blank rows only. It extracts one numeric
 run from each name, accounts for KiCad's default `InN.Cu` offset, matches custom
 names directly, preserves manual selections and leaves ambiguity visible.
 
+Netclass type uses the same native assignment table, amber/blue cell states,
+persistent choice affordance, status placement and explicit Auto assign pattern.
+Auto assignment follows only the exact project conventions `J#` = DC,
+`J###` = RF and exact netclass `DC` = DC. Manual choices survive repeated runs;
+conflicting connector evidence remains a blocking validation issue.
+
 Connector assignments owns the deterministic relationship between each loaded
-library symbol and footprint. The workbook supplies the interposer reference
-and gang identities. Symbol cells launch the native loaded-library browser;
+library symbol and footprint. The workbook supplies the interposer and connector
+references. Separate RF gang and DC connector sections use the same assignment
+cells. Symbol cells launch the native loaded-library browser;
 footprint cells offer only parts allowed by the symbol filters and exact pin/pad
 compatibility. Gang geometry, placement and BOM overrides do not belong on this
-page. Interposer placement is accepted on DXF Anchors, and library MPN metadata
+page. DC selections are single-unit multi-pin librarian parts; the workflow does
+not author them. Interposer and DC pin-1 placement are accepted on DXF Anchors,
+and library MPN metadata
 is never overridden by the workflow.
 
 The selected interposer symbol supplies pin identity, footprint filters and BOM
@@ -57,6 +66,14 @@ signal name or row position. The source PCB and all selected library bytes
 participate in preview freshness. The backend maintains object and generated
 file ownership independently of native group membership. Groups express loose
 placement behavior; they do not authorize takeover of designer content.
+
+RF PCB instances retain `gang-pin` identity. A DC connector has one PCB and
+schematic instance keyed by its reference, while workbook rows bind nets to that
+instance's pads. DC placement stores the selected DXF pin-1 circle, orientation
+and side. The native backend resolves the footprint origin from the transformed
+pad-1 center and verifies every electrical pad center against imported circles.
+Unused DC pads remain netless and receive schematic no-connect markers. Missing
+RF locations remain blocking population errors.
 
 Library parts are immutable read inputs selected by their loaded KiCad library
 identities. The UI resolves global, project and nested library tables, while

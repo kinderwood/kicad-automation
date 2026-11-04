@@ -1,13 +1,14 @@
 # Connector to Interposer Workflow
 
-Version **0.3.10**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.0**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
-This independent PCB Action Plugin consumes librarian-approved two-pin connector
+This independent PCB Action Plugin consumes librarian-approved connector
 footprints and symbols, interposer footprints, and optional immutable RF artifact
-bundles. The validated connector profile is currently a signal contact plus a
-ground/shield contact; broader DC and multi-contact profiles are future work.
+bundles. RF locations use individual signal-plus-ground/shield parts. DC
+connectors use one selected single-unit multi-pin symbol and footprint; unused
+DC pins remain explicitly unconnected.
 It never invokes the BGA Interposer Wizard or an RF authoring tool and exposes
 no footprint creation, recipe editing or variant-authoring controls.
 
@@ -59,7 +60,12 @@ an already-open source board does not update the output copy.
    rereads an edited workbook at the same path while retaining the selected
    worksheet when it still exists, header row and excluded rows. It redetects
    mappings from the new headers and invalidates any prior review.
-2. **Layer assignment:** map each distinct netlist layer name to an enabled
+2. **Netclass type:** classify every imported netclass as RF or DC. **Auto
+   assign** fills blank rows only. Exact `J#` references identify DC, exact
+   `J###` references identify RF, and the exact `DC` netclass identifies DC.
+   Unrecognized references remain manual; mixed or conflicting evidence blocks
+   review. Manual choices are preserved.
+3. **Layer assignment:** map each distinct netlist layer name to an enabled
    KiCad copper layer. Each selection updates the current workflow immediately;
    there is no separate acceptance button. The KiCad-layer cells use the same
    amber-missing and blue-assigned interaction treatment as Netlist Source,
@@ -69,7 +75,7 @@ an already-open source board does not update the output copy.
    single embedded number directly. Names with zero or multiple number runs and
    duplicate candidates remain blank. These assignments drive validation
    and RF artifact compatibility.
-3. **Routing permissions:** review the workflow's current netclass/layer
+4. **Routing permissions:** review the workflow's current netclass/layer
    validation policy. Checkbox changes update the current workflow immediately;
    there is no separate acceptance button. New combinations start allowed and
    produce a review notice; existing restrictions
@@ -77,14 +83,17 @@ an already-open source board does not update the output copy.
    blocks workflow validation and Review Changes. This release does not generate
    KiCad custom routing rules or modify the project's `.kicad_dru` file. A later
    per-net redesign will add search, filters and previewed rule updates.
-4. **Connector assignments:** the workbook supplies the single interposer
-   reference and connector gang identities. Select an interposer symbol and an
-   independent two-pin connector symbol for each gang from KiCad's loaded
-   project or global libraries. Each symbol must contain footprint filters; its
+5. **Connector assignments:** the workbook supplies the single interposer
+   reference and connector identities. Select an interposer, an independent
+   two-pin connector symbol for each RF gang, and one single-unit multi-pin
+   symbol for each DC connector from KiCad's loaded project or global libraries.
+   Each symbol must contain footprint filters; its
    footprint cell lists only filtered library parts whose electrical pad
    numbers exactly match the symbol pins. Selections update the workflow
-   immediately. Placement and BOM overrides are not entered on this page.
-5. **Gangs:** select a gang and configure its pattern, units, pitches,
+   immediately. The workflow instantiates these librarian-authored parts; it
+   does not generate library symbols or footprints. Placement and BOM overrides
+   are not entered on this page.
+6. **Gangs:** select an RF gang and configure its pattern, units, pitches,
    row offsets, numbering, orientation and explicit pattern mirror. Each gang
    keeps independent settings. Library MPN metadata remains read-only; a missing
    MPN is reported as a warning and is never invented. The preview labels locations with indices and
@@ -93,34 +102,40 @@ an already-open source board does not update the output copy.
    **Per-location RF assignments…** supports clock and artifact overrides for
    mixed routing layers. An artifact's saved signal-layer role must equal the
    workbook's mapped signal layer.
-6. **DXF Anchors:** accept the interposer placement, then import the complete mechanical drawing through KiCad's
+7. **DXF Anchors:** accept the interposer placement, then import the complete mechanical drawing through KiCad's
    native **File → Import → Graphics**, selecting a user layer, then save.
    The bounded association accepts one full `gang-pin` text label per native
    circle. If labels have a drafting offset, explicitly enter and accept the
    label X/Y offset from the circle; association remains one-to-one and is
    previewed before application. Missing, extra, duplicate or ambiguous circles block Review.
    Capture a selected native circle center or enter numeric location-1
-   coordinates, then explicitly accept the anchor. Mounting holes use approved
+   coordinates, then explicitly accept the RF anchor. For DC, select the pin 1
+   circle and enter orientation and board side. The native backend measures the
+   footprint's transformed pad-1 offset and places that pad at the circle center
+   regardless of library origin. Every DC electrical pad, including NC pins,
+   must match one imported circle within the current one-nanometre internal
+   comparison tolerance. Mounting holes use approved
    footprints selected from the loaded KiCad libraries and are board-only,
    excluded from BOM and position files.
-7. **Board Outline:** explicitly enable this optional feature and capture
+8. **Board Outline:** explicitly enable this optional feature and capture
    imported outer-boundary segments and optional center-cutout segments
    separately. Review validates exact closure, intersections and ownership.
    Only managed outline objects are replaced; designer Edge.Cuts stay intact.
-8. **Review Changes:** compare the full desired population, review additions,
+9. **Review Changes:** compare the full desired population, review additions,
    removals, placement/electrical/RF changes and conflicts, and choose an empty
    output directory outside the source project tree. Accept the current change
    list before Apply. Input changes make the preview stale. Affected designer
    routing and ownership conflicts block application.
-9. **Apply / Results:** inspect the saved board, generated schematic hierarchy,
+10. **Apply / Results:** inspect the saved board, generated schematic hierarchy,
    individual-component BOM, registry, report and recovery journal in the output
    copy. Recovery requires a closed output project and matching expected file
    hashes; later edits are not silently overwritten.
 
 The source `.connector-interposer-workflow.json` sidecar stores project identity
 and UI drafts,
-including mappings, excluded-row selections, layer policy, independent gang definitions,
-per-gang symbol/footprint assignments, the interposer assignment and placement,
+including mappings, excluded-row selections, netclass types, layer policy,
+independent RF gang definitions, per-connector symbol/footprint assignments,
+DC pin-1 anchors, the interposer assignment and placement,
 artifact selections and accepted mechanical inputs. The exact accepted workbook
 is snapshotted under `.connector-interposer-inputs`; selected parts, approved
 symbols and RF artifacts remain pinned under `.connector-interposer-pinned`.
@@ -157,12 +172,15 @@ validated by the same probe.
 The controlled project-copy apply/recovery boundary is intentional. Transparent
 live-editor transactions and a generic magnetic point picker have not passed
 interaction/recovery validation. The initial schematic presentation uses stable
-label-based gang sheets and a tool-owned split interposer signal/ground
+label-based RF gang sheets, one selected-symbol instance per DC connector, and
+a tool-owned split interposer signal/ground
 organization. The selected interposer symbol supplies the pin, filter and BOM
 metadata contract and is pinned for provenance; its graphical body is not copied
 into the generated split presentation. A fully explicit presentation is a
 future direction. DXF labels split into separate
 gang-only and pin-only texts require unambiguous full identity labels before
-use. RF objects stop at the signal via; no signal route is generated beyond the
+use. DC support is limited to single-unit symbols; a future tolerance control
+may replace the current one-nanometre pad-circle comparison. RF objects stop at
+the signal via; no signal route is generated beyond the
 handoff. Saved geometry and native round trips do not establish impedance,
 fabricator stackup approval, manufacturing qualification or full board DRC.
