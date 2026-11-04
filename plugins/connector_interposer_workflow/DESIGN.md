@@ -20,6 +20,9 @@ the global status area reports the change, and **Save workflow settings**
 persists it separately from the reviewed project-copy Apply operation.
 Layer assignment applies the same persistent dropdown chevron and amber/blue
 missing/assigned cell states used by the Netlist Source assignment row.
+Its explicit Auto assign action fills blank rows only. It extracts one numeric
+run from each name, accounts for KiCad's default `InN.Cu` offset, matches custom
+names directly, preserves manual selections and leaves ambiguity visible.
 
 Connector assignments owns the deterministic relationship between each loaded
 library symbol and footprint. The workbook supplies the interposer reference

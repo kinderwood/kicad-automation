@@ -139,6 +139,35 @@ class WorkbookTests(unittest.TestCase):
         self.assertEqual(validate_layers([record],{'L2':'In1.Cu'},['F.Cu','B.Cu'],rules)[0].code,'layer_missing')
 
 
+class LayerMappingTests(unittest.TestCase):
+    def test_numeric_auto_assignment_default_and_custom_names(self):
+        default = ('F.Cu', 'In1.Cu', 'In2.Cu', 'In3.Cu', 'In4.Cu', 'B.Cu')
+        mapped, unresolved = suggest_layer_mappings(
+            ('L1', 'Layer 2', 'metal_5', 'L6', 'NoNumber', 'L2_3'), default,
+        )
+        self.assertEqual(mapped, {
+            'L1': 'F.Cu', 'Layer 2': 'In1.Cu', 'metal_5': 'In4.Cu', 'L6': 'B.Cu',
+        })
+        self.assertEqual(set(unresolved), {'NoNumber', 'L2_3'})
+
+        custom, unresolved = suggest_layer_mappings(
+            ('L1', 'Layer 2', 'metal_4'),
+            ('metal_1', 'signal_2', 'plane_3', 'metal_4'),
+        )
+        self.assertEqual(custom, {
+            'L1': 'metal_1', 'Layer 2': 'signal_2', 'metal_4': 'metal_4',
+        })
+        self.assertEqual(unresolved, {})
+
+    def test_numeric_auto_assignment_rejects_ambiguous_candidates(self):
+        mapped, unresolved = suggest_layer_mappings(
+            ('L1', 'L2'), ('F.Cu', 'metal_1', 'In1.Cu', 'B.Cu'),
+        )
+        self.assertNotIn('L1', mapped)
+        self.assertEqual(unresolved['L1'], ('F.Cu', 'metal_1'))
+        self.assertEqual(mapped['L2'], 'In1.Cu')
+
+
 class GeometryTests(unittest.TestCase):
     def test_custom_numbering_location_one_anchor_and_independence(self):
         g=GangDefinition('J1',(2,2),2,3,row_offsets=(0,1),numbering=(3,4,1,2),rotation=90,anchor=(10,20))

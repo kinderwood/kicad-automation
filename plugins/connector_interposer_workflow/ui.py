@@ -1121,14 +1121,21 @@ class WorkflowDialog(wx.Dialog):
     def build_layer_assignment(self, panel):
         self.task_box(
             panel, 'Layer assignment', 'Assign each netlist layer to the board stackup',
-            'Map layer names from the imported netlist to enabled KiCad copper layers. Changes take effect immediately and are used by validation and RF artifact checks.',
+            'Map layer names from the imported netlist to enabled KiCad copper layers. Auto assign fills only unambiguous numeric matches and preserves manual selections. Changes take effect immediately and are used by validation and RF artifact checks.',
         )
         layer_box = wx.StaticBox(panel, label='Layer mappings')
         layer_sizer = wx.StaticBoxSizer(layer_box, wx.VERTICAL)
-        layer_sizer.Add(
+        instruction = wx.BoxSizer(wx.HORIZONTAL)
+        instruction.Add(
             wx.StaticText(layer_box, label='Choose one enabled board layer for each netlist layer.'),
-            0, wx.EXPAND | wx.ALL, 8,
+            1, wx.ALIGN_CENTER_VERTICAL,
         )
+        self.layer_auto_assign = self.button(layer_box, 'Auto assign', self.auto_assign_layers)
+        self.layer_auto_assign.SetToolTip(
+            'Fill blank mappings with unambiguous layer-number matches; preserve manual selections.'
+        )
+        instruction.Add(self.layer_auto_assign, 0, wx.LEFT, 12)
+        layer_sizer.Add(instruction, 0, wx.EXPAND | wx.ALL, 8)
 
         self.layer_map = grid.Grid(layer_box)
         self.layer_map.CreateGrid(0, 2)
@@ -1221,6 +1228,40 @@ class WorkflowDialog(wx.Dialog):
         )
         self.layer_map.SetCellRenderer(row, 1, AssignmentRenderer(True))
         self.layer_map.ForceRefresh()
+
+    def auto_assign_layers(self, event):
+        from .core.layers import suggest_layer_mappings
+        names = [self.layer_map.GetCellValue(row, 0)
+                 for row in range(self.layer_map.GetNumberRows())]
+        if not names:
+            raise ValueError('Import a netlist before auto assigning layers')
+        suggestions, _unresolved = suggest_layer_mappings(names, self.controller.copper_layers)
+        assigned = preserved = 0
+        for row, name in enumerate(names):
+            if self.layer_map.GetCellValue(row, 1).strip():
+                preserved += 1
+                continue
+            layer = suggestions.get(name)
+            if not layer:
+                continue
+            self.layer_map.SetCellValue(row, 1, layer)
+            self.controller.config['layer_mapping'][name] = layer
+            self._style_layer_assignment_cell(row)
+            assigned += 1
+        if assigned:
+            self.controller.changed()
+        total_assigned = sum(bool(self.layer_map.GetCellValue(row, 1).strip())
+                             for row in range(self.layer_map.GetNumberRows()))
+        self.layer_mapping_status.SetLabel(f'{total_assigned} of {len(names)} assigned')
+        remaining = len(names) - total_assigned
+        message = f'Auto assigned {assigned} layer{"" if assigned == 1 else "s"}.'
+        if preserved:
+            message += f' Preserved {preserved} existing assignment{"" if preserved == 1 else "s"}.'
+        if remaining:
+            message += (f' {remaining} layer{"" if remaining == 1 else "s"} '
+                        f'{"needs" if remaining == 1 else "need"} manual selection.')
+        self.status.SetLabel(message)
+        self.refresh()
 
     def layer_assignment_clicked(self, event):
         if event.GetCol() == 1:

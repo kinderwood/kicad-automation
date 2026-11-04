@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.3.9 and the
+are authorized. Connector to Interposer Workflow is version 0.3.10 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -191,6 +191,13 @@ a symbol immediately enables its filtered footprint dropdown. Layer assignment
 now uses the established interactive-cell language: missing KiCad layers are
 amber, assigned layers are blue, dropdown chevrons remain visible, and one click
 opens the native choice editor. Native wx regression coverage checks both states.
+
+Version 0.3.10 adds explicit conservative auto-assignment for blank layer rows.
+It accepts names containing exactly one numeric run, maps KiCad defaults by
+physical copper-layer number (`F.Cu` = 1, `In1.Cu` = 2, `B.Cu` = final), and
+matches custom board-layer numbers directly. Existing manual selections are
+preserved. Missing numbers, multiple numeric runs and duplicate board candidates
+remain unassigned and visible for review.
 
 Additional actual PCB Editor checks use the selected 9.0.9.1 AppImage and
 10.0.8: normal startup discovers both actions and Workflow opens from the

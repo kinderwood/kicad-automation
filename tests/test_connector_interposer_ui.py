@@ -195,11 +195,15 @@ class NativeDialogTests(unittest.TestCase):
         self.assertIsInstance(dialog.layer_map.GetCellRenderer(0, 1), AssignmentRenderer)
         self.assertEqual(dialog.layer_map.GetCellBackgroundColour(0, 1).Get()[:3],
                          (255, 244, 214))
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Auto assign', dialog.pages[1]))
         self.assertLess(dialog.layer_map.GetSize().height, 100)
         self.assertEqual(
             dialog.layer_map.GetSize().height,
             dialog.layer_map.GetColLabelSize() + dialog.layer_map.GetRowSize(0) + 2,
         )
+        dialog.auto_assign_layers(None)
+        self.assertEqual(dialog.controller.config['layer_mapping']['L1'], 'F.Cu')
+        self.assertIn('Auto assigned 1 layer', dialog.status.GetLabel())
         dialog.layer_map.SetCellValue(0, 1, 'In1.Cu')
         class LayerEvent:
             @staticmethod
@@ -214,6 +218,9 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(dialog.layer_map.GetCellBackgroundColour(0, 1).Get()[:3],
                          (220, 235, 250))
         self.assertIn('board files were not modified', dialog.status.GetLabel())
+        dialog.auto_assign_layers(None)
+        self.assertEqual(dialog.controller.config['layer_mapping']['L1'], 'In1.Cu')
+        self.assertIn('Preserved 1 existing assignment', dialog.status.GetLabel())
         dialog.rules.SetCellValue(0, 0, '')
         class PermissionEvent:
             @staticmethod

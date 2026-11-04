@@ -1,6 +1,44 @@
 """Persistable class-by-layer policy; additions default allowed without resets."""
 from dataclasses import dataclass, field
+import re
 from .model import Issue
+
+
+def _single_number(name):
+    runs = re.findall(r'\d+', str(name))
+    return int(runs[0]) if len(runs) == 1 else None
+
+
+def suggest_layer_mappings(netlist_layers, copper_layers):
+    """Return unambiguous numeric matches between netlist and board layers.
+
+    KiCad's default inner-layer names are zero-offset from the physical copper
+    layer number: In1.Cu is physical layer 2. Custom names use their single
+    embedded number directly.
+    """
+    copper_layers = tuple(copper_layers)
+    by_number = {}
+    for layer in copper_layers:
+        folded = str(layer).casefold()
+        if folded == 'f.cu':
+            number = 1
+        elif folded == 'b.cu':
+            number = len(copper_layers)
+        else:
+            default_inner = re.fullmatch(r'in(\d+)\.cu', folded)
+            number = int(default_inner.group(1)) + 1 if default_inner else _single_number(layer)
+        if number is not None:
+            by_number.setdefault(number, []).append(layer)
+
+    suggestions, unresolved = {}, {}
+    for source in netlist_layers:
+        number = _single_number(source)
+        candidates = by_number.get(number, ()) if number is not None else ()
+        if len(candidates) == 1:
+            suggestions[source] = candidates[0]
+        else:
+            unresolved[source] = tuple(candidates)
+    return suggestions, unresolved
 
 @dataclass
 class LayerRules:

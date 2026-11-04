@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.3.9**, testing release. The package targets KiCad 9.0.0 through
+Version **0.3.10**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -63,7 +63,11 @@ an already-open source board does not update the output copy.
    KiCad copper layer. Each selection updates the current workflow immediately;
    there is no separate acceptance button. The KiCad-layer cells use the same
    amber-missing and blue-assigned interaction treatment as Netlist Source,
-   including persistent dropdown chevrons. These assignments drive validation
+   including persistent dropdown chevrons. **Auto assign** fills blank rows only
+   when numeric matching is unambiguous. `F.Cu`, `In1.Cu` and `B.Cu` represent
+   physical copper layers 1, 2 and the final layer; custom layer names use their
+   single embedded number directly. Names with zero or multiple number runs and
+   duplicate candidates remain blank. These assignments drive validation
    and RF artifact compatibility.
 3. **Routing permissions:** review the workflow's current netclass/layer
    validation policy. Checkbox changes update the current workflow immediately;
