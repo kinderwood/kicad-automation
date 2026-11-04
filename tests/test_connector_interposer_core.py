@@ -12,7 +12,7 @@ import zipfile
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'plugins'))
 from connector_interposer_workflow.core import *
 from connector_interposer_workflow.core.outline import Segment, validate_outline
-from connector_interposer_workflow.core.sexpr import loads, dumps
+from connector_interposer_workflow.core.sexpr import loads, dumps, children
 
 
 def rectangle(x,y,w,h):
@@ -177,6 +177,20 @@ class GeometryTests(unittest.TestCase):
 
 
 class LibraryTests(unittest.TestCase):
+    def test_demo_symbols_constrain_footprints(self):
+        path = (Path(__file__).resolve().parents[1] /
+                'examples/gppo_demo/library/Example.kicad_sym')
+        root = loads(path.read_text(encoding='utf-8'))
+        filters = {
+            symbol[1]: next(item[2] for item in children(symbol, 'property')
+                            if len(item) >= 3 and item[1] == 'ki_fp_filters')
+            for symbol in children(root, 'symbol')
+        }
+        self.assertEqual(filters, {
+            'GPPO': 'GPPO_B012_L13_01_EXPERIMENTAL',
+            'Interposer': 'Interposer_800',
+        })
+
     def test_approved_pad_universe_repeated_ground_and_npth(self):
         content='(footprint "Approved" (pad "A1" thru_hole circle (at 0 0) (size 1 1) (drill .5) (layers "*.Cu" "*.Mask")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu")) (pad "2" smd rect (at 3 0) (size 1 1) (layers "F.Cu")) (pad "" np_thru_hole circle (at 4 0) (size 1 1) (drill 1) (layers "*.Cu" "*.Mask")))'
         with tempfile.TemporaryDirectory() as tmp:
