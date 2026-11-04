@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.3.7 and the
+are authorized. Connector to Interposer Workflow is version 0.3.8 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -139,12 +139,27 @@ the current workflow immediately, so their Apply button and static saved-state
 sentence are removed. A dynamic notice remains when newly encountered
 netclass/layer combinations require review.
 
+The 0.3.8 Workflow replaces the separate Validation page with **Connector
+assignments**. The workbook supplies the interposer reference and gang list;
+each row selects a symbol from KiCad's loaded libraries and then an allowed
+footprint from an in-cell dropdown. Footprint choices satisfy both the symbol's
+`ki_fp_filters` and exact electrical pin/pad compatibility. Symbols are stored
+per gang, the interposer has its own symbol/footprint assignment, and both are
+pinned for deterministic reopening. Gangs now contains geometry and RF settings
+only. The project BOM MPN override is removed, and interposer placement moves to
+DXF Anchors. Review Changes remains the consolidated validation and comparison
+gate.
+
 Completion requires integration and observed behavior, not only unit-test or
 file-format acceptance. Stage 0 evidence and its pass/fail/blocked matrix remain
 in the implementation-plan and feasibility-report Pages. New verification
 results below record their exact runtime and scope.
 
 ## Runtime acceptance matrix
+
+The four-version matrix below is the Stage 6 baseline recorded through version
+0.3.7. The 0.3.8 UI/model change has separate current evidence immediately
+below the table.
 
 | Actual native version | Environment | Tests | Skips | Real PCM loader |
 |---|---|---:|---:|---|
@@ -153,7 +168,7 @@ results below record their exact runtime and scope.
 | 10.0.0 | Extracted official AppImage | 136 PASS | 0 | All 3 packages PASS |
 | 10.0.8 | Extracted official AppImage | 136 PASS | 0 | All 3 packages PASS |
 
-All runs used the same working tree.
+The four baseline runs used the same 0.3.7 working tree.
 The tests include existing BGA regression coverage, pure/core and native PCB
 checks, actual CLI schematic export/ERC, standalone native wx controls on
 Xvfb, automatic populated-column mapping with live examples, 10,000-row
@@ -162,6 +177,14 @@ ownership/routing conflicts and interrupted recovery. PCM repository validation
 passes for all three independently packaged tools. This is runtime execution,
 not a file-format-only compatibility claim. No intermediate release or other
 operating system is implied to have been individually exercised.
+
+Version 0.3.8 passes the 136-test native suite and packaged-loader checks on the
+available KiCad 10.0.8 runtime. Three native wx dialog tests also pass under
+Xvfb, including loaded-library filter resolution, independent J101/J102
+assignment and the opening-width regression. The complete demo passes A apply,
+offline reopen/no-op and B reconciliation on 10.0.8. The earlier four-version
+baseline supports the maintained compatibility range, but the 0.3.8 delta has
+not been rerun on the other three exact runtimes in this workspace.
 
 Additional actual PCB Editor checks use the selected 9.0.9.1 AppImage and
 10.0.8: normal startup discovers both actions and Workflow opens from the

@@ -88,7 +88,8 @@ def generate_schematic(records, gang_parts, interposer_parts, project_id, projec
     """Return all tool-owned file contents; callers stage and review before saving.
 
     gang_parts maps gang IDs to PartSelection (approved two-pin symbol required).
-    interposer_parts maps references to PartSelection (symbol generated locally).
+    interposer_parts maps references to PartSelection. Its approved symbol supplies
+    identity/BOM metadata; the large-pin graphical presentation is generated locally.
     A persistent UUID namespace belongs to the project, never to a workbook.
     """
     if not re.fullmatch(r'[A-Za-z0-9_-]+', project_name):

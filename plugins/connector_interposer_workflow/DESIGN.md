@@ -1,7 +1,7 @@
 # Workflow boundaries
 
 The native modeless wx dialog follows Netlist Source → Layer assignment →
-Routing permissions → Validation → Gangs → DXF Anchors → Board Outline →
+Routing permissions → Connector assignments → Gangs → DXF Anchors → Board Outline →
 Review Changes → Apply / Results. A
 read-only virtual grid displays the complete parsed workbook in a separate
 popup. Every page begins with a blue task-description panel whose title exactly
@@ -18,6 +18,19 @@ Layer assignment and Routing permissions update the current workflow directly
 from their native grid editors. They do not add page-level acceptance buttons;
 the global status area reports the change, and **Save workflow settings**
 persists it separately from the reviewed project-copy Apply operation.
+
+Connector assignments owns the deterministic relationship between each loaded
+library symbol and footprint. The workbook supplies the interposer reference
+and gang identities. Symbol cells launch the native loaded-library browser;
+footprint cells offer only parts allowed by the symbol filters and exact pin/pad
+compatibility. Gang geometry, placement and BOM overrides do not belong on this
+page. Interposer placement is accepted on DXF Anchors, and library MPN metadata
+is never overridden by the workflow.
+
+The selected interposer symbol supplies pin identity, footprint filters and BOM
+metadata. Its graphical body is not reused by the initial generated schematic;
+the generator retains its stable split interposer presentation for large pin
+counts while pinning the selected library symbol as provenance.
 
 The editable [UI Design Guide](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=135-37)
 records the current workflow, product principles, approved and retired patterns,

@@ -190,6 +190,16 @@ class LibraryTests(unittest.TestCase):
             'GPPO': 'GPPO_B012_L13_01_EXPERIMENTAL',
             'Interposer': 'Interposer_800',
         })
+        connector = read_symbol(path, 'Example:GPPO')
+        interposer = read_symbol(path, 'Example:Interposer', require_two_pin=False)
+        self.assertEqual(connector.footprint_filters, ('GPPO_B012_L13_01_EXPERIMENTAL',))
+        self.assertEqual(len(interposer.pin_numbers), 800)
+        self.assertTrue(footprint_matches_filters(
+            'Example:GPPO_B012_L13_01_EXPERIMENTAL', connector.footprint_filters,
+        ))
+        self.assertTrue(footprint_matches_filters('Example:Interposer_800', ('Example:Interposer_*',)))
+        self.assertFalse(footprint_matches_filters('Other:Interposer_800', ('Example:Interposer_*',)))
+        self.assertFalse(footprint_matches_filters('Example:Anything', ()))
 
     def test_approved_pad_universe_repeated_ground_and_npth(self):
         content='(footprint "Approved" (pad "A1" thru_hole circle (at 0 0) (size 1 1) (drill .5) (layers "*.Cu" "*.Mask")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu")) (pad "2" smd rect (at 3 0) (size 1 1) (layers "F.Cu")) (pad "" np_thru_hole circle (at 4 0) (size 1 1) (drill 1) (layers "*.Cu" "*.Mask")))'
@@ -207,7 +217,7 @@ class LibraryTests(unittest.TestCase):
     def test_project_schema_identity(self):
         config=ProjectConfig();self.assertEqual(ProjectConfig.from_dict(config.to_dict()).project_id,config.project_id)
         self.assertEqual(stable_uuid(config.project_id,'symbol/J1-1'),stable_uuid(config.project_id,'symbol/J1-1'))
-        with self.assertRaises(ValueError):ProjectConfig.from_dict({'project_id':config.project_id,'schema_version':2})
+        with self.assertRaises(ValueError):ProjectConfig.from_dict({'project_id':config.project_id,'schema_version':3})
 
 
 if __name__=='__main__':unittest.main()

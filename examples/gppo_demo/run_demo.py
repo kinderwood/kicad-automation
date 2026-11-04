@@ -36,13 +36,18 @@ def prepare(destination):
     }
     symbol_path = fixture / 'library/Example.kicad_sym'
     symbol = read_symbol(symbol_path, 'Example:GPPO')
-    controller.config['connector_symbol'] = {
+    connector_symbol = {
         'path': str(symbol_path), 'library_id': symbol.library_id, 'sha256': symbol.sha256,
     }
     footprint = fixture / 'library/Example.pretty/GPPO_B012_L13_01_EXPERIMENTAL.kicad_mod'
     interposer_path = footprint.with_name('Interposer_800.kicad_mod')
     interposer = read_footprint(interposer_path, 'Example:Interposer_800')
-    controller.config['interposers'] = {'E1': dict(interposer.pin(), pose=[94.95, 94.95, 0])}
+    interposer_symbol = read_symbol(symbol_path, 'Example:Interposer', require_two_pin=False)
+    controller.config['interposers'] = {'E1': dict(
+        interposer.pin(), symbol={'path': str(symbol_path), 'library_id': interposer_symbol.library_id,
+                                  'sha256': interposer_symbol.sha256},
+        pose=[94.95, 94.95, 0], pose_accepted=True,
+    )}
     positions = json.loads((fixture / 'inputs/positions-B.json').read_text())
     for name in ('J101', 'J102'):
         anchor = next(row for row in positions if row['reference'] == name + '-1')
@@ -50,7 +55,7 @@ def prepare(destination):
             'row_lengths': [1] * 6, 'pitch_x': 8.255, 'pitch_y': 8.255,
             'anchor': [anchor['x_mm'], anchor['y_mm']], 'anchor_accepted': True,
             'part_id': str(footprint), 'library_id': 'Example:' + footprint.stem,
-            'mpn': 'B012-L13-01',
+            'symbol': connector_symbol,
             'rotation': 0, 'rf_clock': 0 if name == 'J101' else 180,
             'rf_artifacts': {str(i): str(fixture / 'library/rf' /
                 ('RF-L2.r1.gppo-rf.json' if i % 2 else 'RF-L3.r1.gppo-rf.json')) for i in range(1, 7)},

@@ -1,6 +1,8 @@
 """Read-only approved footprint/symbol inputs. Never invoke authoring tools."""
 import hashlib
+import fnmatch
 import math
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from .sexpr import loads, child, children
@@ -19,6 +21,8 @@ class ApprovedFootprint:
     path: str
     sha256: str
     pads: tuple
+    value: str = ''
+    mpn: str = ''
 
     @property
     def pad_numbers(self):
@@ -61,7 +65,13 @@ def read_footprint(path, library_id, expected_sha256=None, allow_mechanical=Fals
         if item[2] != 'np_thru_hole' and not item[1]:
             raise ValueError("Electrical pads require pad numbers")
         pads.append(Pad(item[1], item[2], position, dimensions, tuple(layers[1:])))
-    result = ApprovedFootprint(library_id, str(path.resolve()), checksum, tuple(pads))
+    properties = {str(item[1]).casefold(): str(item[2]) for item in children(node, 'property')
+                  if len(item) >= 3}
+    mpn = next((properties[key] for key in
+                ('mpn', 'manufacturer part number', 'manufacturerpartnumber')
+                if properties.get(key)), '')
+    result = ApprovedFootprint(library_id, str(path.resolve()), checksum, tuple(pads),
+                               properties.get('value', ''), mpn)
     if not result.pad_numbers and not allow_mechanical:
         raise ValueError("Selected footprint has no electrical pads")
     return result
@@ -73,10 +83,31 @@ class ApprovedSymbol:
     expression: list
     sha256: str
     pin_numbers: tuple
+    footprint_filters: tuple
+    value: str = ''
+    mpn: str = ''
 
 
-def read_symbol(path, library_id, expected_sha256=None):
-    """Require a standalone librarian symbol; unresolved inheritance blocks use."""
+def _descendants(node, kind):
+    for item in node[1:]:
+        if not isinstance(item, list) or not item:
+            continue
+        if item[0] == kind:
+            yield item
+        yield from _descendants(item, kind)
+
+
+def footprint_matches_filters(library_id, filters):
+    """Match the library-qualified identity against KiCad symbol filters."""
+    name = library_id.split(':', 1)[-1]
+    return bool(filters) and any(
+        fnmatch.fnmatchcase(library_id if ':' in pattern else name, pattern)
+        for pattern in filters
+    )
+
+
+def read_symbol(path, library_id, expected_sha256=None, require_two_pin=True):
+    """Read a standalone librarian symbol and its footprint-filter contract."""
     data = Path(path).read_bytes()
     checksum = hashlib.sha256(data).hexdigest()
     if expected_sha256 and checksum != expected_sha256:
@@ -91,13 +122,26 @@ def read_symbol(path, library_id, expected_sha256=None):
     if child(symbol, 'extends'):
         raise ValueError("Select a resolved standalone approved connector symbol")
     pins = []
-    for sub in children(symbol, 'symbol'):
-        for pin in children(sub, 'pin'):
-            number = child(pin, 'number')
-            at = child(pin, 'at')
-            if not number or not at or len(at) < 4:
-                raise ValueError("Malformed symbol pin")
-            pins.append((number[1], float(at[1]), float(at[2]), float(at[3])))
-    if len(pins) != 2 or len({p[0] for p in pins}) != 2:
+    for pin in _descendants(symbol, 'pin'):
+        number = child(pin, 'number')
+        at = child(pin, 'at')
+        if not number or not at or len(at) < 4:
+            raise ValueError("Malformed symbol pin")
+        pins.append((number[1], float(at[1]), float(at[2]), float(at[3])))
+    unique = {p[0] for p in pins}
+    if not unique:
+        raise ValueError("Approved symbol must expose at least one pin")
+    if require_two_pin and (len(pins) != 2 or len(unique) != 2):
         raise ValueError("Approved connector symbol must expose exactly two distinct pins")
-    return ApprovedSymbol(library_id, symbol, checksum, tuple(pins))
+    properties = {str(item[1]): str(item[2]) for item in children(symbol, 'property')
+                  if len(item) >= 3}
+    try:
+        filters = tuple(shlex.split(properties.get('ki_fp_filters', '')))
+    except ValueError as error:
+        raise ValueError("Malformed symbol footprint filters") from error
+    folded = {key.casefold(): value for key, value in properties.items()}
+    mpn = next((folded[key] for key in
+                ('mpn', 'manufacturer part number', 'manufacturerpartnumber')
+                if folded.get(key)), '')
+    return ApprovedSymbol(library_id, symbol, checksum, tuple(pins), filters,
+                          properties.get('Value', ''), mpn)

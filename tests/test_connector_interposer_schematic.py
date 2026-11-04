@@ -34,15 +34,27 @@ def fixture(directory, count=70):
     interposer=directory/'Interposer.kicad_mod'
     interposer.write_text('(footprint "Interposer" (layer "F.Cu") '+''.join(f'(pad "A{i+1}" smd circle (at {i%10} {i//10}) (size .5 .5) (layers "F.Cu" "F.Mask"))' for i in range(count))+')')
     symbol=directory/'Approved.kicad_sym'
-    symbol.write_text('''(kicad_symbol_lib (version 20241209) (generator "test_librarian")
-    (symbol "GPPO" (pin_names (offset 0) (hide yes)) (in_bom yes) (on_board yes)
+    connector_symbol='''(symbol "GPPO" (pin_names (offset 0) (hide yes)) (in_bom yes) (on_board yes)
       (property "Reference" "J" (at 0 5 0) (effects (font (size 1 1))))
       (property "Value" "GPPO" (at 0 7 0) (effects (font (size 1 1))))
+      (property "ki_fp_filters" "GPPO" (at 0 0 0) (effects (font (size 1 1)) hide))
       (symbol "GPPO_1_1"
        (pin passive line (at 0 0 180) (length 2.54) (name "Signal" (effects (font (size .8 .8)))) (number "1" (effects (font (size .8 .8)))))
-       (pin passive line (at 0 -5.08 180) (length 2.54) (name "Shield" (effects (font (size .8 .8)))) (number "2" (effects (font (size .8 .8))))))))''')
+       (pin passive line (at 0 -5.08 180) (length 2.54) (name "Shield" (effects (font (size .8 .8)))) (number "2" (effects (font (size .8 .8)))))))'''
+    interposer_symbol='''(symbol "Interposer" (pin_names (offset 0) (hide yes)) (in_bom yes) (on_board yes)
+      (property "Reference" "E" (at 0 5 0) (effects (font (size 1 1))))
+      (property "Value" "Interposer" (at 0 7 0) (effects (font (size 1 1))))
+      (property "ki_fp_filters" "Interposer" (at 0 0 0) (effects (font (size 1 1)) hide))
+      (symbol "Interposer_1_1" '''+''.join(
+          f'(pin passive line (at 0 {-i*2.54:g} 180) (length 2.54) '
+          f'(name "A{i+1}" (effects (font (size .8 .8)))) '
+          f'(number "A{i+1}" (effects (font (size .8 .8)))))' for i in range(count)
+      )+'))'
+    symbol.write_text('(kicad_symbol_lib (version 20241209) (generator "test_librarian") '
+                      +connector_symbol+interposer_symbol+')')
     gp=PartSelection(read_footprint(gppo,'Approved:GPPO'),read_symbol(symbol,'Approved:GPPO'),mpn='APPROVED-GPPO')
-    ip=PartSelection(read_footprint(interposer,'Approved:Interposer'),mpn='APPROVED-IP')
+    ip=PartSelection(read_footprint(interposer,'Approved:Interposer'),
+                     read_symbol(symbol,'Approved:Interposer',require_two_pin=False),mpn='APPROVED-IP')
     records=tuple(SignalRecord(f'SIG{i+1}','RF','E1',f'A{i+1}','J101',str(i+1),'L1',i+2) for i in range(min(30,count)))
     return records,{'J101':gp},{'E1':ip}
 

@@ -4,5 +4,6 @@ from .workbook import Workbook, Worksheet, ParsedRow, ParsedTable, read_workbook
 from .layers import LayerRules, validate_layers
 from .geometry import GangDefinition, validate_mechanical_population
 from .identities import stable_uuid, diff_snapshots, digest, canonical_json
-from .libraries import ApprovedFootprint, ApprovedSymbol, read_footprint, read_symbol
+from .libraries import (ApprovedFootprint, ApprovedSymbol, footprint_matches_filters,
+                        read_footprint, read_symbol)
 from .config import ProjectConfig

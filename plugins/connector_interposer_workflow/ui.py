@@ -223,13 +223,15 @@ class PartPreview(wx.Panel):
 
 class LibraryPartPickerDialog(wx.Dialog):
     """Native browser over KiCad's loaded project and global libraries."""
-    def __init__(self, parent, catalog, title, current_id='', allow_mechanical=False):
+    def __init__(self, parent, catalog, title, current_id='', allow_mechanical=False,
+                 require_two_pin=True):
         super().__init__(parent, title=title, size=(1000, 650),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.catalog, self.current_id, self.allow_mechanical = catalog, current_id, allow_mechanical
+        self.require_two_pin = require_two_pin
         self.library_entries = catalog.libraries()
         self.loaded_parts, self.filtered_parts = (), ()
-        self.selection = None
+        self.selection = self.approved = None
         outer = wx.BoxSizer(wx.VERTICAL)
         outer.Add(wx.StaticText(self, label='Choose a read-only part from the libraries currently loaded by KiCad.'), 0, wx.ALL, 10)
         self.search = wx.SearchCtrl(self)
@@ -315,16 +317,19 @@ class LibraryPartPickerDialog(wx.Dialog):
                 digest = approved.sha256
             else:
                 from .core.libraries import read_symbol
-                approved = read_symbol(part.path, part.library_id)
+                approved = read_symbol(part.path, part.library_id,
+                                       require_two_pin=self.require_two_pin)
                 self.preview.show_symbol(approved)
                 description = f'{len(approved.pin_numbers)} pins'
                 digest = approved.sha256
             self.selection = {'path': str(part.path), 'library_id': part.library_id, 'sha256': digest}
+            self.approved = approved
             self.details.SetLabel(f'{part.library_id}\n{part.scope} library\n{description}\nSHA-256 {digest[:16]}…')
             self.status.SetLabel('Compatible read-only library part selected.')
             self.ok.Enable(True)
         except Exception as error:
             self.selection = None
+            self.approved = None
             self.preview.clear()
             self.details.SetLabel(part.library_id)
             self.status.SetLabel(str(error))
@@ -382,6 +387,87 @@ class LibrarySelectionCtrl(wx.Panel):
             self.set_selection({'path': str(value), 'library_id': library_id(value) if value else ''})
 
 
+class SymbolAssignmentCtrl(wx.Panel):
+    """Compact table cell that opens the native loaded-library symbol picker."""
+    def __init__(self, parent, owner, title, require_two_pin, on_change):
+        super().__init__(parent, style=wx.BORDER_SIMPLE)
+        self.owner, self.title = owner, title
+        self.require_two_pin, self.on_change = require_two_pin, on_change
+        self.selection = {}
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        self.display = wx.StaticText(self, label='Choose a symbol', style=wx.ST_ELLIPSIZE_END)
+        row.Add(self.display, 1, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 7)
+        self.select = wx.Button(self, label='Select…', size=(76, -1))
+        self.select.Bind(wx.EVT_BUTTON, owner.guard(self.choose))
+        row.Add(self.select, 0, wx.ALL, 4)
+        self.SetSizer(row)
+        self.set_selection({})
+
+    def choose(self, event):
+        if self.owner.pcbnew is None or self.owner.controller.board_path is None:
+            raise ValueError('Open and save the PCB before choosing library parts')
+        catalog = KiCadLibraryCatalog(
+            self.owner.pcbnew, self.owner.controller.board_path.parent, 'symbol',
+        )
+        with LibraryPartPickerDialog(
+            self.owner, catalog, self.title, self.selection.get('library_id', ''),
+            require_two_pin=self.require_two_pin,
+        ) as dialog:
+            if dialog.ShowModal() == wx.ID_OK and dialog.selection:
+                self.set_selection(dialog.selection)
+                self.on_change(dict(dialog.selection), dialog.approved)
+
+    def set_selection(self, selection):
+        self.selection = dict(selection or {})
+        self.display.SetLabel(self.selection.get('library_id', 'Choose a symbol'))
+        assigned = bool(self.selection.get('library_id'))
+        self.SetBackgroundColour(wx.Colour(220, 235, 250) if assigned else wx.Colour(255, 244, 214))
+        self.Refresh()
+
+
+class FootprintAssignmentCtrl(wx.Panel):
+    """Filtered footprint dropdown with table-cell interaction styling."""
+    def __init__(self, parent, on_change):
+        super().__init__(parent, style=wx.BORDER_SIMPLE)
+        self.on_change, self.options = on_change, []
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        self.choice = wx.Choice(self)
+        self.choice.Bind(wx.EVT_CHOICE, self._changed)
+        row.Add(self.choice, 1, wx.EXPAND | wx.ALL, 4)
+        self.SetSizer(row)
+        self.set_options((), {})
+
+    def set_options(self, options, selected):
+        self.options = [dict(option) for option in options]
+        selected = dict(selected or {})
+        if (selected.get('library_id') and selected.get('path') and
+                not any(option.get('library_id') == selected['library_id'] for option in self.options)):
+            self.options.append(selected)
+            self.options.sort(key=lambda option: option['library_id'])
+        labels = ['Choose an allowed footprint'] + [option['library_id'] for option in self.options]
+        self.choice.Set(labels)
+        selected_id = selected.get('library_id', '')
+        index = next((i + 1 for i, option in enumerate(self.options)
+                      if option['library_id'] == selected_id), 0)
+        self.choice.SetSelection(index)
+        self._style(index > 0)
+
+    def selection(self):
+        index = self.choice.GetSelection()
+        return dict(self.options[index - 1]) if index > 0 else {}
+
+    def _changed(self, event):
+        self._style(self.choice.GetSelection() > 0)
+        self.on_change(self.selection())
+        event.Skip()
+
+    def _style(self, assigned):
+        colour = wx.Colour(220, 235, 250) if assigned else wx.Colour(255, 244, 214)
+        self.SetBackgroundColour(colour)
+        self.choice.SetBackgroundColour(colour)
+        self.Refresh()
+
+
 class WorkflowDialog(wx.Dialog):
     def __init__(self, parent=None, controller=None, pcbnew_module=None):
         super().__init__(parent, title='Connector to Interposer Workflow', size=(1320, 840),
@@ -398,6 +484,7 @@ class WorkflowDialog(wx.Dialog):
         self._loaded_workbook_path = ''
         self._spreadsheet_columns = {}
         self._updating_layers = False
+        self._assignment_signature = None
         outer = wx.BoxSizer(wx.VERTICAL)
 
         heading = wx.StaticText(self, label='Connector to Interposer Workflow')
@@ -418,7 +505,7 @@ class WorkflowDialog(wx.Dialog):
         navigation_sizer.Add(steps, 0, wx.BOTTOM, 6)
         self.step_list = wx.ListBox(navigation, choices=list(PAGES), style=wx.LB_SINGLE)
         dc = wx.ClientDC(self.step_list)
-        step_width = max(dc.GetTextExtent(title)[0] for title in PAGES) + 34
+        step_width = max(dc.GetTextExtent(title)[0] for title in PAGES) + 28
         step_height = len(PAGES) * (dc.GetCharHeight() + 5) + 8
         self.step_list.SetMinSize((step_width, step_height))
         self.step_list.SetMaxSize((step_width, step_height))
@@ -439,7 +526,7 @@ class WorkflowDialog(wx.Dialog):
         self.build_spreadsheet(self.pages[0])
         self.build_layer_assignment(self.pages[1])
         self.build_routing_permissions(self.pages[2])
-        self.build_validation(self.pages[3])
+        self.build_connector_assignments(self.pages[3])
         self.build_gangs(self.pages[4])
         self.build_anchors(self.pages[5])
         self.build_outline(self.pages[6])
@@ -1165,59 +1252,265 @@ class WorkflowDialog(wx.Dialog):
         self.refresh()
         event.Skip()
 
-    def build_validation(self, panel):
+    def build_connector_assignments(self, panel):
         self.task_box(
-            panel, 'Validation', 'Validate nets and approved library parts',
-            'Validation identifies the source worksheet row. Missing parts require librarian resolution; the workflow cannot author them.',
+            panel, 'Connector assignments', 'Map library symbols to their allowed footprints',
+            'Assign the workbook interposer and each connector gang to read-only KiCad library parts. '
+            'Use Select… inside a symbol cell to open the library picker; the footprint cell then offers '
+            'only matching choices. No placement or BOM overrides are entered here.',
         )
-        self.validation = wx.ListCtrl(panel, style=wx.LC_REPORT)
-        for col, (name, width) in enumerate((('Severity', 80), ('Source row', 85), ('Code', 150), ('Details', 600))): self.validation.InsertColumn(col, name, width=width)
-        panel.GetSizer().Add(self.validation, 1, wx.EXPAND | wx.ALL, 8)
-        self.interposer_path = self.library_field(panel, 'Approved interposer footprint', 'footprint')
-        self.interposer_ref = self.field(panel, 'Interposer reference', 'U1')
-        self.interposer_x = self.field(panel, 'Interposer X (mm)', '0')
-        self.interposer_y = self.field(panel, 'Interposer Y (mm)', '0')
-        self.interposer_rotation = self.field(panel, 'Interposer orientation (degrees)', '0')
-        self.connector_symbol = self.library_field(panel, 'Approved two-pin connector symbol', 'symbol')
-        row = wx.BoxSizer(wx.HORIZONTAL)
-        row.Add(self.button(panel, 'Accept library selections', self.accept_libraries), 0, wx.RIGHT, 8)
-        row.Add(self.button(panel, 'Run validation', self.validate))
-        panel.GetSizer().Add(row, 0, wx.ALL, 8)
+        interposer_box = wx.StaticBox(panel, label='Interposer assignment')
+        interposer = wx.StaticBoxSizer(interposer_box, wx.VERTICAL)
+        self.interposer_assignment_grid = wx.FlexGridSizer(cols=3, hgap=0, vgap=0)
+        self.interposer_assignment_grid.AddGrowableCol(1, 1)
+        self.interposer_assignment_grid.AddGrowableCol(2, 1)
+        for label in ('Ref des', 'Symbol', 'Footprint'):
+            heading = wx.StaticText(interposer_box, label=label, style=wx.BORDER_SIMPLE)
+            font = heading.GetFont(); font.SetWeight(wx.FONTWEIGHT_BOLD); heading.SetFont(font)
+            heading.SetBackgroundColour(wx.Colour(246, 246, 246))
+            heading.SetMinSize((120 if label == 'Ref des' else 360, 34))
+            self.interposer_assignment_grid.Add(heading, 0 if label == 'Ref des' else 1,
+                                                wx.EXPAND | wx.ALL, 0)
+        self.interposer_ref_display = wx.StaticText(interposer_box, label='—', style=wx.BORDER_SIMPLE)
+        self.interposer_ref_display.SetMinSize((120, 38))
+        self.interposer_assignment_grid.Add(self.interposer_ref_display, 0, wx.EXPAND)
+        self.interposer_symbol_assignment = SymbolAssignmentCtrl(
+            interposer_box, self, 'Choose interposer symbol', False,
+            lambda selection, symbol: self.assign_interposer_symbol(selection, symbol),
+        )
+        self.interposer_assignment_grid.Add(self.interposer_symbol_assignment, 1, wx.EXPAND)
+        self.interposer_footprint_assignment = FootprintAssignmentCtrl(
+            interposer_box, self.assign_interposer_footprint,
+        )
+        self.interposer_assignment_grid.Add(self.interposer_footprint_assignment, 1, wx.EXPAND)
+        interposer.Add(self.interposer_assignment_grid, 0, wx.EXPAND | wx.ALL, 8)
+        self.interposer_assignment_status = self.status_label(interposer_box, '0 of 0 interposers assigned')
+        interposer.Add(self.interposer_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        panel.GetSizer().Add(interposer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-    def accept_libraries(self, event):
-        path, ref = self.interposer_path.GetValue().strip(), self.interposer_ref.GetValue().strip()
-        if not path or not ref: raise ValueError('Select an approved interposer footprint and reference')
-        from .core.libraries import read_footprint
-        interposer_spec = self.interposer_path.GetSelectionSpec()
-        approved = read_footprint(path, interposer_spec['library_id'], interposer_spec.get('sha256'))
-        self.controller.config['interposers'][ref] = {'path': str(Path(path).resolve()), 'sha256': approved.sha256, 'library_id': approved.library_id, 'approved': True, 'pose': [float(self.interposer_x.GetValue()), float(self.interposer_y.GetValue()), float(self.interposer_rotation.GetValue())]}
+        gangs_box = wx.StaticBox(panel, label='Connector gang assignments')
+        gangs = wx.StaticBoxSizer(gangs_box, wx.VERTICAL)
+        self.assignment_filter = wx.SearchCtrl(gangs_box, style=wx.TE_PROCESS_ENTER)
+        self.assignment_filter.SetDescriptiveText('Filter gangs')
+        self.assignment_filter.SetMinSize((330, -1))
+        self.assignment_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_connector_assignments(True))
+        gangs.Add(self.assignment_filter, 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        self.gang_assignment_rows = wx.Panel(gangs_box)
+        assignment_grid = wx.FlexGridSizer(cols=4, hgap=0, vgap=0)
+        assignment_grid.AddGrowableCol(2, 1)
+        assignment_grid.AddGrowableCol(3, 1)
+        self.gang_assignment_rows.SetSizer(assignment_grid)
+        gangs.Add(self.gang_assignment_rows, 0, wx.EXPAND | wx.ALL, 8)
+        self.gang_assignment_status = self.status_label(gangs_box, '0 of 0 gangs assigned')
+        gangs.Add(self.gang_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        panel.GetSizer().Add(gangs, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.gang_assignment_controls = {}
+
+    def _symbol_from_spec(self, selection, require_two_pin):
         from .core.libraries import read_symbol
-        symbol_spec = self.connector_symbol.GetSelectionSpec()
-        if not symbol_spec.get('path') or not symbol_spec.get('library_id'):
-            raise ValueError('Select an approved two-pin connector symbol')
-        symbol = read_symbol(symbol_spec['path'], symbol_spec['library_id'], symbol_spec.get('sha256'))
-        self.controller.config['connector_symbol'] = {'path': symbol_spec['path'], 'library_id': symbol_spec['library_id'], 'sha256': symbol.sha256}
-        self.controller.changed()
+        path = self.controller.resolve_path(selection['path'], selection.get('sha256'),
+                                            'symbols', '.kicad_sym')
+        return read_symbol(path, selection['library_id'], selection.get('sha256'),
+                           require_two_pin=require_two_pin)
 
-    def validate(self, event):
-        issues = self.controller.validate()
-        self.validation.DeleteAllItems()
-        for issue in issues:
-            index = self.validation.InsertItem(self.validation.GetItemCount(), issue.severity)
-            for col, value in enumerate((issue.source_row or '', issue.code, issue.message), 1): self.validation.SetItem(index, col, str(value))
-        self.status.SetLabel(f'{sum(i.severity == "error" for i in issues)} blocking validation errors.' if issues else 'Validation passed.')
+    def _allowed_footprint_specs(self, symbol):
+        from .core.libraries import footprint_matches_filters, read_footprint
+        if not symbol or not symbol.footprint_filters or self.pcbnew is None or not self.controller.board_path:
+            return ()
+        catalog = KiCadLibraryCatalog(
+            self.pcbnew, self.controller.board_path.parent, 'footprint',
+        )
+        matches = {}
+        for entry in catalog.libraries():
+            for part in catalog.parts(entry.nickname):
+                if footprint_matches_filters(part.library_id, symbol.footprint_filters):
+                    approved = read_footprint(part.path, part.library_id)
+                    if {pin[0] for pin in symbol.pin_numbers} != set(approved.pad_numbers):
+                        continue
+                    matches[part.library_id] = {
+                        'path': approved.path, 'library_id': approved.library_id,
+                        'sha256': approved.sha256,
+                    }
+        return tuple(matches[name] for name in sorted(matches))
+
+    def _interposer_reference(self):
+        references = sorted({record.interposer for record in self.controller.table.records}) \
+            if self.controller.table else []
+        return references[0] if len(references) == 1 else ''
+
+    def assign_interposer_symbol(self, selection, symbol):
+        reference = self._interposer_reference()
+        if not reference:
+            raise ValueError('The imported netlist must contain exactly one interposer reference')
+        prior = self.controller.config['interposers'].get(reference, {})
+        self.controller.config['interposers'] = {
+            reference: {
+                'symbol': dict(selection), 'pose': prior.get('pose', [0, 0, 0]),
+                'pose_accepted': prior.get('pose_accepted', False),
+                'value': symbol.value, 'symbol_mpn': symbol.mpn,
+            },
+        }
+        options = self._allowed_footprint_specs(symbol)
+        self.interposer_footprint_assignment.set_options(
+            options, {},
+        )
+        if not symbol.footprint_filters:
+            self.status.SetLabel(f'{symbol.library_id} has no footprint filters; ask the librarian to add them.')
+        elif not options:
+            self.status.SetLabel(f'No loaded footprint matches {symbol.library_id} and its electrical pins.')
+        self.controller.changed()
+        self._refresh_assignment_status()
+
+    def assign_interposer_footprint(self, selection):
+        reference = self._interposer_reference()
+        if not reference or not selection:
+            return
+        from .core.libraries import read_footprint
+        approved = read_footprint(selection['path'], selection['library_id'], selection.get('sha256'))
+        current = self.controller.config['interposers'].setdefault(reference, {})
+        current.update(dict(approved.pin(), approved=True))
+        current['footprint_mpn'] = approved.mpn
+        current.setdefault('pose', [0, 0, 0])
+        self.controller.changed()
+        self._refresh_assignment_status()
+
+    def assign_gang_symbol(self, gang, selection, symbol):
+        self.controller.set_gang(gang, {
+            'symbol': dict(selection), 'part_id': '', 'library_id': '',
+            'part_sha256': '', 'footprint_mpn': '',
+            'value': symbol.value, 'symbol_mpn': symbol.mpn,
+        })
+        controls = self.gang_assignment_controls.get(gang)
+        options = self._allowed_footprint_specs(symbol)
+        if controls:
+            controls['footprint'].set_options(options, {})
+        if not symbol.footprint_filters:
+            self.status.SetLabel(f'{symbol.library_id} has no footprint filters; ask the librarian to add them.')
+        elif not options:
+            self.status.SetLabel(f'No loaded footprint matches {symbol.library_id} and its electrical pins.')
+        self._refresh_assignment_status()
+
+    def assign_gang_footprint(self, gang, selection):
+        if not selection:
+            return
+        self.controller.set_gang(gang, {
+            'part_id': selection['path'], 'library_id': selection['library_id'],
+            'part_sha256': selection.get('sha256', ''),
+        })
+        self._refresh_assignment_status()
+
+    def _configured_symbol(self, selection, require_two_pin):
+        if not selection.get('path') or not selection.get('library_id'):
+            return None
+        try:
+            return self._symbol_from_spec(selection, require_two_pin)
+        except (OSError, ValueError):
+            return None
+
+    def refresh_connector_assignments(self, force=False):
+        reference = self._interposer_reference()
+        names = self.controller.gang_names()
+        query = self.assignment_filter.GetValue().casefold() if hasattr(self, 'assignment_filter') else ''
+        signature = (reference, names, query)
+        if not force and signature == self._assignment_signature:
+            self._refresh_assignment_status()
+            return
+        self._assignment_signature = signature
+        self.interposer_ref_display.SetLabel(reference or '—')
+        interposer = self.controller.config['interposers'].get(reference, {}) if reference else {}
+        if hasattr(self, 'anchor_interposer_ref'):
+            self.anchor_interposer_ref.SetLabel('Ref des: ' + (reference or '—'))
+            pose = interposer.get('pose', [0, 0, 0])
+            self.interposer_x.ChangeValue(str(pose[0]))
+            self.interposer_y.ChangeValue(str(pose[1]))
+            self.interposer_rotation.ChangeValue(str(pose[2]))
+            self.interposer_pose_status.SetLabel(
+                f'{reference} placement accepted' if reference and interposer.get('pose_accepted')
+                else 'Interposer placement required'
+            )
+        symbol_spec = interposer.get('symbol', {})
+        self.interposer_symbol_assignment.set_selection(symbol_spec)
+        symbol = self._configured_symbol(symbol_spec, False)
+        self.interposer_footprint_assignment.set_options(
+            self._allowed_footprint_specs(symbol), interposer,
+        )
+        self.interposer_symbol_assignment.Enable(bool(reference))
+        self.interposer_footprint_assignment.Enable(bool(reference and symbol))
+
+        sizer = self.gang_assignment_rows.GetSizer()
+        sizer.Clear(True)
+        self.gang_assignment_controls = {}
+        for label, width in (('Gang', 120), ('Positions', 100), ('Symbol', 340), ('Footprint', 380)):
+            heading = wx.StaticText(self.gang_assignment_rows, label=label, style=wx.BORDER_SIMPLE)
+            font = heading.GetFont(); font.SetWeight(wx.FONTWEIGHT_BOLD); heading.SetFont(font)
+            heading.SetBackgroundColour(wx.Colour(246, 246, 246)); heading.SetMinSize((width, 34))
+            sizer.Add(heading, 1 if label in ('Symbol', 'Footprint') else 0, wx.EXPAND)
+        for name in names:
+            if query and query not in name.casefold():
+                continue
+            settings = self.controller.gang(name)
+            count = sum(record.connector == name for record in self.controller.table.records)
+            gang_label = wx.StaticText(self.gang_assignment_rows, label=name, style=wx.BORDER_SIMPLE)
+            gang_label.SetMinSize((120, 38))
+            positions = wx.StaticText(self.gang_assignment_rows, label=str(count), style=wx.BORDER_SIMPLE)
+            positions.SetMinSize((100, 38))
+            symbol_control = SymbolAssignmentCtrl(
+                self.gang_assignment_rows, self, 'Choose connector symbol', True,
+                lambda selection, symbol, gang=name: self.assign_gang_symbol(gang, selection, symbol),
+            )
+            footprint_control = FootprintAssignmentCtrl(
+                self.gang_assignment_rows,
+                lambda selection, gang=name: self.assign_gang_footprint(gang, selection),
+            )
+            selected_symbol = settings.get('symbol', {})
+            symbol_control.set_selection(selected_symbol)
+            symbol = self._configured_symbol(selected_symbol, True)
+            footprint_control.set_options(self._allowed_footprint_specs(symbol), {
+                'path': settings.get('part_id', ''), 'library_id': settings.get('library_id', ''),
+                'sha256': settings.get('part_sha256', ''),
+            })
+            footprint_control.Enable(bool(symbol))
+            for control in (gang_label, positions, symbol_control, footprint_control):
+                sizer.Add(control, 1 if control in (symbol_control, footprint_control) else 0, wx.EXPAND)
+            self.gang_assignment_controls[name] = {
+                'symbol': symbol_control, 'footprint': footprint_control,
+            }
+        self.gang_assignment_rows.Layout()
+        self.pages[3].FitInside()
+        self._refresh_assignment_status()
+
+    def _refresh_assignment_status(self):
+        reference = self._interposer_reference()
+        interposer = self.controller.config['interposers'].get(reference, {}) if reference else {}
+        assigned_interposer = int(bool(interposer.get('symbol', {}).get('library_id') and
+                                       interposer.get('library_id')))
+        interposer_total = int(bool(reference))
+        self.interposer_assignment_status.SetLabel(
+            f'{assigned_interposer} of {interposer_total} interposers assigned',
+        )
+        names = self.controller.gang_names()
+        assigned_gangs = sum(bool(self.controller.gang(name).get('symbol', {}).get('library_id') and
+                                  self.controller.gang(name).get('library_id')) for name in names)
+        self.gang_assignment_status.SetLabel(f'{assigned_gangs} of {len(names)} gangs assigned')
+        for control, complete in (
+            (self.interposer_assignment_status, assigned_interposer == interposer_total and bool(interposer_total)),
+            (self.gang_assignment_status, assigned_gangs == len(names) and bool(names)),
+        ):
+            control.SetBackgroundColour(wx.Colour(232, 244, 234) if complete else wx.Colour(255, 244, 214))
+            control.SetForegroundColour(wx.Colour(40, 122, 61) if complete else wx.Colour(140, 87, 8))
+            control.Refresh()
 
     def build_gangs(self, panel):
         self.task_box(
             panel, 'Gangs', 'Define connector gang geometry',
-            'Each gang retains its own approved part, pattern, numbering, orientation and RF settings. Preview labels are location indices.',
+            'Configure each gang pattern, numbering, orientation and RF settings. Library part assignments are managed in Connector assignments. Preview labels are position indices.',
         )
         self.gang_filter = wx.SearchCtrl(panel, style=wx.TE_PROCESS_ENTER)
         self.gang_filter.SetDescriptiveText('Filter gangs')
         self.gang_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_gang_list())
         panel.GetSizer().Add(self.gang_filter, 0, wx.EXPAND | wx.ALL, 8)
         self.gang_list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 115))
-        for col, (heading, width) in enumerate((('Gang', 80), ('Count', 65), ('Approved part', 180), ('Pattern', 110), ('Anchor', 100), ('Status', 180))): self.gang_list.InsertColumn(col, heading, width=width)
+        for col, (heading, width) in enumerate((('Gang', 100), ('Positions', 85), ('Pattern', 140), ('Anchor', 110), ('Status', 200))): self.gang_list.InsertColumn(col, heading, width=width)
         self.gang_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.guard(self.select_dashboard_gang))
         panel.GetSizer().Add(self.gang_list, 0, wx.EXPAND | wx.ALL, 8)
         self.gang_choice = wx.Choice(panel)
@@ -1226,17 +1519,14 @@ class WorkflowDialog(wx.Dialog):
         body = wx.BoxSizer(wx.HORIZONTAL)
         form = wx.Panel(panel)
         form.SetSizer(wx.BoxSizer(wx.VERTICAL))
-        self.gang_fields = {'part_id': self.library_field(form, 'Approved connector footprint', 'footprint',
-                                                         on_change=self.gang_library_changed)}
+        self.gang_fields = {}
         for key, label, value, picker in (
-            ('mpn', 'Project BOM MPN override (if absent)', '', False), ('row_lengths', 'Row lengths', '4', False),
+            ('row_lengths', 'Row lengths', '4', False),
             ('pitch_x', 'Horizontal pitch', '2.54', False), ('pitch_y', 'Vertical pitch', '2.54', False),
             ('row_offsets', 'Per-row offsets', '', False), ('numbering', 'Explicit location traversal', '', False),
             ('rotation', 'Orientation (degrees)', '0', False), ('rf_artifact', 'Approved RF artifact', '', True),
             ('rf_clock', 'RF default clock (degrees)', '0', False), ('rf_overrides', 'Per-location clocks (1:90, 2:180)', '', False)):
             self.gang_fields[key] = self.field(form, label, value, picker)
-        self.approved_mpn = wx.StaticText(form, label='Approved library MPN: unavailable')
-        form.GetSizer().Add(self.approved_mpn, 0, wx.ALL, 8)
         self.gang_units = wx.Choice(form, choices=['mm', 'mil', 'inch'])
         self.gang_units.SetSelection(0)
         form.GetSizer().Add(self.gang_units, 0, wx.EXPAND | wx.ALL, 8)
@@ -1259,11 +1549,6 @@ class WorkflowDialog(wx.Dialog):
         self.mirror.Bind(wx.EVT_CHECKBOX, self.gang_draft_changed)
         self.gang_units.Bind(wx.EVT_CHOICE, self.gang_draft_changed)
         self.gang_side.Bind(wx.EVT_CHOICE, self.gang_draft_changed)
-
-    def gang_library_changed(self):
-        if not self._loading_gang:
-            self.store_gang()
-            self.refresh_gang_list()
 
     def gang_draft_changed(self, event=None):
         if not self._loading_gang:
@@ -1298,8 +1583,7 @@ class WorkflowDialog(wx.Dialog):
             except ValueError:
                 status = 'Invalid pattern'
             index = self.gang_list.InsertItem(self.gang_list.GetItemCount(), name)
-            part_name = settings.get('library_id') or Path(settings.get('part_id', '')).stem
-            for col, value in enumerate((count, part_name, ' × '.join(map(str, settings['row_lengths'])), 'Accepted' if settings.get('anchor_accepted') else 'Required', status), 1): self.gang_list.SetItem(index, col, str(value))
+            for col, value in enumerate((count, ' × '.join(map(str, settings['row_lengths'])), 'Accepted' if settings.get('anchor_accepted') else 'Required', status), 1): self.gang_list.SetItem(index, col, str(value))
 
     def select_dashboard_gang(self, event):
         name = self.gang_list.GetItemText(event.GetIndex())
@@ -1321,10 +1605,6 @@ class WorkflowDialog(wx.Dialog):
         values['mirror'] = self.mirror.GetValue()
         values['units'] = self.gang_units.GetStringSelection()
         values['side'] = 'B' if self.gang_side.GetSelection() == 1 else 'F'
-        part = self.gang_fields['part_id'].GetSelectionSpec()
-        if part:
-            values['library_id'] = part.get('library_id', '')
-            values['part_sha256'] = part.get('sha256', '')
         self.controller.set_gang(self.current_gang, values)
 
     def select_gang(self, event):
@@ -1337,13 +1617,7 @@ class WorkflowDialog(wx.Dialog):
                 value = self.controller.config.get('drafts', {}).get(self.current_gang, {}).get(key, values.get(key, ''))
                 if isinstance(value, list): value = ', '.join(map(str, value))
                 elif isinstance(value, dict): value = ', '.join(f'{k}:{v}' for k, v in value.items())
-                if isinstance(control, LibrarySelectionCtrl):
-                    control.set_selection({'path': values.get('part_id', ''), 'library_id': values.get('library_id', ''),
-                                           'sha256': values.get('part_sha256', '')})
-                else:
-                    control.ChangeValue(str(value))
-            self.approved_mpn.SetLabel('Approved library MPN: ' + (values.get('approved_mpn') or 'unavailable'))
-            self.gang_fields['mpn'].Enable(not bool(values.get('approved_mpn')))
+                control.ChangeValue(str(value))
             self.mirror.SetValue(values['mirror'])
             self.gang_units.SetStringSelection(values.get('units', 'mm'))
             self.gang_side.SetSelection(1 if values.get('side') == 'B' else 0)
@@ -1361,8 +1635,6 @@ class WorkflowDialog(wx.Dialog):
         self.store_gang()
         self.controller.config.get('drafts', {}).pop(self.current_gang, None)
         settings = self.controller.gang(self.current_gang)
-        self.approved_mpn.SetLabel('Approved library MPN: ' + (settings.get('approved_mpn') or 'unavailable'))
-        self.gang_fields['mpn'].Enable(not bool(settings.get('approved_mpn')))
         self.pattern_view.show(self.current_gang, self.controller.pattern(self.current_gang))
 
     def copy_gang(self, event):
@@ -1414,8 +1686,30 @@ class WorkflowDialog(wx.Dialog):
     def build_anchors(self, panel):
         self.task_box(
             panel, 'DXF Anchors', 'Associate imported connector locations',
-            'Use KiCad File → Import → Graphics to import the whole DXF to a user layer first. Select one native circle in the PCB canvas, then capture its center. Numeric anchors are also supported.',
+            'Use KiCad File → Import → Graphics to import the whole DXF to a user layer first. Place the interposer, then capture one native connector circle or enter a numeric gang anchor.',
         )
+        interposer_box = wx.StaticBox(panel, label='Interposer placement')
+        interposer = wx.StaticBoxSizer(interposer_box, wx.VERTICAL)
+        self.anchor_interposer_ref = wx.StaticText(interposer_box, label='Ref des: —')
+        interposer.Add(self.anchor_interposer_ref, 0, wx.ALL, 8)
+        placement = wx.FlexGridSizer(cols=6, hgap=8, vgap=6)
+        placement.Add(wx.StaticText(interposer_box, label='X (mm)'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.interposer_x = wx.TextCtrl(interposer_box, value='0')
+        placement.Add(self.interposer_x, 1, wx.EXPAND)
+        placement.Add(wx.StaticText(interposer_box, label='Y (mm)'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.interposer_y = wx.TextCtrl(interposer_box, value='0')
+        placement.Add(self.interposer_y, 1, wx.EXPAND)
+        placement.Add(wx.StaticText(interposer_box, label='Orientation (degrees)'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.interposer_rotation = wx.TextCtrl(interposer_box, value='0')
+        placement.Add(self.interposer_rotation, 1, wx.EXPAND)
+        for column in (1, 3, 5): placement.AddGrowableCol(column, 1)
+        interposer.Add(placement, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        interposer.Add(self.button(interposer_box, 'Accept interposer placement', self.accept_interposer_placement),
+                       0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.interposer_pose_status = self.status_label(interposer_box, 'Interposer placement required')
+        interposer.Add(self.interposer_pose_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        panel.GetSizer().Add(interposer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
         self.anchor_gang = wx.Choice(panel)
         panel.GetSizer().Add(self.anchor_gang, 0, wx.EXPAND | wx.ALL, 8)
         self.user_layer = self.field(panel, 'Imported mechanical user layer', 'Dwgs.User')
@@ -1433,6 +1727,24 @@ class WorkflowDialog(wx.Dialog):
         self.hole_path = self.library_field(panel, 'Approved mounting-hole footprint (optional)', 'footprint', allow_mechanical=True)
         self.hole_ref = self.field(panel, 'Mounting-hole reference', 'H1')
         panel.GetSizer().Add(self.button(panel, 'Add mounting hole at this anchor', self.add_hole), 0, wx.ALL, 8)
+
+    def accept_interposer_placement(self, event):
+        reference = self._interposer_reference()
+        if not reference:
+            raise ValueError('The imported netlist must contain exactly one interposer reference')
+        selection = self.controller.config['interposers'].get(reference)
+        if not selection:
+            raise ValueError('Assign the interposer symbol and footprint first')
+        pose = [float(self.interposer_x.GetValue()), float(self.interposer_y.GetValue()),
+                float(self.interposer_rotation.GetValue())]
+        if not all(math.isfinite(value) for value in pose):
+            raise ValueError('Interposer placement values must be finite numbers')
+        selection['pose'] = pose
+        selection['pose_accepted'] = True
+        self.controller.changed()
+        self.interposer_pose_status.SetLabel(f'{reference} placement accepted')
+        self.interposer_pose_status.SetBackgroundColour(wx.Colour(232, 244, 234))
+        self.interposer_pose_status.SetForegroundColour(wx.Colour(40, 122, 61))
 
     def capture_circle(self, event):
         if self.pcbnew is None: raise ValueError('Open this workflow from the KiCad PCB Editor')
@@ -1557,9 +1869,18 @@ class WorkflowDialog(wx.Dialog):
 
     def build_review(self, panel):
         self.task_box(
-            panel, 'Review Changes', 'Compare the desired-state delta',
-            'Compare complete desired state against saved board ownership. Conflicts, stale inputs and affected designer routing block Apply.',
+            panel, 'Review Changes', 'Validate and compare the desired-state delta',
+            'Validate the complete workflow, then compare desired state against saved board ownership. Configuration errors, conflicts, stale inputs and affected designer routing block Apply.',
         )
+        validation_box = wx.StaticBox(panel, label='Workflow validation')
+        validation = wx.StaticBoxSizer(validation_box, wx.VERTICAL)
+        self.validation = wx.ListCtrl(validation_box, style=wx.LC_REPORT, size=(-1, 135))
+        for column, (name, width) in enumerate(
+            (('Severity', 80), ('Source row', 85), ('Code', 170), ('Details', 620)),
+        ):
+            self.validation.InsertColumn(column, name, width=width)
+        validation.Add(self.validation, 1, wx.EXPAND | wx.ALL, 8)
+        panel.GetSizer().Add(validation, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         self.diff_list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
         for col, (name, width) in enumerate((('Gang', 90), ('Connector / file', 280), ('Change', 150), ('Status', 230))):
             self.diff_list.InsertColumn(col, name, width=width)
@@ -1591,6 +1912,12 @@ class WorkflowDialog(wx.Dialog):
     def compare(self, event):
         self.save(None)
         self.confirm_review.SetValue(False)
+        issues = self.controller.validate()
+        self.render_validation(issues)
+        blocking = [issue for issue in issues if issue.severity == 'error']
+        if blocking:
+            self.status.SetLabel(f'{len(blocking)} blocking validation errors. Review the issue table.')
+            raise ValueError(f'Resolve {len(blocking)} listed workflow validation errors before comparing changes')
         self.status.SetLabel('Analysing saved project and library inputs…')
         def complete(preview):
             if self._closing: return
@@ -1599,6 +1926,13 @@ class WorkflowDialog(wx.Dialog):
             self.refresh()
         self.controller.run_async(self.controller.review, complete, self.failed)
         self.refresh()
+
+    def render_validation(self, issues):
+        self.validation.DeleteAllItems()
+        for issue in issues:
+            index = self.validation.InsertItem(self.validation.GetItemCount(), issue.severity)
+            for column, value in enumerate((issue.source_row or '', issue.code, issue.message), 1):
+                self.validation.SetItem(index, column, str(value))
 
     def render_changes(self, preview):
         self.diff_list.DeleteAllItems()
@@ -1695,16 +2029,15 @@ class WorkflowDialog(wx.Dialog):
                     self._source_error(error, Path(source_path), source.get('worksheet', '')),
                     True,
                 )
-        symbol = cfg.get('connector_symbol', {})
-        self.connector_symbol.set_selection(symbol)
         if cfg.get('interposers'):
             ref, part = next(iter(cfg['interposers'].items()))
-            self.interposer_ref.ChangeValue(ref)
-            self.interposer_path.set_selection(part)
             pose = part.get('pose', [0, 0, 0])
             self.interposer_x.ChangeValue(str(pose[0]))
             self.interposer_y.ChangeValue(str(pose[1]))
             self.interposer_rotation.ChangeValue(str(pose[2]))
+            self.anchor_interposer_ref.SetLabel('Ref des: ' + ref)
+            if part.get('pose_accepted'):
+                self.interposer_pose_status.SetLabel(f'{ref} placement accepted')
         self.output_dir.ChangeValue(cfg.get('output_dir', ''))
         self.outline_enable.SetValue(cfg['outline'].get('enabled', False))
         self.outline_view.show(cfg['outline'].get('source_preview', {}))
@@ -1714,8 +2047,10 @@ class WorkflowDialog(wx.Dialog):
         self.label_offset_y.ChangeValue(str(offset[1]))
         self.refresh_layers()
         self.refresh_gangs()
+        self.refresh_connector_assignments(True)
 
     def refresh(self):
+        self.refresh_connector_assignments()
         self.view_button.Enable(self.controller.view_data_enabled)
         workbook_path = Path(self.workbook_path.GetValue()).expanduser()
         self.workbook_reload.Enable(

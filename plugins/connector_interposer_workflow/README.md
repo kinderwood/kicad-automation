@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.3.7**, testing release. The package targets KiCad 9.0.0 through
+Version **0.3.8**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -71,23 +71,23 @@ an already-open source board does not update the output copy.
    blocks workflow validation and Review Changes. This release does not generate
    KiCad custom routing rules or modify the project's `.kicad_dru` file. A later
    per-net redesign will add search, filters and previewed rule updates.
-4. **Validation:** select the approved interposer footprint and an approved
-   standalone two-pin connector symbol from KiCad's loaded project or global
-   libraries, then enter the interposer reference and placement. The selected
-   interposer's electrical pad universe is authoritative; unused pads become
-   ground. Literal external connector references such as `J101-1` are retained.
-5. **Gangs:** select a gang, its approved footprint from KiCad's loaded
-   libraries, pattern, units, pitches,
+4. **Connector assignments:** the workbook supplies the single interposer
+   reference and connector gang identities. Select an interposer symbol and an
+   independent two-pin connector symbol for each gang from KiCad's loaded
+   project or global libraries. Each symbol must contain footprint filters; its
+   footprint cell lists only filtered library parts whose electrical pad
+   numbers exactly match the symbol pins. Selections update the workflow
+   immediately. Placement and BOM overrides are not entered on this page.
+5. **Gangs:** select a gang and configure its pattern, units, pitches,
    row offsets, numbering, orientation and explicit pattern mirror. Each gang
-   keeps independent settings. Library MPN metadata is displayed read-only; when
-   absent, a project BOM MPN override is available. A missing MPN is reported as
-   a warning and is never invented. The preview labels locations with indices and
+   keeps independent settings. Library MPN metadata remains read-only; a missing
+   MPN is reported as a warning and is never invented. The preview labels locations with indices and
    identifies location 1 as the anchor. Bulk copy affects only selected gangs
    and retains their anchors. Choose an approved RF bundle as the gang default;
    **Per-location RF assignments…** supports clock and artifact overrides for
    mixed routing layers. An artifact's saved signal-layer role must equal the
    workbook's mapped signal layer.
-6. **DXF Anchors:** import the complete mechanical drawing through KiCad's
+6. **DXF Anchors:** accept the interposer placement, then import the complete mechanical drawing through KiCad's
    native **File → Import → Graphics**, selecting a user layer, then save.
    The bounded association accepts one full `gang-pin` text label per native
    circle. If labels have a drafting offset, explicitly enter and accept the
@@ -114,6 +114,7 @@ an already-open source board does not update the output copy.
 The source `.connector-interposer-workflow.json` sidecar stores project identity
 and UI drafts,
 including mappings, excluded-row selections, layer policy, independent gang definitions,
+per-gang symbol/footprint assignments, the interposer assignment and placement,
 artifact selections and accepted mechanical inputs. The exact accepted workbook
 is snapshotted under `.connector-interposer-inputs`; selected parts, approved
 symbols and RF artifacts remain pinned under `.connector-interposer-pinned`.
@@ -129,7 +130,9 @@ KiCad 9 and 10 global, project and nested library tables using KiCad's own path
 variable expansion. Project entries take precedence over global entries. The
 workflow retains the resolved source and content hash internally so a selected
 library revision remains deterministic without exposing filesystem paths as the
-primary user interface. RF transition artifacts remain separate immutable
+primary user interface. Connector assignment footprint dropdowns apply the
+selected symbol's `ki_fp_filters` and require exact symbol-pin to footprint-pad
+compatibility. RF transition artifacts remain separate immutable
 catalog files in this release. This release browses native `.pretty` footprint
 libraries and `.kicad_sym` symbol libraries; database, legacy and other
 non-native library types are not offered.
@@ -148,8 +151,11 @@ validated by the same probe.
 The controlled project-copy apply/recovery boundary is intentional. Transparent
 live-editor transactions and a generic magnetic point picker have not passed
 interaction/recovery validation. The initial schematic presentation uses stable
-label-based gang sheets and interposer signal/ground organization; a fully
-explicit presentation is a future direction. DXF labels split into separate
+label-based gang sheets and a tool-owned split interposer signal/ground
+organization. The selected interposer symbol supplies the pin, filter and BOM
+metadata contract and is pinned for provenance; its graphical body is not copied
+into the generated split presentation. A fully explicit presentation is a
+future direction. DXF labels split into separate
 gang-only and pin-only texts require unambiguous full identity labels before
 use. RF objects stop at the signal via; no signal route is generated beyond the
 handoff. Saved geometry and native round trips do not establish impedance,

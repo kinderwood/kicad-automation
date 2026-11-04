@@ -122,6 +122,8 @@ class NativeDialogTests(unittest.TestCase):
         from plugins.connector_interposer_workflow.ui import (WorkflowDialog, DataDialog,
                                                                LibraryPartPickerDialog,
                                                                LibrarySelectionCtrl,
+                                                               SymbolAssignmentCtrl,
+                                                               FootprintAssignmentCtrl,
                                                                AssignmentRenderer)
         from plugins.connector_interposer_workflow.core.library_catalog import LibraryEntry, LibraryPart
         from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
@@ -131,6 +133,7 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(PAGES[0], 'Netlist Source')
         self.assertEqual(PAGES[1], 'Layer assignment')
         self.assertEqual(PAGES[2], 'Routing permissions')
+        self.assertEqual(PAGES[3], 'Connector assignments')
         for page_index, page_name in enumerate(PAGES):
             self.assertIsNotNone(self.wx.FindWindowByLabel(page_name, dialog.pages[page_index]))
         self.assertIsNone(self.wx.FindWindowByLabel('Apply layer assignments', dialog))
@@ -161,20 +164,13 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(dialog.mapper.GetNumberCols(), 9)
         self.assertIsInstance(dialog.mapper.GetCellRenderer(0, 2), AssignmentRenderer)
         self.assertIsNotNone(self.wx.FindWindowByLabel('Open full table…', dialog))
-        self.assertIsInstance(dialog.interposer_path, LibrarySelectionCtrl)
-        self.assertIsInstance(dialog.connector_symbol, LibrarySelectionCtrl)
-        self.assertIsInstance(dialog.gang_fields['part_id'], LibrarySelectionCtrl)
+        self.assertIsInstance(dialog.interposer_symbol_assignment, SymbolAssignmentCtrl)
+        self.assertIsInstance(dialog.interposer_footprint_assignment, FootprintAssignmentCtrl)
         self.assertIsInstance(dialog.hole_path, LibrarySelectionCtrl)
         self.assertIsInstance(dialog.gang_fields['rf_artifact'], self.wx.TextCtrl)
         self.assertNotIsInstance(dialog.gang_fields['rf_artifact'], LibrarySelectionCtrl)
-        dialog.gang_fields['part_id'].set_selection({
-            'path': '/internal/Approved.pretty/GPPO.kicad_mod',
-            'library_id': 'Approved:GPPO',
-            'sha256': 'a' * 64,
-        })
-        self.assertEqual(dialog.gang_fields['part_id'].display.GetValue(), 'Approved:GPPO')
-        self.assertEqual(dialog.gang_fields['part_id'].GetValue(),
-                         '/internal/Approved.pretty/GPPO.kicad_mod')
+        self.assertIsNone(self.wx.FindWindowByLabel('Accept library selections', dialog))
+        self.assertIsNone(self.wx.FindWindowByLabel('Project BOM MPN override (if absent)', dialog))
         footprint = Path(__file__).resolve().parents[1] / 'examples/gppo_demo/library/Example.pretty/GPPO_B012_L13_01_EXPERIMENTAL.kicad_mod'
         class Catalog:
             kind = 'footprint'
@@ -375,6 +371,73 @@ class NativeDialogTests(unittest.TestCase):
                 dialog.Destroy()
                 self.app.Yield()
 
+    def test_connector_assignments_filter_loaded_footprints_per_gang(self):
+        import hashlib
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+        from plugins.connector_interposer_workflow.core.libraries import read_symbol
+        example = Path(__file__).resolve().parents[1] / 'examples/gppo_demo'
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            board = project / 'demo.kicad_pcb'
+            board.write_text('(kicad_pcb (version 20240108) (generator pcbnew))')
+            settings = project / 'settings'
+            settings.mkdir()
+            (project / 'fp-lib-table').write_text(
+                '(fp_lib_table (lib (name "Example") (type "KiCad") '
+                f'(uri "{example / "library/Example.pretty"}") (options "")))'
+            )
+
+            class Settings:
+                @classmethod
+                def GetUserSettingsPath(cls): return str(settings)
+            class Board:
+                @staticmethod
+                def GetProject(): return object()
+            class Pcbnew:
+                SETTINGS_MANAGER = Settings
+                @staticmethod
+                def GetBoard(): return Board()
+                @staticmethod
+                def ResolveUriByEnvVars(value, native_project): return str(value)
+
+            controller = WorkflowController(board)
+            controller.load_workbook(example / 'inputs/netlist-A.xlsx')
+            dialog = WorkflowDialog(controller=controller, pcbnew_module=Pcbnew)
+            try:
+                symbols = example / 'library/Example.kicad_sym'
+                digest = hashlib.sha256(symbols.read_bytes()).hexdigest()
+                interposer = read_symbol(symbols, 'Example:Interposer', require_two_pin=False)
+                interposer_spec = {'path': str(symbols), 'library_id': interposer.library_id,
+                                   'sha256': digest}
+                dialog.assign_interposer_symbol(interposer_spec, interposer)
+                self.assertEqual(
+                    [option['library_id'] for option in dialog.interposer_footprint_assignment.options],
+                    ['Example:Interposer_800'],
+                )
+                dialog.interposer_footprint_assignment.choice.SetSelection(1)
+                dialog.assign_interposer_footprint(
+                    dialog.interposer_footprint_assignment.selection(),
+                )
+                self.assertEqual(dialog.interposer_assignment_status.GetLabel(),
+                                 '1 of 1 interposers assigned')
+
+                connector = read_symbol(symbols, 'Example:GPPO')
+                connector_spec = {'path': str(symbols), 'library_id': connector.library_id,
+                                  'sha256': digest}
+                for gang in ('J101', 'J102'):
+                    dialog.assign_gang_symbol(gang, connector_spec, connector)
+                    footprint = dialog.gang_assignment_controls[gang]['footprint']
+                    self.assertEqual([option['library_id'] for option in footprint.options],
+                                     ['Example:GPPO_B012_L13_01_EXPERIMENTAL'])
+                    footprint.choice.SetSelection(1)
+                    dialog.assign_gang_footprint(gang, footprint.selection())
+                self.assertEqual(dialog.gang_assignment_status.GetLabel(),
+                                 '2 of 2 gangs assigned')
+                self.assertIsNone(self.wx.FindWindowByLabel('Status', dialog.pages[3]))
+            finally:
+                dialog.Destroy()
+                self.app.Yield()
+
 
 
 
@@ -425,12 +488,17 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             controller = WorkflowController(path, backend=NativeProcessBackend())
             controller.load_workbook(workbook)
             controller.set_layer_mapping('L1', 'F.Cu')
-            controller.set_gang('J101', {'part_id': gang_parts['J101'].footprint.path, 'library_id': 'Approved:GPPO',
-                                       'row_lengths': [3], 'pitch_x': 4, 'anchor': [20, 30], 'anchor_accepted': True, 'mpn': 'APPROVED-MPN'})
-            part = interposer_parts['E1'].footprint
-            controller.config['interposers']['E1'] = dict(part.pin(), approved=True, pose=[70, 60, 0])
             symbol = library/'Approved.kicad_sym'
-            controller.config['connector_symbol'] = {'path': str(symbol), 'library_id': 'Approved:GPPO', 'sha256': hashlib.sha256(symbol.read_bytes()).hexdigest()}
+            symbol_sha = hashlib.sha256(symbol.read_bytes()).hexdigest()
+            controller.set_gang('J101', {'part_id': gang_parts['J101'].footprint.path, 'library_id': 'Approved:GPPO',
+                                       'part_sha256': gang_parts['J101'].footprint.sha256,
+                                       'symbol': {'path': str(symbol), 'library_id': 'Approved:GPPO', 'sha256': symbol_sha},
+                                       'row_lengths': [3], 'pitch_x': 4, 'anchor': [20, 30], 'anchor_accepted': True})
+            part = interposer_parts['E1'].footprint
+            controller.config['interposers']['E1'] = dict(
+                part.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True,
+                symbol={'path': str(symbol), 'library_id': 'Approved:Interposer', 'sha256': symbol_sha},
+            )
             controller.config['mechanical'] = {'layer': 'Dwgs.User', 'accepted': True, 'label_offset': [-2.54, -2.54]}
             before = path.read_bytes()
             controller.set_gang('J101', {'anchor': [21, 30]})

@@ -10,7 +10,7 @@ from .core.workbook import read_workbook, parse_sheet
 from .core.layers import LayerRules, validate_layers
 from .core.model import HEADERS, Issue
 
-PAGES = ("Netlist Source", "Layer assignment", "Routing permissions", "Validation", "Gangs", "DXF Anchors", "Board Outline", "Review Changes", "Apply / Results")
+PAGES = ("Netlist Source", "Layer assignment", "Routing permissions", "Connector assignments", "Gangs", "DXF Anchors", "Board Outline", "Review Changes", "Apply / Results")
 
 
 def row_ranges(text):
@@ -37,7 +37,7 @@ class WorkflowController:
         self.config_path = self.board_path.with_suffix('.connector-interposer-workflow.json') if self.board_path else None
         self.backend = backend
         self.dispatch = dispatch or (lambda fn, *args: fn(*args))
-        self.config = {"schema_version": 1, "project_id": str(uuid.uuid4()), "workbook": {}, "layer_mapping": {}, "layer_rules": {},
+        self.config = {"schema_version": 2, "project_id": str(uuid.uuid4()), "workbook": {}, "layer_mapping": {}, "layer_rules": {},
                        "gangs": {}, "interposers": {}, "mechanical": {}, "mounting_holes": [],
                        "outline": {"enabled": False}, "presentation": "labels"}
         self.workbook = None
@@ -55,7 +55,7 @@ class WorkflowController:
             saved = json.loads(self.config_path.read_text(encoding='utf-8'))
             from .core.config import ProjectConfig
             saved = ProjectConfig.from_dict(saved).to_dict()
-            if saved.get('schema_version') != 1:
+            if saved.get('schema_version') != 2:
                 raise ValueError('Unsupported Workflow draft version; migrate explicitly before opening')
             self.config.update(saved)
 
@@ -149,7 +149,7 @@ class WorkflowController:
             count = sum(r.connector == name for r in self.table.records) if self.table else 0
             self.config['gangs'][name] = {"gang": name, "row_lengths": [max(count, 1)], "pitch_x": 2.54,
                 "pitch_y": 2.54, "row_offsets": [], "numbering": [], "traversal": "row-major",
-                "rotation": 0, "mirror": False, "anchor": [0, 0], "units": "mm", "part_id": "", "rf_clock": 0,
+                "rotation": 0, "mirror": False, "anchor": [0, 0], "units": "mm", "part_id": "", "symbol": {}, "rf_clock": 0,
                 "rf_overrides": {}, "rf_artifact": "", "anchor_accepted": False, "side": "F"}
         return deepcopy(self.config['gangs'][name])
 
@@ -158,12 +158,12 @@ class WorkflowController:
         previous = deepcopy(merged)
         merged.update(deepcopy(values))
         merged['gang'] = name
+        merged.pop('mpn', None)
         if values.get('part_id') and Path(values['part_id']).is_file() and (values['part_id'] != previous.get('part_id') or not previous.get('part_sha256')):
-            data = Path(values['part_id']).read_bytes()
-            merged['part_sha256'] = hashlib.sha256(data).hexdigest()
-            from .core.sexpr import loads, children
-            properties = {str(item[1]).casefold(): str(item[2]) for item in children(loads(data.decode('utf-8-sig')), 'property') if len(item) >= 3}
-            merged['approved_mpn'] = next((properties[key] for key in ('mpn', 'manufacturer part number', 'manufacturerpartnumber') if properties.get(key)), '')
+            from .core.libraries import read_footprint
+            part = read_footprint(values['part_id'], values.get('library_id') or library_id(values['part_id']))
+            merged['part_sha256'] = part.sha256
+            merged['footprint_mpn'] = part.mpn
         if values.get('rf_artifact') and Path(values['rf_artifact']).is_file() and (values['rf_artifact'] != previous.get('rf_artifact') or not previous.get('rf_artifact_hash')):
             merged['rf_artifact_hash'] = json.loads(Path(values['rf_artifact']).read_text()).get('hashes', {}).get('artifact')
         if values.get('rf_artifacts'):
@@ -187,6 +187,30 @@ class WorkflowController:
 
     def validate(self):
         issues = list(self.table.issues) if self.table else [Issue('workbook', 'Parse a workbook first')]
+        from .core.libraries import read_footprint, read_symbol, footprint_matches_filters
+
+        def assignment_issue(owner, symbol_spec, footprint_spec, require_two_pin):
+            if not symbol_spec.get('path') or not footprint_spec.get('path'):
+                return None
+            try:
+                symbol_path = self.resolve_path(symbol_spec['path'], symbol_spec.get('sha256'),
+                                                'symbols', '.kicad_sym')
+                symbol = read_symbol(symbol_path, symbol_spec['library_id'], symbol_spec.get('sha256'),
+                                     require_two_pin=require_two_pin)
+                footprint = read_footprint(
+                    self.resolve_path(footprint_spec['path'], footprint_spec.get('sha256')),
+                    footprint_spec['library_id'], footprint_spec.get('sha256'),
+                )
+                if not symbol.footprint_filters:
+                    return f'{owner}: selected symbol has no footprint filters'
+                if not footprint_matches_filters(footprint.library_id, symbol.footprint_filters):
+                    return f'{owner}: {footprint.library_id} is not allowed by {symbol.library_id}'
+                if {pin[0] for pin in symbol.pin_numbers} != set(footprint.pad_numbers):
+                    return f'{owner}: symbol pins do not exactly match footprint electrical pads'
+            except (KeyError, OSError, ValueError) as error:
+                return f'{owner}: {error}'
+            return None
+
         if self.config.get('drafts'):
             issues.append(Issue('unaccepted_draft', 'Accept or correct each modified gang pattern before reviewing changes'))
         if self.table:
@@ -194,10 +218,22 @@ class WorkflowController:
                                          LayerRules(self.config['layer_rules'])))
             for name in self.gang_names():
                 gang = self.gang(name)
+                if not gang.get('symbol', {}).get('path'):
+                    issues.append(Issue('symbol_missing', f'{name}: select an approved connector symbol'))
                 if not gang['part_id']:
                     issues.append(Issue('part_missing', f'{name}: select an approved connector footprint'))
-                if not gang.get('approved_mpn') and not gang.get('mpn'):
-                    issues.append(Issue('mpn_missing', f'{name}: approved part has no MPN; optionally supply a project BOM override', severity='warning'))
+                detail = assignment_issue(
+                    name, gang.get('symbol', {}),
+                    {'path': gang.get('part_id', ''), 'library_id': gang.get('library_id', ''),
+                     'sha256': gang.get('part_sha256', '')}, True,
+                )
+                if detail:
+                    issues.append(Issue('part_incompatible', detail))
+                if not gang.get('symbol_mpn') and not gang.get('footprint_mpn'):
+                    issues.append(Issue('mpn_missing', f'{name}: selected library parts have no MPN metadata', severity='warning'))
+                if (gang.get('symbol_mpn') and gang.get('footprint_mpn') and
+                        gang['symbol_mpn'] != gang['footprint_mpn']):
+                    issues.append(Issue('mpn_conflict', f'{name}: symbol and footprint MPN metadata disagree'))
                 if not gang.get('anchor_accepted'):
                     issues.append(Issue('anchor_missing', f'{name}: accept an anchor'))
                 try:
@@ -207,6 +243,25 @@ class WorkflowController:
                         issues.append(Issue('gang_population', f'{name}: numbering must exactly match workbook locations'))
                 except (ValueError, TypeError) as error:
                     issues.append(Issue('gang_pattern', f'{name}: {error}'))
+            references = sorted({record.interposer for record in self.table.records})
+            if len(references) != 1:
+                issues.append(Issue('interposer_population', 'This release requires exactly one interposer reference'))
+            for reference in references:
+                selection = self.config['interposers'].get(reference, {})
+                if not selection.get('symbol', {}).get('path'):
+                    issues.append(Issue('interposer_symbol_missing', f'{reference}: select an approved interposer symbol'))
+                if not selection.get('path'):
+                    issues.append(Issue('interposer_missing', f'{reference}: select an approved interposer footprint'))
+                detail = assignment_issue(reference, selection.get('symbol', {}), selection, False)
+                if detail:
+                    issues.append(Issue('interposer_incompatible', detail))
+                if not selection.get('pose_accepted'):
+                    issues.append(Issue('interposer_pose_missing', f'{reference}: accept interposer placement in DXF Anchors'))
+                if not selection.get('symbol_mpn') and not selection.get('footprint_mpn'):
+                    issues.append(Issue('mpn_missing', f'{reference}: selected library parts have no MPN metadata', severity='warning'))
+                if (selection.get('symbol_mpn') and selection.get('footprint_mpn') and
+                        selection['symbol_mpn'] != selection['footprint_mpn']):
+                    issues.append(Issue('mpn_conflict', f'{reference}: symbol and footprint MPN metadata disagree'))
         self.issues = tuple(issues)
         return self.issues
 
@@ -226,11 +281,11 @@ class WorkflowController:
         if self.board_path:
             paths.extend(self.board_path.with_suffix(suffix) for suffix in ('.kicad_pro', '.connector-interposer-instances.json'))
         paths.extend(Path(g[key]) for g in self.config['gangs'].values() for key in ('part_id', 'rf_artifact') if g.get(key))
+        paths.extend(Path(g['symbol']['path']) for g in self.config['gangs'].values() if g.get('symbol', {}).get('path'))
         paths.extend(Path(path) for g in self.config['gangs'].values() for path in g.get('rf_artifacts', {}).values() if path)
         paths.extend(Path(v['path']) for v in self.config['interposers'].values() if v.get('path'))
+        paths.extend(Path(v['symbol']['path']) for v in self.config['interposers'].values() if v.get('symbol', {}).get('path'))
         paths.extend(Path(v['path']) for v in self.config.get('mounting_holes', []) if v.get('path'))
-        symbol = self.config.get('connector_symbol', {})
-        if symbol.get('path'): paths.append(Path(symbol['path']))
         for path in paths:
             if path and path.is_file():
                 digest.update(str(path).encode())
@@ -452,7 +507,7 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
             return json.loads(result.read_text())
 
     def preview(self, controller):
-        from .core.libraries import read_footprint, read_symbol
+        from .core.libraries import read_footprint, read_symbol, footprint_matches_filters
         from .core.model import validate_records
         from .core.geometry import validate_mechanical_population
         from .schematic import PartSelection, generate_schematic, merge_library_table
@@ -460,21 +515,51 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
         if not controller.board_path or not controller.board_path.exists():
             raise ValueError('Save the source PCB before comparing')
         cfg, records = controller.config, controller.table.records
-        symbol_spec = cfg.get('connector_symbol', {})
-        if not symbol_spec.get('path') or not symbol_spec.get('library_id'):
-            raise ValueError('Select the approved two-pin connector symbol from the loaded KiCad libraries')
-        symbol_path = controller.resolve_path(symbol_spec['path'], symbol_spec.get('sha256'), 'symbols', '.kicad_sym')
-        symbol = read_symbol(symbol_path, symbol_spec['library_id'], symbol_spec.get('sha256'))
         gang_parts, interposer_parts = {}, {}
+        selected_symbols = {}
         for gang in controller.gang_names():
             settings = controller.gang(gang)
+            symbol_spec = settings.get('symbol', {})
+            if not symbol_spec.get('path') or not symbol_spec.get('library_id'):
+                raise ValueError(f'{gang}: select the approved two-pin connector symbol')
+            symbol_path = controller.resolve_path(symbol_spec['path'], symbol_spec.get('sha256'), 'symbols', '.kicad_sym')
+            symbol = read_symbol(symbol_path, symbol_spec['library_id'], symbol_spec.get('sha256'))
             footprint = read_footprint(controller.resolve_path(settings['part_id'], settings.get('part_sha256')), settings.get('library_id') or library_id(settings['part_id']), settings.get('part_sha256'))
+            if not symbol.footprint_filters:
+                raise ValueError(f'{gang}: selected symbol has no footprint filters')
+            if not footprint_matches_filters(footprint.library_id, symbol.footprint_filters):
+                raise ValueError(f'{gang}: {footprint.library_id} is not allowed by {symbol.library_id}')
             footprint = replace(footprint, library_id='WorkflowPart_' + footprint.sha256[:16] + ':' + footprint.library_id.split(':', 1)[1])
-            gang_parts[gang] = PartSelection(footprint, symbol, settings.get('value', ''), settings.get('approved_mpn') or settings.get('mpn', ''))
+            mpns = {value for value in (settings.get('symbol_mpn', ''), settings.get('footprint_mpn', '')) if value}
+            if len(mpns) > 1:
+                raise ValueError(f'{gang}: symbol and footprint MPN metadata disagree')
+            gang_parts[gang] = PartSelection(
+                footprint, symbol, settings.get('value') or symbol.value or footprint.value,
+                next(iter(mpns), ''),
+            )
+            selected_symbols[symbol.sha256] = symbol_path
         for reference, selection in cfg['interposers'].items():
+            symbol_spec = selection.get('symbol', {})
+            if not symbol_spec.get('path') or not symbol_spec.get('library_id'):
+                raise ValueError(f'{reference}: select the approved interposer symbol')
+            symbol_path = controller.resolve_path(symbol_spec['path'], symbol_spec.get('sha256'), 'symbols', '.kicad_sym')
+            symbol = read_symbol(symbol_path, symbol_spec['library_id'], symbol_spec.get('sha256'), require_two_pin=False)
             footprint = read_footprint(controller.resolve_path(selection['path'], selection.get('sha256')), selection['library_id'], selection.get('sha256'))
+            if not symbol.footprint_filters:
+                raise ValueError(f'{reference}: selected symbol has no footprint filters')
+            if not footprint_matches_filters(footprint.library_id, symbol.footprint_filters):
+                raise ValueError(f'{reference}: {footprint.library_id} is not allowed by {symbol.library_id}')
+            if {pin[0] for pin in symbol.pin_numbers} != set(footprint.pad_numbers):
+                raise ValueError(f'{reference}: symbol pins do not exactly match footprint electrical pads')
             footprint = replace(footprint, library_id='WorkflowPart_' + footprint.sha256[:16] + ':' + footprint.library_id.split(':', 1)[1])
-            interposer_parts[reference] = PartSelection(footprint)
+            mpns = {value for value in (selection.get('symbol_mpn', ''), selection.get('footprint_mpn', '')) if value}
+            if len(mpns) > 1:
+                raise ValueError(f'{reference}: symbol and footprint MPN metadata disagree')
+            interposer_parts[reference] = PartSelection(
+                footprint, symbol, selection.get('value') or symbol.value or footprint.value,
+                next(iter(mpns), ''),
+            )
+            selected_symbols[symbol.sha256] = symbol_path
         issues = validate_records(records, {ref: part.footprint.pad_numbers for ref, part in interposer_parts.items()})
         if issues: raise ValueError('; '.join(i.message for i in issues))
         # Only saved native graphics are inspected; unsaved canvas changes are never applied.
@@ -544,7 +629,8 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
                 table_path = controller.board_path.parent / table_name
                 project_files[table_name] = dumps(loads(merge_library_table(table_path.read_text() if table_path.exists() else None, project_files[table_name]))) + '\n'
         project_files[name + '-connector-bom.csv'] = bundle.bom_csv()
-        project_files['.connector-interposer-pinned/symbols/' + symbol.sha256 + '.kicad_sym'] = Path(symbol_path).read_text()
+        for checksum, path in selected_symbols.items():
+            project_files['.connector-interposer-pinned/symbols/' + checksum + '.kicad_sym'] = Path(path).read_text()
         from .core.project import merge_project_settings
         project_path = controller.board_path.with_suffix('.kicad_pro')
         project = json.loads(project_path.read_text()) if project_path.exists() else {}

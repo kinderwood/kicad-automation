@@ -3,14 +3,13 @@ from dataclasses import asdict, dataclass, field
 import uuid
 from .identities import canonical_json
 
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
 
 @dataclass
 class ProjectConfig:
     project_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     schema_version: int = CONFIG_VERSION
     workbook: dict = field(default_factory=dict)
-    connector_symbol: dict = field(default_factory=dict)
     mounting_holes: list = field(default_factory=list)
     presentation: str = 'labels'
     output_dir: str = ''
