@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.3.8**, testing release. The package targets KiCad 9.0.0 through
+Version **0.3.9**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -61,7 +61,9 @@ an already-open source board does not update the output copy.
    mappings from the new headers and invalidates any prior review.
 2. **Layer assignment:** map each distinct netlist layer name to an enabled
    KiCad copper layer. Each selection updates the current workflow immediately;
-   there is no separate acceptance button. These assignments drive validation
+   there is no separate acceptance button. The KiCad-layer cells use the same
+   amber-missing and blue-assigned interaction treatment as Netlist Source,
+   including persistent dropdown chevrons. These assignments drive validation
    and RF artifact compatibility.
 3. **Routing permissions:** review the workflow's current netclass/layer
    validation policy. Checkbox changes update the current workflow immediately;

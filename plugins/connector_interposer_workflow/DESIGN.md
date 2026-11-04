@@ -18,6 +18,8 @@ Layer assignment and Routing permissions update the current workflow directly
 from their native grid editors. They do not add page-level acceptance buttons;
 the global status area reports the change, and **Save workflow settings**
 persists it separately from the reviewed project-copy Apply operation.
+Layer assignment applies the same persistent dropdown chevron and amber/blue
+missing/assigned cell states used by the Netlist Source assignment row.
 
 Connector assignments owns the deterministic relationship between each loaded
 library symbol and footprint. The workbook supplies the interposer reference

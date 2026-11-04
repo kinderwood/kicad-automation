@@ -1147,6 +1147,7 @@ class WorkflowDialog(wx.Dialog):
         layer_sizer.Add(status_row, 0, wx.EXPAND | wx.ALL, 8)
         panel.GetSizer().Add(layer_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         self.layer_map.Bind(grid.EVT_GRID_CELL_CHANGED, self.layer_assignment_changed)
+        self.layer_map.Bind(grid.EVT_GRID_CELL_LEFT_CLICK, self.layer_assignment_clicked)
 
     def build_routing_permissions(self, panel):
         self.task_box(
@@ -1173,6 +1174,7 @@ class WorkflowDialog(wx.Dialog):
                 self.layer_map.SetCellEditor(
                     row, 1, grid.GridCellChoiceEditor(list(self.controller.copper_layers), False),
                 )
+                self._style_layer_assignment_cell(row)
             table_height = (self.layer_map.GetColLabelSize()
                             + sum(self.layer_map.GetRowSize(row) for row in range(len(names))) + 2)
             self.layer_map.SetMinSize((-1, table_height))
@@ -1212,6 +1214,26 @@ class WorkflowDialog(wx.Dialog):
         finally:
             self._updating_layers = False
 
+    def _style_layer_assignment_cell(self, row):
+        assigned = bool(self.layer_map.GetCellValue(row, 1).strip())
+        self.layer_map.SetCellBackgroundColour(
+            row, 1, wx.Colour(220, 235, 250) if assigned else wx.Colour(255, 244, 214),
+        )
+        self.layer_map.SetCellRenderer(row, 1, AssignmentRenderer(True))
+        self.layer_map.ForceRefresh()
+
+    def layer_assignment_clicked(self, event):
+        if event.GetCol() == 1:
+            wx.CallAfter(self._enable_layer_assignment_editor, event.GetRow())
+        event.Skip()
+
+    def _enable_layer_assignment_editor(self, row):
+        if self._closing:
+            return
+        self.layer_map.SetGridCursor(row, 1)
+        self.layer_map.MakeCellVisible(row, 1)
+        self.layer_map.EnableCellEditControl()
+
     def layer_assignment_changed(self, event):
         if self._updating_layers or event.GetCol() != 1:
             event.Skip()
@@ -1228,6 +1250,7 @@ class WorkflowDialog(wx.Dialog):
                  for index in range(self.layer_map.GetNumberRows())]
         assigned = sum(bool(self.controller.config['layer_mapping'].get(name)) for name in names)
         self.layer_mapping_status.SetLabel(f'{assigned} of {len(names)} assigned')
+        self._style_layer_assignment_cell(row)
         self.status.SetLabel(
             f'{netlist_layer} now maps to {kicad_layer}. The current workflow changed; '
             'board files were not modified.' if kicad_layer else
@@ -1354,6 +1377,7 @@ class WorkflowDialog(wx.Dialog):
         self.interposer_footprint_assignment.set_options(
             options, {},
         )
+        self.interposer_footprint_assignment.Enable(True)
         if not symbol.footprint_filters:
             self.status.SetLabel(f'{symbol.library_id} has no footprint filters; ask the librarian to add them.')
         elif not options:
@@ -1384,6 +1408,7 @@ class WorkflowDialog(wx.Dialog):
         options = self._allowed_footprint_specs(symbol)
         if controls:
             controls['footprint'].set_options(options, {})
+            controls['footprint'].Enable(True)
         if not symbol.footprint_filters:
             self.status.SetLabel(f'{symbol.library_id} has no footprint filters; ask the librarian to add them.')
         elif not options:

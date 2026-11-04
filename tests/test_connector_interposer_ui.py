@@ -192,6 +192,9 @@ class NativeDialogTests(unittest.TestCase):
         self.assertTrue(dialog.new_rules.IsShown())
         self.assertIn('new combinations require review', dialog.new_rules.GetLabel())
         self.assertEqual(dialog.layer_map.GetNumberRows(), 1)
+        self.assertIsInstance(dialog.layer_map.GetCellRenderer(0, 1), AssignmentRenderer)
+        self.assertEqual(dialog.layer_map.GetCellBackgroundColour(0, 1).Get()[:3],
+                         (255, 244, 214))
         self.assertLess(dialog.layer_map.GetSize().height, 100)
         self.assertEqual(
             dialog.layer_map.GetSize().height,
@@ -208,6 +211,8 @@ class NativeDialogTests(unittest.TestCase):
         dialog.layer_assignment_changed(LayerEvent())
         self.assertEqual(dialog.controller.config['layer_mapping']['L1'], 'In1.Cu')
         self.assertEqual(dialog.layer_mapping_status.GetLabel(), '1 of 1 assigned')
+        self.assertEqual(dialog.layer_map.GetCellBackgroundColour(0, 1).Get()[:3],
+                         (220, 235, 250))
         self.assertIn('board files were not modified', dialog.status.GetLabel())
         dialog.rules.SetCellValue(0, 0, '')
         class PermissionEvent:
@@ -410,6 +415,7 @@ class NativeDialogTests(unittest.TestCase):
                 interposer_spec = {'path': str(symbols), 'library_id': interposer.library_id,
                                    'sha256': digest}
                 dialog.assign_interposer_symbol(interposer_spec, interposer)
+                self.assertTrue(dialog.interposer_footprint_assignment.IsEnabled())
                 self.assertEqual(
                     [option['library_id'] for option in dialog.interposer_footprint_assignment.options],
                     ['Example:Interposer_800'],
@@ -427,6 +433,7 @@ class NativeDialogTests(unittest.TestCase):
                 for gang in ('J101', 'J102'):
                     dialog.assign_gang_symbol(gang, connector_spec, connector)
                     footprint = dialog.gang_assignment_controls[gang]['footprint']
+                    self.assertTrue(footprint.IsEnabled())
                     self.assertEqual([option['library_id'] for option in footprint.options],
                                      ['Example:GPPO_B012_L13_01_EXPERIMENTAL'])
                     footprint.choice.SetSelection(1)
