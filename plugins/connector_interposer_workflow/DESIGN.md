@@ -1,14 +1,16 @@
 # Workflow boundaries
 
-The native modeless wx dialog follows Netlist Source → Netclass type → Layer assignment →
-Routing permissions → Connector assignments → Define gangs → RF transitions → DXF Anchors → Board Outline →
-Review Changes → Apply / Results. A
+The native modeless wx dialog follows Netlist source → Netclass type → Layer assignment →
+Routing permissions → Connector assignments → Define RF gangs → RF transitions → Connector placement → Board outline →
+Review changes → Apply / results. A
 read-only virtual grid displays the complete parsed workbook in a separate
 popup. Every page begins with a blue task-description panel whose title exactly
 matches its navigation entry and uses a larger title than the supporting text.
+Step titles use sentence case; established acronyms such as RF remain uppercase.
 The dialog header names the tool without repeating a separate purpose subtitle;
-the left step list sizes itself to the native font and stops after the last
-step. The bordered page area and compact status/footer regions establish the
+the left step list sizes itself to the native font, stops after the last step,
+uses the dialog background inside one list border and bolds the active step.
+The bordered page area and compact status/footer regions establish the
 layout without a full-height navigation pane. The Layer assignment grid fits
 its rows instead of consuming the remaining window. No browser, webview,
 authoring wizard or generative recipe editor is part of this package's layout
@@ -31,7 +33,7 @@ only that sidecar and keeps the current dialog entries open. **Reset workflow
 settings** clears the current entries while preserving the stable project UUID,
 active copper stackup and saved sidecar.
 Layer assignment applies the same persistent dropdown chevron and amber/blue
-missing/assigned cell states used by the Netlist Source assignment row.
+missing/assigned cell states used by the Netlist source assignment row.
 Its explicit Auto assign action fills blank rows only. It extracts one numeric
 run from each name, accounts for KiCad's default `InN.Cu` offset, matches custom
 names directly, preserves manual selections and leaves ambiguity visible.
@@ -49,7 +51,7 @@ cells. Symbol cells launch the native loaded-library browser;
 footprint cells offer only parts allowed by the symbol filters and exact pin/pad
 compatibility. Gang geometry, placement and BOM overrides do not belong on this
 page. DC selections are single-unit multi-pin librarian parts; the workflow does
-not author them. Interposer and DC pin-1 placement are accepted on DXF Anchors,
+not author them. Interposer and DC pin-1 placement are accepted on Connector placement,
 and library MPN metadata
 is never overridden by the workflow.
 
@@ -58,7 +60,7 @@ metadata. Its graphical body is not reused by the initial generated schematic;
 the generator retains its stable split interposer presentation for large pin
 counts while pinning the selected library symbol as provenance.
 
-Define gangs owns only RF connector position geometry, position numbering,
+Define RF gangs owns only RF connector position geometry, position numbering,
 connector orientation and mounting side. Its editable pattern rows and numbered
 preview operate on one netlist-derived gang at a time. RF transition selection
 does not belong to a gang definition because locations in the same gang can
@@ -93,7 +95,7 @@ page anatomy, interaction states and open prototypes. It records durable design
 decisions and reasons; implementation history remains in repository documentation.
 Its editable Layer assignment pattern is at
 [section 08](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=148-37).
-The implemented Define gangs and RF transitions patterns are at
+The implemented Define RF gangs and RF transitions patterns are at
 [section 09](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=177-37)
 and [section 10](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=178-46).
 

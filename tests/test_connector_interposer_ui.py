@@ -267,13 +267,17 @@ class NativeDialogTests(unittest.TestCase):
         from plugins.connector_interposer_workflow.core.model import HEADERS
         dialog = WorkflowDialog()
         self.assertEqual(tuple(dialog.book.GetPageText(i) for i in range(dialog.book.GetPageCount())), PAGES)
-        self.assertEqual(PAGES[0], 'Netlist Source')
+        self.assertEqual(PAGES[0], 'Netlist source')
         self.assertEqual(PAGES[1], 'Netclass type')
         self.assertEqual(PAGES[2], 'Layer assignment')
         self.assertEqual(PAGES[3], 'Routing permissions')
         self.assertEqual(PAGES[4], 'Connector assignments')
-        self.assertEqual(PAGES[5], 'Define gangs')
+        self.assertEqual(PAGES[5], 'Define RF gangs')
         self.assertEqual(PAGES[6], 'RF transitions')
+        self.assertEqual(PAGES[7], 'Connector placement')
+        self.assertEqual(PAGES[8], 'Board outline')
+        self.assertEqual(PAGES[9], 'Review changes')
+        self.assertEqual(PAGES[10], 'Apply / results')
         for page_index, page_name in enumerate(PAGES):
             self.assertIsNotNone(self.wx.FindWindowByLabel(page_name, dialog.pages[page_index]))
         self.assertIsNone(self.wx.FindWindowByLabel('Apply layer assignments', dialog))
@@ -286,6 +290,11 @@ class NativeDialogTests(unittest.TestCase):
         step_extent = self.wx.ClientDC(dialog.step_list).GetTextExtent(longest_step)[0]
         self.assertGreater(dialog.step_list.GetSize().width, step_extent)
         self.assertLess(dialog.step_list.GetSize().height, dialog.GetClientSize().height // 2)
+        self.assertEqual(dialog.step_list.GetBackgroundColour().Get()[:3],
+                         ui_palette().panel.Get()[:3])
+        self.assertEqual(dialog.step_list.item_font(0).GetWeight(), self.wx.FONTWEIGHT_BOLD)
+        self.assertEqual(dialog.step_list.item_font(1).GetWeight(), self.wx.FONTWEIGHT_NORMAL)
+        self.assertTrue(dialog.step_list.GetWindowStyleFlag() & self.wx.BORDER_SIMPLE)
         self.assertIsNotNone(self.wx.FindWindowByLabel('Save workflow settings', dialog))
         self.assertIsNotNone(self.wx.FindWindowByLabel('Delete workflow settings', dialog))
         self.assertIsNotNone(self.wx.FindWindowByLabel('Reset workflow settings', dialog))
@@ -677,6 +686,8 @@ class NativeDialogTests(unittest.TestCase):
             })
             dialog.refresh_gangs()
             self.assertEqual(dialog.current_gang, 'J101')
+            self.assertGreater(dialog.gang_draft_status.GetPosition().y,
+                               dialog.apply_gang_button.GetPosition().y)
             dialog.gang_rows.SetCellValue(0, 1, '3')
             dialog.gang_draft_changed()
             self.assertEqual(len(dialog.pattern_view.points), 3)

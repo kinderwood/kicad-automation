@@ -10,9 +10,9 @@ from .core.workbook import read_workbook, parse_sheet
 from .core.layers import LayerRules, validate_layers
 from .core.model import HEADERS, Issue
 
-PAGES = ("Netlist Source", "Netclass type", "Layer assignment", "Routing permissions",
-         "Connector assignments", "Define gangs", "RF transitions", "DXF Anchors", "Board Outline",
-         "Review Changes", "Apply / Results")
+PAGES = ("Netlist source", "Netclass type", "Layer assignment", "Routing permissions",
+         "Connector assignments", "Define RF gangs", "RF transitions", "Connector placement",
+         "Board outline", "Review changes", "Apply / results")
 
 
 def row_ranges(text):
@@ -527,7 +527,10 @@ class WorkflowController:
                 if detail:
                     issues.append(Issue('interposer_incompatible', detail))
                 if not selection.get('pose_accepted'):
-                    issues.append(Issue('interposer_pose_missing', f'{reference}: accept interposer placement in DXF Anchors'))
+                    issues.append(Issue(
+                        'interposer_pose_missing',
+                        f'{reference}: accept interposer placement in Connector placement',
+                    ))
                 if not selection.get('symbol_mpn') and not selection.get('footprint_mpn'):
                     issues.append(Issue('mpn_missing', f'{reference}: selected library parts have no MPN metadata', severity='warning'))
                 if (selection.get('symbol_mpn') and selection.get('footprint_mpn') and

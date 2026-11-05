@@ -59,6 +59,49 @@ def ui_palette():
     return UiPalette()
 
 
+class StepList(wx.VListBox):
+    """Compact native navigation with one border and a bold active step."""
+    def __init__(self, parent, choices):
+        super().__init__(parent, style=wx.BORDER_SIMPLE | wx.WANTS_CHARS)
+        self.choices = tuple(choices)
+        self.SetItemCount(len(self.choices))
+        self.apply_theme()
+
+    def GetCount(self):
+        return len(self.choices)
+
+    def item_font(self, index):
+        font = wx.Font(self.GetFont())
+        font.SetWeight(
+            wx.FONTWEIGHT_BOLD if index == self.GetSelection() else wx.FONTWEIGHT_NORMAL
+        )
+        return font
+
+    def OnMeasureItem(self, index):
+        dc = wx.ClientDC(self)
+        dc.SetFont(self.item_font(index))
+        return dc.GetCharHeight() + 8
+
+    def OnDrawBackground(self, dc, rect, index):
+        dc.SetPen(wx.Pen(ui_palette().panel))
+        dc.SetBrush(wx.Brush(ui_palette().panel))
+        dc.DrawRectangle(rect)
+
+    def OnDrawItem(self, dc, rect, index):
+        palette = ui_palette()
+        dc.SetFont(self.item_font(index))
+        dc.SetTextForeground(palette.panel_text)
+        _width, height = dc.GetTextExtent(self.choices[index])
+        dc.DrawText(self.choices[index], rect.x + 8,
+                    rect.y + max(0, (rect.height - height) // 2))
+
+    def apply_theme(self):
+        palette = ui_palette()
+        self.SetBackgroundColour(palette.panel)
+        self.SetForegroundColour(palette.panel_text)
+        self.Refresh()
+
+
 class AssignmentRenderer(grid.GridCellStringRenderer):
     """Keep assignment cells visibly interactive when their editor is inactive."""
     def __init__(self, arrow=True):
@@ -566,10 +609,10 @@ class WorkflowDialog(wx.Dialog):
         steps_font.SetWeight(wx.FONTWEIGHT_BOLD)
         steps.SetFont(steps_font)
         navigation_sizer.Add(steps, 0, wx.BOTTOM, 6)
-        self.step_list = wx.ListBox(navigation, choices=list(PAGES), style=wx.LB_SINGLE)
+        self.step_list = StepList(navigation, PAGES)
         dc = wx.ClientDC(self.step_list)
         step_width = max(dc.GetTextExtent(title)[0] for title in PAGES) + 28
-        step_height = len(PAGES) * (dc.GetCharHeight() + 5) + 8
+        step_height = sum(self.step_list.OnMeasureItem(index) for index in range(len(PAGES))) + 2
         self.step_list.SetMinSize((step_width, step_height))
         self.step_list.SetMaxSize((step_width, step_height))
         self.step_list.SetSelection(0)
@@ -665,10 +708,12 @@ class WorkflowDialog(wx.Dialog):
 
     def select_step(self, event):
         self.book.SetSelection(event.GetSelection())
+        self.step_list.Refresh()
 
     def page_changed(self, event):
         if self.step_list.GetSelection() != event.GetSelection():
             self.step_list.SetSelection(event.GetSelection())
+            self.step_list.Refresh()
         event.Skip()
 
     def button(self, parent, label, callback):
@@ -728,6 +773,7 @@ class WorkflowDialog(wx.Dialog):
     def apply_theme(self):
         """Reapply semantic colours after startup or an operating-system theme change."""
         palette = ui_palette()
+        self.step_list.apply_theme()
         self.status_panel.SetBackgroundColour(palette.panel)
         self.status_panel.SetForegroundColour(palette.panel_text)
         self.status.SetForegroundColour(palette.panel_text)
@@ -844,7 +890,7 @@ class WorkflowDialog(wx.Dialog):
     def build_spreadsheet(self, panel):
         self.task_box(
             panel,
-            'Netlist Source',
+            'Netlist source',
             'Import connector and nets assignment',
             'Choose the netlist source, assign the seven required columns, and verify the parsed nets before continuing to Layer assignment.',
         )
@@ -1979,7 +2025,7 @@ class WorkflowDialog(wx.Dialog):
 
     def build_gangs(self, panel):
         self.task_box(
-            panel, 'Define gangs', 'Define each RF connector gang',
+            panel, 'Define RF gangs', 'Define each RF connector gang',
             'Set the position pattern, numbering, connector orientation and mounting side. '
             'Edits remain a draft until applied to the selected gang.',
         )
@@ -2083,14 +2129,14 @@ class WorkflowDialog(wx.Dialog):
         preview = wx.StaticBoxSizer(preview_box, wx.VERTICAL)
         self.pattern_view = PatternPreview(preview_box)
         preview.Add(self.pattern_view, 1, wx.EXPAND | wx.ALL, 8)
-        self.gang_draft_status = self.status_label(preview_box, 'Select a gang')
-        preview.Add(self.gang_draft_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         actions = wx.BoxSizer(wx.HORIZONTAL)
         actions.AddStretchSpacer()
         actions.Add(self.button(preview_box, 'Revert', self.revert_gang), 0, wx.RIGHT, 8)
         self.apply_gang_button = self.button(preview_box, 'Apply definition', self.accept_gang)
         actions.Add(self.apply_gang_button, 0)
         preview.Add(actions, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.gang_draft_status = self.status_label(preview_box, 'Select a gang')
+        preview.Add(self.gang_draft_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         body.Add(preview, 1, wx.EXPAND)
         panel.GetSizer().Add(body, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
@@ -2400,7 +2446,7 @@ class WorkflowDialog(wx.Dialog):
         self.task_box(
             panel, 'RF transitions', 'Optionally assign approved RF transitions',
             'Requirements are derived from netclass, mapped KiCad layer and connector footprint. '
-            'Unassigned requirements do not block Review Changes or board generation.',
+            'Unassigned requirements do not block Review changes or board generation.',
         )
         controls = wx.BoxSizer(wx.HORIZONTAL)
         self.transition_filter = wx.SearchCtrl(panel, style=wx.TE_PROCESS_ENTER)
@@ -2615,7 +2661,7 @@ class WorkflowDialog(wx.Dialog):
 
     def build_anchors(self, panel):
         self.task_box(
-            panel, 'DXF Anchors', 'Associate imported connector locations',
+            panel, 'Connector placement', 'Associate imported connector locations',
             'Use KiCad File → Import → Graphics to import the whole DXF to a user layer first. Place the interposer, then capture one native connector circle or enter a numeric gang anchor.',
         )
         interposer_box = wx.StaticBox(panel, label='Interposer placement')
@@ -2846,7 +2892,7 @@ class WorkflowDialog(wx.Dialog):
 
     def build_outline(self, panel):
         self.task_box(
-            panel, 'Board Outline', 'Capture managed board contours',
+            panel, 'Board outline', 'Capture managed board contours',
             'Select imported native lines or arcs in the PCB canvas. Capture the outer boundary and optional center cutout separately. Exact closure and ownership are checked before Apply; designer Edge.Cuts stay untouched.',
         )
         self.outline_enable = wx.CheckBox(panel, label='Explicitly enable managed board outline')
@@ -2898,7 +2944,7 @@ class WorkflowDialog(wx.Dialog):
 
     def build_review(self, panel):
         self.task_box(
-            panel, 'Review Changes', 'Validate and compare the desired-state delta',
+            panel, 'Review changes', 'Validate and compare the desired-state delta',
             'Validate the complete workflow, then compare desired state against saved board ownership. Configuration errors, conflicts, stale inputs and affected designer routing block Apply.',
         )
         validation_box = wx.StaticBox(panel, label='Workflow validation')
@@ -2928,7 +2974,7 @@ class WorkflowDialog(wx.Dialog):
 
     def build_results(self, panel):
         self.task_box(
-            panel, 'Apply / Results', 'Apply to a project copy and inspect results',
+            panel, 'Apply / results', 'Apply to a project copy and inspect results',
             'Apply saves a separate controlled project copy, a reconciliation report and a recovery journal. Keep the source project separate when opening the result.',
         )
         self.results = wx.TextCtrl(panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL)
@@ -3000,7 +3046,7 @@ class WorkflowDialog(wx.Dialog):
         self._applying = False
         if self._closing: return
         self.results.ChangeValue(json.dumps(result, indent=2, default=str))
-        self.select_page(PAGES.index('Apply / Results'))
+        self.select_page(PAGES.index('Apply / results'))
         self.status.SetLabel('Project copy saved. Review the reconciliation report and validation results.')
         if isinstance(result, dict) and result.get('journal'): self.journal.ChangeValue(str(result['journal']))
         self.refresh()
@@ -3257,6 +3303,7 @@ class WorkflowDialog(wx.Dialog):
         selection = max(0, min(len(PAGES) - 1, index))
         self.book.SetSelection(selection)
         self.step_list.SetSelection(selection)
+        self.step_list.Refresh()
 
     def close(self, event):
         if self.controller.busy:

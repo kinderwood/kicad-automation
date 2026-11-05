@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.4 and the
+are authorized. Connector to Interposer Workflow is version 0.4.5 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -82,7 +82,7 @@ The 0.2.9 Workflow retains the parsed-data grid gutter as a sequential preview
 index, keeps original worksheet numbering in **Source row**, and omits excluded
 rows from the preview so it reflects the records the workflow consumes.
 
-The 0.3.0 Workflow renames the first step to **Netlist Source** and aligns its
+The 0.3.0 Workflow renames the first step to **Netlist source** and aligns its
 seven workbook-column selectors directly above a five-row parsed-net preview.
 The selected source is displayed read-only, source controls remain compact, and
 column-assignment and parsed-net status sit beside **Open full table…** beneath
@@ -112,7 +112,7 @@ refreshing its displayed heading and parsed preview.
 The 0.3.4 Workflow renames **Layer rules** to **Layer assignment** and states
 the boundary of its permission matrix in the UI. Workbook layer names map to
 actual KiCad copper layers. The netclass/layer matrix is a saved workflow
-validation policy that can block Review Changes; it does not generate or modify
+validation policy that can block Review changes; it does not generate or modify
 KiCad custom routing rules.
 
 The 0.3.5 Workflow separates the small workbook-to-copper mapping task from the
@@ -131,7 +131,7 @@ layer**, and updates the current workflow as soon as a layer is selected. It no
 longer requires a separate Apply button; board files remain unchanged until the
 reviewed workflow is applied.
 
-The 0.3.7 Workflow opens wider when the active display permits so Netlist Source
+The 0.3.7 Workflow opens wider when the active display permits so Netlist source
 fits without an initial horizontal scrollbar. The redundant dialog subtitle is
 removed, **Steps** and each blue-panel page title have stronger hierarchy, and
 the footer action is named **Save workflow settings**. Layer assignment places
@@ -147,13 +147,13 @@ each row selects a symbol from KiCad's loaded libraries and then an allowed
 footprint from an in-cell dropdown. Footprint choices satisfy both the symbol's
 `ki_fp_filters` and exact electrical pin/pad compatibility. Symbols are stored
 per gang, the interposer has its own symbol/footprint assignment, and both are
-pinned for deterministic reopening. **Define gangs** owns only geometry,
+pinned for deterministic reopening. **Define RF gangs** owns only geometry,
 numbering, connector orientation and mounting side. **RF transitions**
 optionally reconciles unique `(netclass, mapped KiCad layer, connector footprint)`
 requirements across the project; an unassigned transition does not block review
 or board generation. The project BOM MPN
 override is removed, and interposer placement moves to
-DXF Anchors. Review Changes remains the consolidated validation and comparison
+Connector placement. Review changes remains the consolidated validation and comparison
 gate.
 
 Completion requires integration and observed behavior, not only unit-test or
@@ -234,7 +234,7 @@ system-color change. Native GUI regression checks execute the same dialog tests
 under Adwaita light and dark themes. The complete light/dark dialog set passes
 in the selected KiCad 9.0.9.1 and 10.0.8 AppImage runtimes.
 
-Version 0.4.4 replaces the combined Gangs page with **Define gangs** and a
+Version 0.4.5 uses **Define RF gangs** and a
 separate **RF transitions** step. Gang geometry uses real draft/apply/revert
 state, editable pattern rows, live PCB-style preview, local definition status,
 numbering presets and independent pattern and connector rotations. Transition

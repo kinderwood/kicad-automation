@@ -24,7 +24,7 @@ allow both classes on both inner layers.
 Open the generated `.kicad_pro` in KiCad Manager, then PCB Editor and
 **Tools → External Plugins → Connector to Interposer Workflow**. The saved sidecar
 restores mappings, independent gang settings, selected artifacts and mechanical
-inputs. Use **Review Changes** before applying to a new output directory.
+inputs. Use **Review changes** before applying to a new output directory.
 Source inputs and librarian parts are never overwritten by Apply.
 
 `inputs/dxf-A-mils.dxf` and `inputs/dxf-B-mils.dxf` are independent import

@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.4**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.5**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -40,7 +40,7 @@ state. Do not open the output project in another editor during application or
 recovery. After Apply, open the output project explicitly; continuing to save
 an already-open source board does not update the output copy.
 
-1. **Netlist Source:** choose `.xlsx`, UTF-8 `.csv`, or delimited UTF-8 `.txt`.
+1. **Netlist source:** choose `.xlsx`, UTF-8 `.csv`, or delimited UTF-8 `.txt`.
    The workbook opens automatically, with the worksheet deliberately left blank
    and header row initially set to 1. Choose the netlist worksheet to detect its
    headers. Netlist worksheet, header row and optional excluded source rows
@@ -75,7 +75,7 @@ an already-open source board does not update the output copy.
 3. **Layer assignment:** map each distinct netlist layer name to an enabled
    KiCad copper layer. Each selection updates the current workflow immediately;
    there is no separate acceptance button. The KiCad-layer cells use the same
-   amber-missing and blue-assigned interaction treatment as Netlist Source,
+   amber-missing and blue-assigned interaction treatment as Netlist source,
    including persistent dropdown chevrons. **Auto assign** fills blank rows only
    when numeric matching is unambiguous. `F.Cu`, `In1.Cu` and `B.Cu` represent
    physical copper layers 1, 2 and the final layer; custom layer names use their
@@ -87,7 +87,7 @@ an already-open source board does not update the output copy.
    there is no separate acceptance button. New combinations start allowed and
    produce a review notice; existing restrictions
    survive subsequent imports and stackup additions. A disallowed combination
-   blocks workflow validation and Review Changes. This release does not generate
+   blocks workflow validation and Review changes. This release does not generate
    KiCad custom routing rules or modify the project's `.kicad_dru` file. A later
    per-net redesign will add search, filters and previewed rule updates.
 5. **Connector assignments:** the workbook supplies the single interposer
@@ -100,7 +100,7 @@ an already-open source board does not update the output copy.
    immediately. The workflow instantiates these librarian-authored parts; it
    does not generate library symbols or footprints. Placement and BOM overrides
    are not entered on this page.
-6. **Define gangs:** select an RF gang from the searchable netlist-derived list.
+6. **Define RF gangs:** select an RF gang from the searchable netlist-derived list.
    On **Pattern**, add or remove rows, set the number of positions and X offset
    for each row, then set position and row spacing. On **Numbering & placement**,
    choose row-major, serpentine, column-major or custom numbering; set pattern
@@ -114,11 +114,11 @@ an already-open source board does not update the output copy.
    cover locations in several gangs. Unassigned requirements do not block Review
    Changes or board generation. Once assigned, the workflow validates the exact footprint
    revision and mount type, board side, ordered copper stack, allowed netclass,
-   signal layer and artifact hash before Review Changes. **Refresh transition
+   signal layer and artifact hash before Review changes. **Refresh transition
    library** discovers published `.gppo-rf.json` files beneath the project;
    **Browse artifact…** can select a catalog artifact elsewhere. **Open RF
    Transition Designer…** is a disabled placeholder in this release.
-8. **DXF Anchors:** accept the interposer placement, then import the complete mechanical drawing through KiCad's
+8. **Connector placement:** accept the interposer placement, then import the complete mechanical drawing through KiCad's
    native **File → Import → Graphics**, selecting a user layer, then save.
    The bounded association accepts one full `gang-pin` text label per native
    circle. If labels have a drafting offset, explicitly enter and accept the
@@ -133,16 +133,16 @@ an already-open source board does not update the output copy.
    comparison tolerance. Mounting holes use approved
    footprints selected from the loaded KiCad libraries and are board-only,
    excluded from BOM and position files.
-9. **Board Outline:** explicitly enable this optional feature and capture
+9. **Board outline:** explicitly enable this optional feature and capture
    imported outer-boundary segments and optional center-cutout segments
    separately. Review validates exact closure, intersections and ownership.
    Only managed outline objects are replaced; designer Edge.Cuts stay intact.
-10. **Review Changes:** compare the full desired population, review additions,
+10. **Review changes:** compare the full desired population, review additions,
    removals, placement/electrical/RF changes and conflicts, and choose an empty
    output directory outside the source project tree. Accept the current change
    list before Apply. Input changes make the preview stale. Affected designer
    routing and ownership conflicts block application.
-11. **Apply / Results:** inspect the saved board, generated schematic hierarchy,
+11. **Apply / results:** inspect the saved board, generated schematic hierarchy,
    individual-component BOM, registry, report and recovery journal in the output
    copy. Recovery requires a closed output project and matching expected file
    hashes; later edits are not silently overwritten.
