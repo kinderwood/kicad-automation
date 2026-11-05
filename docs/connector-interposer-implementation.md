@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.1 and the
+are authorized. Connector to Interposer Workflow is version 0.4.2 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -221,6 +221,14 @@ replacing an existing project sidecar. Delete asks before removing that sidecar
 and leaves the current dialog state open. Reset asks before clearing the current
 dialog and preserves the stable project identity, detected board stackup and
 saved sidecar. None of these controls changes PCB or schematic files.
+
+Version 0.4.2 replaces fixed light-theme colors with a semantic palette derived
+from wx system colors. Task panels, assignment states, status badges, table
+headers and stripes, selections and custom-drawn previews remain distinct in
+light and dark appearances. The dialog reapplies the palette when wx reports a
+system-color change. Native GUI regression checks execute the same dialog tests
+under Adwaita light and dark themes. The complete light/dark dialog set passes
+in the selected KiCad 9.0.9.1 and 10.0.8 AppImage runtimes.
 
 Additional actual PCB Editor checks use the selected 9.0.9.1 AppImage and
 10.0.8: normal startup discovers both actions and Workflow opens from the

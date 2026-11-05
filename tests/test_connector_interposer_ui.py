@@ -146,13 +146,54 @@ class NativeDialogTests(unittest.TestCase):
         cls.wx = wx
         cls.app = wx.GetApp() or wx.App(False)
 
+    def test_semantic_palette_follows_wx_appearance_and_keeps_text_legible(self):
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog, ui_palette
+
+        def luminance(colour):
+            channels = []
+            for value in colour.Get()[:3]:
+                value /= 255
+                channels.append(value / 12.92 if value <= .04045
+                                else ((value + .055) / 1.055) ** 2.4)
+            return .2126 * channels[0] + .7152 * channels[1] + .0722 * channels[2]
+
+        def contrast(first, second):
+            high, low = sorted((luminance(first), luminance(second)), reverse=True)
+            return (high + .05) / (low + .05)
+
+        dialog = WorkflowDialog()
+        try:
+            palette = ui_palette()
+            appearance = self.wx.SystemSettings.GetAppearance()
+            if hasattr(appearance, 'IsDark'):
+                self.assertEqual(palette.dark, appearance.IsDark())
+            for background in (palette.info, palette.assigned, palette.warning,
+                               palette.error, palette.success):
+                self.assertGreaterEqual(contrast(palette.text, background), 4.5)
+            self.assertGreaterEqual(contrast(palette.panel_text, palette.heading), 4.5)
+
+            task_box, task_controls = dialog._task_box_controls[0]
+            self.assertEqual(task_box.GetBackgroundColour().Get()[:3], palette.info.Get()[:3])
+            self.assertEqual(task_controls[0].GetForegroundColour().Get()[:3],
+                             palette.text.Get()[:3])
+            self.assertEqual(dialog.columns_status.GetBackgroundColour().Get()[:3],
+                             palette.warning.Get()[:3])
+
+            task_box.SetBackgroundColour(self.wx.Colour(1, 2, 3))
+            dialog.apply_theme()
+            self.assertEqual(task_box.GetBackgroundColour().Get()[:3],
+                             ui_palette().info.Get()[:3])
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
     def test_native_page_hierarchy_and_full_10000_row_popup(self):
         from plugins.connector_interposer_workflow.ui import (WorkflowDialog, DataDialog,
                                                                LibraryPartPickerDialog,
                                                                LibrarySelectionCtrl,
                                                                SymbolAssignmentCtrl,
                                                                FootprintAssignmentCtrl,
-                                                               AssignmentRenderer)
+                                                               AssignmentRenderer, ui_palette)
         from plugins.connector_interposer_workflow.core.library_catalog import LibraryEntry, LibraryPart
         from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
         from plugins.connector_interposer_workflow.core.model import HEADERS
@@ -220,20 +261,21 @@ class NativeDialogTests(unittest.TestCase):
         dialog.controller.table = table
         dialog.controller.set_layers(('F.Cu', 'In1.Cu', 'B.Cu'))
         dialog.refresh_layers()
+        palette = ui_palette()
         self.assertEqual(dialog.netclass_type_grid.GetNumberRows(), 1)
         self.assertEqual(dialog.netclass_type_grid.GetCellBackgroundColour(0, 3).Get()[:3],
-                         (255, 244, 214))
+                         palette.warning.Get()[:3])
         dialog.auto_assign_netclass_types(None)
         self.assertEqual(dialog.controller.config['netclass_types']['RF'], 'RF')
         self.assertEqual(dialog.netclass_type_status.GetLabel(), '1 of 1 assigned')
         self.assertEqual(dialog.netclass_type_grid.GetCellBackgroundColour(0, 3).Get()[:3],
-                         (220, 235, 250))
+                         palette.assigned.Get()[:3])
         self.assertTrue(dialog.new_rules.IsShown())
         self.assertIn('new combinations require review', dialog.new_rules.GetLabel())
         self.assertEqual(dialog.layer_map.GetNumberRows(), 1)
         self.assertIsInstance(dialog.layer_map.GetCellRenderer(0, 1), AssignmentRenderer)
         self.assertEqual(dialog.layer_map.GetCellBackgroundColour(0, 1).Get()[:3],
-                         (255, 244, 214))
+                         palette.warning.Get()[:3])
         self.assertIsNotNone(self.wx.FindWindowByLabel('Auto assign', dialog.pages[2]))
         self.assertLess(dialog.layer_map.GetSize().height, 100)
         self.assertEqual(
@@ -255,7 +297,7 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(dialog.controller.config['layer_mapping']['L1'], 'In1.Cu')
         self.assertEqual(dialog.layer_mapping_status.GetLabel(), '1 of 1 assigned')
         self.assertEqual(dialog.layer_map.GetCellBackgroundColour(0, 1).Get()[:3],
-                         (220, 235, 250))
+                         palette.assigned.Get()[:3])
         self.assertIn('board files were not modified', dialog.status.GetLabel())
         dialog.auto_assign_layers(None)
         self.assertEqual(dialog.controller.config['layer_mapping']['L1'], 'In1.Cu')
@@ -330,7 +372,7 @@ class NativeDialogTests(unittest.TestCase):
         self.app.Yield()
 
     def test_spreadsheet_auto_mapping_uses_populated_columns_and_live_examples(self):
-        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog, ui_palette
         from plugins.connector_interposer_workflow.core.model import HEADERS
         with tempfile.TemporaryDirectory() as temporary:
             workbook = Path(temporary) / 'signals.csv'
@@ -364,7 +406,7 @@ class NativeDialogTests(unittest.TestCase):
                 self.assertEqual(dialog.mapper.GetCellValue(1, 2), 'CLOCK1')
                 self.assertEqual(dialog.workbook_filename.GetLabel(), 'signals.csv')
                 self.assertEqual(dialog.mapper.GetCellBackgroundColour(0, 2).Get()[:3],
-                                 (220, 235, 250))
+                                 ui_palette().assigned.Get()[:3])
                 self.assertEqual(len(dialog._spreadsheet_columns), 7)
                 self.assertFalse(any(label.startswith('H ·') for label in dialog._spreadsheet_columns))
                 self.assertEqual(dialog.columns_status.GetLabel(), '7 of 7 columns assigned')
@@ -414,7 +456,7 @@ class NativeDialogTests(unittest.TestCase):
                 dialog._parse_spreadsheet('redetect')
                 self.assertEqual([dialog.mapper.GetCellValue(0, column) for column in range(2, 9)], [''] * 7)
                 self.assertEqual(dialog.mapper.GetCellBackgroundColour(0, 2).Get()[:3],
-                                 (255, 244, 214))
+                                 ui_palette().warning.Get()[:3])
                 dialog.mapper.SetCellValue(0, 2, 'R · Wire')
                 self.assertTrue(dialog._autofill_consecutive_mapping())
                 self.assertEqual(

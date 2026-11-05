@@ -14,6 +14,14 @@ its rows instead of consuming the remaining window. No browser, webview,
 authoring wizard or generative recipe editor is part of this package's layout
 flow.
 
+Custom surfaces use semantic colors derived from wx system colors. Text and
+ordinary native controls inherit the platform appearance; task panels,
+assignment states, status badges, grid stripes, headings and drawn previews
+adapt those colors for the current light or dark theme. The dialog reapplies
+the palette on `wx.EVT_SYS_COLOUR_CHANGED`. Fixed light-theme backgrounds are
+not permitted because GTK can pair them with dark-theme text. Native GUI checks
+run under both Adwaita light and dark appearances.
+
 Layer assignment and Routing permissions update the current workflow directly
 from their native grid editors. They do not add page-level acceptance buttons;
 the global status area reports the change, and **Save workflow settings**

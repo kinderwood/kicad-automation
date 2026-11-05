@@ -88,10 +88,13 @@ for appdir in "$@"; do
         echo "KiCad AppDir has no executable AppRun: $appdir" >&2
         exit 1
     fi
-    echo "Native GUI checks: $appdir"
-    KICAD_TEST_APP_RUN="$appdir/AppRun" \
-    KICAD_WIZARD_DIR="$appdir/share/kicad/scripting/plugins" \
-        "$appdir/AppRun" python3.11 -m unittest -v \
-        tests.test_connector_interposer_ui.NativeDialogTests \
-        tests.test_gppo_rf_transition.RFNativeTests.test_native_dialog_validation_and_stale_publication_gate
+    for theme in Adwaita Adwaita:dark; do
+        echo "Native GUI checks: $appdir ($theme)"
+        GTK_THEME="$theme" \
+        KICAD_TEST_APP_RUN="$appdir/AppRun" \
+        KICAD_WIZARD_DIR="$appdir/share/kicad/scripting/plugins" \
+            "$appdir/AppRun" python3.11 -m unittest -v \
+            tests.test_connector_interposer_ui.NativeDialogTests \
+            tests.test_gppo_rf_transition.RFNativeTests.test_native_dialog_validation_and_stale_publication_gate
+    done
 done

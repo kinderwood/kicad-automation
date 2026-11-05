@@ -11,6 +11,54 @@ WORKBOOK_SUFFIXES = ('.xlsx', '.csv', '.txt')
 SPREADSHEET_PREVIEW_ROWS = 5
 
 
+def _system_colour(name, fallback):
+    key = getattr(wx, 'SYS_COLOUR_' + name, None)
+    return wx.SystemSettings.GetColour(key) if key is not None else wx.Colour(*fallback)
+
+
+def _mix_colour(base, accent, weight):
+    """Blend a semantic accent into the current system surface."""
+    return wx.Colour(*(round(base.Get()[index] * (1 - weight) + accent[index] * weight)
+                       for index in range(3)))
+
+
+def _dark_appearance():
+    appearance = (wx.SystemSettings.GetAppearance()
+                  if hasattr(wx.SystemSettings, 'GetAppearance') else None)
+    if appearance is not None and hasattr(appearance, 'IsDark'):
+        return appearance.IsDark()
+    colour = _system_colour('WINDOW', (255, 255, 255))
+    red, green, blue = colour.Get()[:3]
+    return ((red / 255) * .299 + (green / 255) * .587 + (blue / 255) * .117) < .5
+
+
+class UiPalette:
+    """Semantic colours derived from wx/GTK rather than a fixed light palette."""
+    def __init__(self):
+        self.dark = _dark_appearance()
+        self.window = _system_colour('WINDOW', (255, 255, 255))
+        self.text = _system_colour('WINDOWTEXT', (0, 0, 0))
+        self.panel = _system_colour('BTNFACE', (240, 240, 240))
+        self.panel_text = _system_colour('BTNTEXT', (0, 0, 0))
+        self.frame = _system_colour('FRAMEBK', self.panel.Get()[:3])
+        self.highlight = _system_colour('HIGHLIGHT', (40, 110, 190))
+        self.highlight_text = _system_colour('HIGHLIGHTTEXT', (255, 255, 255))
+        self.accent = _system_colour('HOTLIGHT', self.highlight.Get()[:3])
+        weight = .30 if self.dark else .13
+        self.info = _mix_colour(self.panel, self.accent.Get()[:3], weight)
+        self.assigned = self.info
+        self.warning = _mix_colour(self.panel, (214, 145, 20), .30 if self.dark else .17)
+        self.error = _mix_colour(self.panel, (190, 55, 48), .30 if self.dark else .14)
+        self.success = _mix_colour(self.panel, (45, 145, 70), .28 if self.dark else .14)
+        self.error_text = wx.Colour(255, 185, 178) if self.dark else wx.Colour(155, 35, 35)
+        self.alternate = self.window.ChangeLightness(105 if self.dark else 96)
+        self.heading = self.frame
+
+
+def ui_palette():
+    return UiPalette()
+
+
 class AssignmentRenderer(grid.GridCellStringRenderer):
     """Keep assignment cells visibly interactive when their editor is inactive."""
     def __init__(self, arrow=True):
@@ -41,7 +89,7 @@ class AssignmentRenderer(grid.GridCellStringRenderer):
             dc.DrawPolygon((wx.Point(center_x - 4, center_y - 2),
                             wx.Point(center_x + 4, center_y - 2),
                             wx.Point(center_x, center_y + 3)))
-        dc.SetPen(wx.Pen(wx.Colour(95, 125, 150), 2))
+        dc.SetPen(wx.Pen(ui_palette().accent, 2))
         dc.DrawLine(rect.x, rect.GetBottom() - 1, rect.GetRight(), rect.GetBottom() - 1)
 
 
@@ -115,10 +163,11 @@ class PatternPreview(wx.Panel):
         self.name, self.points, self.error = name, points or {}, error
         self.Refresh()
     def paint(self, event):
+        palette = ui_palette()
         dc = wx.AutoBufferedPaintDC(self)
-        dc.SetBackground(wx.Brush(wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW)))
+        dc.SetBackground(wx.Brush(palette.window))
         dc.Clear()
-        dc.SetTextForeground(wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT))
+        dc.SetTextForeground(palette.text)
         dc.DrawText(self.name + ' — location preview', 10, 10)
         if self.error:
             dc.DrawText(self.error, 10, 40)
@@ -132,7 +181,7 @@ class PatternPreview(wx.Panel):
         for pin, (x, y) in self.points.items():
             px = int((x-min(xs))*scale+45)
             py = int((y-min(ys))*scale+60)
-            dc.SetPen(wx.Pen(wx.Colour(20, 115, 150), 2))
+            dc.SetPen(wx.Pen(palette.accent, 2))
             dc.SetBrush(wx.TRANSPARENT_BRUSH)
             dc.DrawCircle(px, py, 12)
             dc.DrawText(str(pin), px-4, py-8)
@@ -156,8 +205,9 @@ class OutlinePreview(wx.Panel):
         self.contours = contours
         self.Refresh()
     def paint(self, event):
+        palette = ui_palette()
         dc = wx.AutoBufferedPaintDC(self)
-        dc.SetBackground(wx.Brush(wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW)))
+        dc.SetBackground(wx.Brush(palette.window))
         dc.Clear()
         paths = []
         from .core.outline import Segment, _arc
@@ -176,7 +226,8 @@ class OutlinePreview(wx.Panel):
         width, height = self.GetClientSize()
         scale = min((width-50)/max(max(xs)-min(xs), 1), (height-50)/max(max(ys)-min(ys), 1))
         for role, line in paths:
-            dc.SetPen(wx.Pen(wx.Colour(25, 110, 145) if role == 'outer' else wx.Colour(190, 90, 20), 2))
+            dc.SetPen(wx.Pen(palette.accent if role == 'outer'
+                             else _mix_colour(palette.text, (230, 125, 30), .70), 2))
             dc.DrawLines([wx.Point(round(25+(x-min(xs))*scale), round(25+(y-min(ys))*scale)) for x, y in line])
 
 
@@ -201,9 +252,11 @@ class PartPreview(wx.Panel):
         self.Refresh()
 
     def paint(self, event):
+        palette = ui_palette()
         dc = wx.AutoBufferedPaintDC(self)
-        dc.SetBackground(wx.Brush(wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW)))
+        dc.SetBackground(wx.Brush(palette.window))
         dc.Clear()
+        dc.SetTextForeground(palette.text)
         if not self.items:
             dc.DrawText('Select a part to preview its pads or pins.', 12, 12)
             return
@@ -213,8 +266,8 @@ class PartPreview(wx.Panel):
         top = min(y-h/2 for x, y, w, h, label in self.items)
         bottom = max(y+h/2 for x, y, w, h, label in self.items)
         scale = min((width-50)/max(right-left, 1), (height-50)/max(bottom-top, 1))
-        dc.SetPen(wx.Pen(wx.Colour(20, 115, 150), 1))
-        dc.SetBrush(wx.Brush(wx.Colour(120, 190, 210)))
+        dc.SetPen(wx.Pen(palette.accent, 1))
+        dc.SetBrush(wx.Brush(_mix_colour(palette.window, palette.accent.Get()[:3], .45)))
         for x, y, w, h, label in self.items:
             px = round(25+(x-w/2-left)*scale)
             py = round(25+(y-h/2-top)*scale)
@@ -421,7 +474,10 @@ class SymbolAssignmentCtrl(wx.Panel):
         self.selection = dict(selection or {})
         self.display.SetLabel(self.selection.get('library_id', 'Choose a symbol'))
         assigned = bool(self.selection.get('library_id'))
-        self.SetBackgroundColour(wx.Colour(220, 235, 250) if assigned else wx.Colour(255, 244, 214))
+        palette = ui_palette()
+        self.SetBackgroundColour(palette.assigned if assigned else palette.warning)
+        self.SetForegroundColour(palette.text)
+        self.display.SetForegroundColour(palette.text)
         self.Refresh()
 
 
@@ -462,9 +518,12 @@ class FootprintAssignmentCtrl(wx.Panel):
         event.Skip()
 
     def _style(self, assigned):
-        colour = wx.Colour(220, 235, 250) if assigned else wx.Colour(255, 244, 214)
+        palette = ui_palette()
+        colour = palette.assigned if assigned else palette.warning
         self.SetBackgroundColour(colour)
+        self.SetForegroundColour(palette.text)
         self.choice.SetBackgroundColour(colour)
+        self.choice.SetForegroundColour(palette.text)
         self.Refresh()
 
 
@@ -485,6 +544,9 @@ class WorkflowDialog(wx.Dialog):
         self._spreadsheet_columns = {}
         self._updating_layers = False
         self._assignment_signature = None
+        self._task_box_controls = []
+        self._status_labels = []
+        self._persistent_headings = []
         outer = wx.BoxSizer(wx.VERTICAL)
 
         heading = wx.StaticText(self, label='Connector to Interposer Workflow')
@@ -538,7 +600,8 @@ class WorkflowDialog(wx.Dialog):
         outer.Add(body, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
 
         status_panel = wx.Panel(self, style=wx.BORDER_SIMPLE)
-        status_panel.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
+        self.status_panel = status_panel
+        status_panel.SetBackgroundColour(ui_palette().panel)
         status_sizer = wx.BoxSizer(wx.HORIZONTAL)
         status_heading = wx.StaticText(status_panel, label='Status')
         status_font = status_heading.GetFont()
@@ -589,6 +652,8 @@ class WorkflowDialog(wx.Dialog):
         self.SetSize((min(1320, max(960, int(display_area.width * .94))),
                       min(840, max(680, int(display_area.height * .90)))))
         self.Bind(wx.EVT_CLOSE, self.close)
+        self.Bind(wx.EVT_SYS_COLOUR_CHANGED, self.system_colours_changed)
+        self.apply_theme()
         self.restore()
         self.Layout()
         for page in self.pages:
@@ -618,6 +683,81 @@ class WorkflowDialog(wx.Dialog):
             self.refresh()
         return run
 
+    def _style_grid(self, view):
+        palette = ui_palette()
+        view.SetDefaultCellBackgroundColour(palette.window)
+        view.SetDefaultCellTextColour(palette.text)
+        view.SetLabelBackgroundColour(palette.heading)
+        view.SetLabelTextColour(palette.panel_text)
+        view.SetSelectionBackground(palette.highlight)
+        view.SetSelectionForeground(palette.highlight_text)
+
+    def _style_status(self, control, state):
+        palette = ui_palette()
+        background = {
+            'success': palette.success,
+            'warning': palette.warning,
+            'error': palette.error,
+        }.get(state, palette.panel)
+        control._workflow_status_state = state
+        control.SetBackgroundColour(background)
+        control.SetForegroundColour(palette.text if state != 'neutral' else palette.panel_text)
+        control.Refresh()
+
+    def _style_heading(self, control):
+        palette = ui_palette()
+        control.SetBackgroundColour(palette.heading)
+        control.SetForegroundColour(palette.panel_text)
+
+    def _style_mapper_theme(self):
+        palette = ui_palette()
+        for column in range(self.mapper.GetNumberCols()):
+            self.mapper.SetCellTextColour(0, column, palette.text)
+        self.mapper.SetCellBackgroundColour(0, 0, palette.assigned)
+        self.mapper.SetCellBackgroundColour(0, 1, palette.assigned)
+        for row in range(1, self.mapper.GetNumberRows()):
+            background = palette.alternate if row % 2 == 0 else palette.window
+            for column in range(self.mapper.GetNumberCols()):
+                self.mapper.SetCellBackgroundColour(row, column, background)
+                self.mapper.SetCellTextColour(row, column, palette.text)
+        self._style_assignment_row()
+
+    def apply_theme(self):
+        """Reapply semantic colours after startup or an operating-system theme change."""
+        palette = ui_palette()
+        self.status_panel.SetBackgroundColour(palette.panel)
+        self.status_panel.SetForegroundColour(palette.panel_text)
+        self.status.SetForegroundColour(palette.panel_text)
+        for box, controls in self._task_box_controls:
+            box.SetBackgroundColour(palette.info)
+            box.SetForegroundColour(palette.text)
+            for control in controls:
+                control.SetForegroundColour(palette.text)
+        for control in self._persistent_headings:
+            self._style_heading(control)
+        for control in self._status_labels:
+            self._style_status(control, getattr(control, '_workflow_status_state', 'neutral'))
+        for view in (self.mapper, self.netclass_type_grid, self.layer_map, self.rules):
+            self._style_grid(view)
+        self._style_mapper_theme()
+        if hasattr(self, 'spreadsheet_feedback'):
+            self._set_spreadsheet_feedback(
+                self.spreadsheet_feedback.GetLabel().strip(),
+                getattr(self, '_spreadsheet_feedback_error', False),
+            )
+        self.refresh_layers()
+        self.refresh_gangs()
+        self.refresh_connector_assignments(True)
+        for preview in (self.pattern_view, self.outline_view):
+            preview.Refresh()
+        self.Layout()
+        for page in self.pages:
+            page.Refresh()
+
+    def system_colours_changed(self, event):
+        self.apply_theme()
+        event.Skip()
+
     def note(self, parent, text):
         label = wx.StaticText(parent, label=text)
         label.Wrap(820)
@@ -626,35 +766,40 @@ class WorkflowDialog(wx.Dialog):
 
     def task_box(self, parent, title, subtitle, description):
         box = wx.Panel(parent, style=wx.BORDER_SIMPLE)
-        box.SetBackgroundColour(wx.Colour(220, 235, 250))
+        palette = ui_palette()
+        box.SetBackgroundColour(palette.info)
+        box.SetForegroundColour(palette.text)
         sizer = wx.BoxSizer(wx.VERTICAL)
         heading = wx.StaticText(box, label=title)
         font = heading.GetFont()
         font.SetPointSize(font.GetPointSize() + 1)
         font.SetWeight(wx.FONTWEIGHT_BOLD)
         heading.SetFont(font)
+        heading.SetForegroundColour(palette.text)
         sizer.Add(heading, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
         task = wx.StaticText(box, label=subtitle)
         task_font = task.GetFont()
         task_font.SetWeight(wx.FONTWEIGHT_BOLD)
         task.SetFont(task_font)
+        task.SetForegroundColour(palette.text)
         sizer.Add(task, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
         detail = wx.StaticText(box, label=description)
+        detail.SetForegroundColour(palette.text)
         detail.Wrap(820)
         sizer.Add(detail, 0, wx.ALL, 10)
         box.SetSizer(sizer)
         parent.GetSizer().Add(box, 0, wx.EXPAND | wx.ALL, 8)
+        self._task_box_controls.append((box, (heading, task, detail)))
         return box
 
-    @staticmethod
-    def status_label(parent, label):
+    def status_label(self, parent, label):
         control = wx.StaticText(parent, label=label, style=wx.BORDER_SIMPLE)
-        control.SetBackgroundColour(wx.Colour(232, 244, 234))
-        control.SetForegroundColour(wx.Colour(40, 122, 61))
         font = control.GetFont()
         font.SetWeight(wx.FONTWEIGHT_BOLD)
         control.SetFont(font)
         control.SetMinSize((190, -1))
+        self._status_labels.append(control)
+        self._style_status(control, 'neutral')
         return control
 
     def field(self, parent, label, value='', picker=False, invalidate=True):
@@ -772,13 +917,18 @@ class WorkflowDialog(wx.Dialog):
         self.mapper.SetCellValue(0, 0, 'Assignments')
         self.mapper.SetReadOnly(0, 0)
         self.mapper.SetReadOnly(0, 1)
-        self.mapper.SetCellBackgroundColour(0, 0, wx.Colour(220, 235, 250))
+        palette = ui_palette()
+        self.mapper.SetCellBackgroundColour(0, 0, palette.assigned)
+        self.mapper.SetCellTextColour(0, 0, palette.text)
         self.mapper.SetCellRenderer(0, 0, AssignmentRenderer(False))
         for row_index in range(1, SPREADSHEET_PREVIEW_ROWS + 1):
             for column in range(len(HEADERS) + 2):
                 self.mapper.SetReadOnly(row_index, column)
-                if row_index % 2 == 0:
-                    self.mapper.SetCellBackgroundColour(row_index, column, wx.Colour(248, 249, 250))
+                self.mapper.SetCellBackgroundColour(
+                    row_index, column,
+                    palette.alternate if row_index % 2 == 0 else palette.window,
+                )
+                self.mapper.SetCellTextColour(row_index, column, palette.text)
         mapping.Add(self.mapper, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
 
         row = wx.BoxSizer(wx.HORIZONTAL)
@@ -923,10 +1073,10 @@ class WorkflowDialog(wx.Dialog):
         self._spreadsheet_timer = wx.CallLater(delay, self._parse_spreadsheet, mode)
 
     def _set_spreadsheet_feedback(self, message, error=False):
+        self._spreadsheet_feedback_error = error
         self.spreadsheet_feedback.SetLabel(message or ' ')
-        colour = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT)
-        if error:
-            colour = wx.Colour(180, 35, 35)
+        palette = ui_palette()
+        colour = palette.error_text if error else palette.text
         self.spreadsheet_feedback.SetForegroundColour(colour)
         self.spreadsheet_feedback.Wrap(780)
         self.spreadsheet_feedback.GetParent().Layout()
@@ -1012,14 +1162,16 @@ class WorkflowDialog(wx.Dialog):
         values = [self.mapper.GetCellValue(0, column).strip()
                   for column in range(2, len(HEADERS) + 2)]
         counts = {value: values.count(value) for value in set(values) if value}
+        palette = ui_palette()
         for column, value in enumerate(values, 2):
             if not value:
-                background = wx.Colour(255, 244, 214)
+                background = palette.warning
             elif counts[value] > 1:
-                background = wx.Colour(252, 232, 230)
+                background = palette.error
             else:
-                background = wx.Colour(220, 235, 250)
+                background = palette.assigned
             self.mapper.SetCellBackgroundColour(0, column, background)
+            self.mapper.SetCellTextColour(0, column, palette.text)
             self.mapper.SetCellRenderer(0, column, AssignmentRenderer(True))
         self.mapper.ForceRefresh()
 
@@ -1193,19 +1345,16 @@ class WorkflowDialog(wx.Dialog):
                        for name in names)
         self.netclass_type_status.SetLabel(f'{assigned} of {len(names)} assigned')
         complete = bool(names) and assigned == len(names)
-        self.netclass_type_status.SetBackgroundColour(
-            wx.Colour(232, 244, 234) if complete else wx.Colour(255, 244, 214)
-        )
-        self.netclass_type_status.SetForegroundColour(
-            wx.Colour(40, 122, 61) if complete else wx.Colour(140, 87, 8)
-        )
+        self._style_status(self.netclass_type_status, 'success' if complete else 'warning')
         self.pages[1].FitInside()
 
     def _style_netclass_type_cell(self, row):
         assigned = self.netclass_type_grid.GetCellValue(row, 3) in ('RF', 'DC')
+        palette = ui_palette()
         self.netclass_type_grid.SetCellBackgroundColour(
-            row, 3, wx.Colour(220, 235, 250) if assigned else wx.Colour(255, 244, 214),
+            row, 3, palette.assigned if assigned else palette.warning,
         )
+        self.netclass_type_grid.SetCellTextColour(row, 3, palette.text)
         self.netclass_type_grid.SetCellRenderer(row, 3, AssignmentRenderer(True))
         self.netclass_type_grid.ForceRefresh()
 
@@ -1339,6 +1488,10 @@ class WorkflowDialog(wx.Dialog):
             self.layer_map.SetMaxSize((-1, table_height))
             assigned = sum(bool(self.controller.config['layer_mapping'].get(name)) for name in names)
             self.layer_mapping_status.SetLabel(f'{assigned} of {len(names)} assigned')
+            self._style_status(
+                self.layer_mapping_status,
+                'success' if names and assigned == len(names) else 'warning',
+            )
             self.layer_map.GetParent().Layout()
             self.pages[2].FitInside()
 
@@ -1374,9 +1527,11 @@ class WorkflowDialog(wx.Dialog):
 
     def _style_layer_assignment_cell(self, row):
         assigned = bool(self.layer_map.GetCellValue(row, 1).strip())
+        palette = ui_palette()
         self.layer_map.SetCellBackgroundColour(
-            row, 1, wx.Colour(220, 235, 250) if assigned else wx.Colour(255, 244, 214),
+            row, 1, palette.assigned if assigned else palette.warning,
         )
+        self.layer_map.SetCellTextColour(row, 1, palette.text)
         self.layer_map.SetCellRenderer(row, 1, AssignmentRenderer(True))
         self.layer_map.ForceRefresh()
 
@@ -1482,7 +1637,8 @@ class WorkflowDialog(wx.Dialog):
         for label in ('Ref des', 'Symbol', 'Footprint'):
             heading = wx.StaticText(interposer_box, label=label, style=wx.BORDER_SIMPLE)
             font = heading.GetFont(); font.SetWeight(wx.FONTWEIGHT_BOLD); heading.SetFont(font)
-            heading.SetBackgroundColour(wx.Colour(246, 246, 246))
+            self._style_heading(heading)
+            self._persistent_headings.append(heading)
             heading.SetMinSize((120 if label == 'Ref des' else 360, 34))
             self.interposer_assignment_grid.Add(heading, 0 if label == 'Ref des' else 1,
                                                 wx.EXPAND | wx.ALL, 0)
@@ -1692,6 +1848,10 @@ class WorkflowDialog(wx.Dialog):
                 f'{reference} placement accepted' if reference and interposer.get('pose_accepted')
                 else 'Interposer placement required'
             )
+            self._style_status(
+                self.interposer_pose_status,
+                'success' if reference and interposer.get('pose_accepted') else 'warning',
+            )
         symbol_spec = interposer.get('symbol', {})
         self.interposer_symbol_assignment.set_selection(symbol_spec)
         symbol = self._configured_symbol(symbol_spec, False)
@@ -1707,7 +1867,7 @@ class WorkflowDialog(wx.Dialog):
         for label, width in (('Gang', 120), ('Positions', 100), ('Symbol', 340), ('Footprint', 380)):
             heading = wx.StaticText(self.gang_assignment_rows, label=label, style=wx.BORDER_SIMPLE)
             font = heading.GetFont(); font.SetWeight(wx.FONTWEIGHT_BOLD); heading.SetFont(font)
-            heading.SetBackgroundColour(wx.Colour(246, 246, 246)); heading.SetMinSize((width, 34))
+            self._style_heading(heading); heading.SetMinSize((width, 34))
             sizer.Add(heading, 1 if label in ('Symbol', 'Footprint') else 0, wx.EXPAND)
         for name in names:
             if query and query not in name.casefold():
@@ -1747,7 +1907,7 @@ class WorkflowDialog(wx.Dialog):
         for label, width in (('Ref des', 120), ('Pins used', 100), ('Symbol', 340), ('Footprint', 380)):
             heading = wx.StaticText(self.dc_assignment_rows, label=label, style=wx.BORDER_SIMPLE)
             font = heading.GetFont(); font.SetWeight(wx.FONTWEIGHT_BOLD); heading.SetFont(font)
-            heading.SetBackgroundColour(wx.Colour(246, 246, 246)); heading.SetMinSize((width, 34))
+            self._style_heading(heading); heading.SetMinSize((width, 34))
             dc_sizer.Add(heading, 1 if label in ('Symbol', 'Footprint') else 0, wx.EXPAND)
         for name in dc_names:
             if query and query not in name.casefold():
@@ -1806,9 +1966,7 @@ class WorkflowDialog(wx.Dialog):
             (self.gang_assignment_status, assigned_gangs == len(names) and bool(names)),
             (self.dc_assignment_status, assigned_dc == len(dc_names) and bool(dc_names)),
         ):
-            control.SetBackgroundColour(wx.Colour(232, 244, 234) if complete else wx.Colour(255, 244, 214))
-            control.SetForegroundColour(wx.Colour(40, 122, 61) if complete else wx.Colour(140, 87, 8))
-            control.Refresh()
+            self._style_status(control, 'success' if complete else 'warning')
 
     def build_gangs(self, panel):
         self.task_box(
@@ -2091,8 +2249,7 @@ class WorkflowDialog(wx.Dialog):
         selection['pose_accepted'] = True
         self.controller.changed()
         self.interposer_pose_status.SetLabel(f'{reference} placement accepted')
-        self.interposer_pose_status.SetBackgroundColour(wx.Colour(232, 244, 234))
-        self.interposer_pose_status.SetForegroundColour(wx.Colour(40, 122, 61))
+        self._style_status(self.interposer_pose_status, 'success')
 
     def capture_circle(self, event):
         if self.pcbnew is None: raise ValueError('Open this workflow from the KiCad PCB Editor')
@@ -2127,6 +2284,7 @@ class WorkflowDialog(wx.Dialog):
         self.dc_anchor_status.SetLabel(
             'Draft pin 1 circle captured; set orientation and side, then accept placement.'
         )
+        self._style_status(self.dc_anchor_status, 'warning')
 
     def select_dc_anchor(self, event):
         reference = self.dc_anchor_connector.GetStringSelection()
@@ -2138,6 +2296,10 @@ class WorkflowDialog(wx.Dialog):
         self.dc_anchor_status.SetLabel(
             f'{reference} pin 1 placement accepted' if selection.get('anchor_accepted')
             else f'{reference} pin 1 placement required'
+        )
+        self._style_status(
+            self.dc_anchor_status,
+            'success' if selection.get('anchor_accepted') else 'warning',
         )
 
     def accept_dc_anchor(self, event):
@@ -2170,6 +2332,7 @@ class WorkflowDialog(wx.Dialog):
         ]
         self.controller.config['mechanical']['accepted'] = True
         self.dc_anchor_status.SetLabel(f'{reference} pin 1 placement accepted')
+        self._style_status(self.dc_anchor_status, 'success')
         self._dc_circle_draft = None
 
     def accept_anchor(self, event):
@@ -2517,6 +2680,7 @@ class WorkflowDialog(wx.Dialog):
         self.hole_path.set_selection({})
         self.anchor_status.SetLabel('No anchor captured.')
         self.dc_anchor_status.SetLabel('DC pin 1 placement required')
+        self._style_status(self.dc_anchor_status, 'warning')
         self.mechanical_list.DeleteAllItems()
 
         self.outline_enable.SetValue(False)
@@ -2575,6 +2739,7 @@ class WorkflowDialog(wx.Dialog):
             self.anchor_interposer_ref.SetLabel('Ref des: ' + ref)
             if part.get('pose_accepted'):
                 self.interposer_pose_status.SetLabel(f'{ref} placement accepted')
+                self._style_status(self.interposer_pose_status, 'success')
         self.output_dir.ChangeValue(cfg.get('output_dir', ''))
         self.outline_enable.SetValue(cfg['outline'].get('enabled', False))
         self.outline_view.show(cfg['outline'].get('source_preview', {}))
@@ -2600,9 +2765,19 @@ class WorkflowDialog(wx.Dialog):
             self.columns_status.SetLabel(f'{mapped} of {len(HEADERS)} columns assigned')
             noun = 'net' if table.included_count == 1 else 'nets'
             self.nets_status.SetLabel(f'{table.included_count} {noun} parsed')
+            self._style_status(
+                self.columns_status,
+                'success' if mapped == len(HEADERS) else 'warning',
+            )
+            self._style_status(
+                self.nets_status,
+                'success' if table.included_count else 'warning',
+            )
         else:
             self.columns_status.SetLabel(f'0 of {len(HEADERS)} columns assigned')
             self.nets_status.SetLabel('0 nets parsed')
+            self._style_status(self.columns_status, 'warning')
+            self._style_status(self.nets_status, 'warning')
         self.review_button.Enable(not self.controller.busy)
         self.apply_button.Enable(not self.controller.busy and self.controller.preview is not None and not self.controller.preview.get('conflicts') and self.confirm_review.GetValue())
         self.abort_button.Enable(self.controller.busy and not self._applying)

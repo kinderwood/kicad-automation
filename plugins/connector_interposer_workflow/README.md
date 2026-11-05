@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.1**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.2**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -16,7 +16,10 @@ Install through the repository's Plugin and Content Manager catalogue, or copy
 this complete package directory into KiCad's user scripting `plugins` directory.
 Restart PCB Editor or refresh plugins, then choose **Tools → External Plugins →
 Connector to Interposer Workflow**. Save the project before opening the modeless
-native wx dialog. Python core modules also run without KiCad or wx dependencies.
+native wx dialog. The dialog follows the operating system light or dark appearance;
+its task panels, assignment states, statuses, tables and previews derive their
+colors from wx system colors. Python core modules also run without KiCad or wx
+dependencies.
 
 ## Saved-state workflow
 
