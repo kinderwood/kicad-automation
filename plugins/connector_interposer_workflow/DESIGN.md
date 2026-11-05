@@ -1,7 +1,7 @@
 # Workflow boundaries
 
 The native modeless wx dialog follows Netlist Source → Netclass type → Layer assignment →
-Routing permissions → Connector assignments → Gangs → DXF Anchors → Board Outline →
+Routing permissions → Connector assignments → Define gangs → RF transitions → DXF Anchors → Board Outline →
 Review Changes → Apply / Results. A
 read-only virtual grid displays the complete parsed workbook in a separate
 popup. Every page begins with a blue task-description panel whose title exactly
@@ -58,12 +58,32 @@ metadata. Its graphical body is not reused by the initial generated schematic;
 the generator retains its stable split interposer presentation for large pin
 counts while pinning the selected library symbol as provenance.
 
+Define gangs owns only RF connector position geometry, position numbering,
+connector orientation and mounting side. Its editable pattern rows and numbered
+preview operate on one netlist-derived gang at a time. RF transition selection
+does not belong to a gang definition because locations in the same gang can
+have different electrical requirements.
+
+RF transitions is a separate project-wide reconciliation step. It derives one
+requirement for every unique `(netclass, mapped KiCad layer, connector
+footprint)` tuple used by an RF location and assigns one compatible, published
+transition artifact to that requirement. Artifact side, stackup, revision and
+footprint hash remain compatibility checks rather than parts of the requirement
+identity. Existing artifacts are immutable library inputs. An optional **Open
+RF Transition Designer…** action may launch the separately installed authoring
+tool, but this workflow must remain usable when that package is absent. The two
+tools communicate through the versioned artifact/catalog contract and an
+explicit library refresh, not an in-memory runtime dependency.
+
 The editable [UI Design Guide](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=135-37)
 records the current workflow, product principles, approved and retired patterns,
 page anatomy, interaction states and open prototypes. It records durable design
 decisions and reasons; implementation history remains in repository documentation.
 Its editable Layer assignment pattern is at
 [section 08](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=148-37).
+The implemented Define gangs and RF transitions patterns are at
+[section 09](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=177-37)
+and [section 10](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=178-46).
 
 `WorkflowController` owns UI drafts and preview invalidation. Core records,
 workbook parsing, geometry, validation and schematic generation stay independent
@@ -91,10 +111,10 @@ Library parts are immutable read inputs selected by their loaded KiCad library
 identities. The UI resolves global, project and nested library tables, while
 project snapshots preserve exact selected revisions rather than newly authored
 variants. RF payloads are declarative;
-opaque recipes are retained as provenance and never executed. Per-location
-artifact overrides accommodate different signal layers within the same gang;
-the workflow rejects incompatible saved signal-layer roles rather than
-silently retuning geometry.
+opaque recipes are retained as provenance and never executed. Transition
+assignments are reconciled by electrical requirement across all RF locations;
+the workflow rejects incompatible saved layer, side, stackup, revision or
+footprint roles rather than silently retuning geometry.
 
 Apply materializes an isolated project copy and verifies saved native geometry,
 nets and groups before journaled publication of the output files. The open

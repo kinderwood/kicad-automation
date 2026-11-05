@@ -31,6 +31,8 @@ def prepare(destination):
     controller.load_workbook(fixture / 'inputs/netlist-A.xlsx')
     controller.config['project_id'] = 'af0ef9ad-e80c-5a97-adf5-ef89acf8d8b9'
     controller.config['layer_mapping'] = {'L2': 'In1.Cu', 'L3': 'In2.Cu'}
+    controller.set_netclass_type('CLOCK', 'RF')
+    controller.set_netclass_type('DATA', 'RF')
     controller.config['mechanical'] = {
         'layer': 'User.Drawings', 'accepted': True, 'label_offset': [-2.54, -2.54],
     }
@@ -56,10 +58,17 @@ def prepare(destination):
             'anchor': [anchor['x_mm'], anchor['y_mm']], 'anchor_accepted': True,
             'part_id': str(footprint), 'library_id': 'Example:' + footprint.stem,
             'symbol': connector_symbol,
-            'rotation': 0, 'rf_clock': 0 if name == 'J101' else 180,
-            'rf_artifacts': {str(i): str(fixture / 'library/rf' /
-                ('RF-L2.r1.gppo-rf.json' if i % 2 else 'RF-L3.r1.gppo-rf.json')) for i in range(1, 7)},
+            'rotation': 0, 'connector_rotation': 0 if name == 'J101' else 180,
         })
+    for requirement in controller.rf_transition_requirements():
+        architecture = next(
+            name for name, layer in controller.config['layer_mapping'].items()
+            if layer == requirement['layer']
+        )
+        controller.set_rf_transition(
+            requirement['key'],
+            fixture / 'library/rf' / f'RF-{architecture}.r1.gppo-rf.json',
+        )
     native = controller.backend.call('inspect', board_path=str(board),
         source_layer='User.Drawings', label_offset=[-2.54, -2.54])
     segments = native['segments']
@@ -93,6 +102,16 @@ def run(destination):
     if repeat['status'] != 'NOOP':
         raise AssertionError('Repeated controller preview must be NOOP: ' + str(repeat['changes']))
     reopened.load_workbook(Path(__file__).resolve().parent / 'inputs/netlist-B.xlsx')
+    fixture = Path(__file__).resolve().parent
+    for requirement in reopened.rf_transition_requirements():
+        architecture = next(
+            name for name, layer in reopened.config['layer_mapping'].items()
+            if layer == requirement['layer']
+        )
+        reopened.set_rf_transition(
+            requirement['key'],
+            fixture / 'library/rf' / f'RF-{architecture}.r1.gppo-rf.json',
+        )
     reopened.config['output_dir'] = str(Path(destination).resolve() / 'applied-B')
     update = reopened.review()
     if update['conflicts']:

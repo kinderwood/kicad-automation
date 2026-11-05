@@ -12,6 +12,38 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from plugins.connector_interposer_workflow.controller import WorkflowController, row_ranges, PAGES
 
 
+def write_transition(path, part_id, part_sha256, netclass='RF', layer='F.Cu',
+                     stack=('F.Cu', 'B.Cu')):
+    from plugins.connector_interposer_workflow.artifacts import canonical, sha256
+    artifact = {
+        'schema': 'gppo.artifact/1.0', 'artifact_id': 'test-transition',
+        'revision': 1, 'kind': 'rf-transition', 'payload_schema': 'gppo.rf/1.0',
+        'recipe': {'fixture': True},
+        'compatibility': {
+            'part_id': part_id, 'part_sha256': part_sha256, 'mount': 'PTH',
+            'side': 'front', 'netclasses': [netclass], 'stackup': list(stack),
+        },
+        'required_capabilities': ['net-copper-shapes'],
+        'payload': {
+            'units': 'mm', 'coordinates': 'x-right-y-up-ccw',
+            'net_roles': ['signal', 'ground'],
+            'anchors': {'signal': [0, 0], 'exit_direction_deg': 0},
+            'layer_roles': {'mount': 'F.Cu', 'signal': layer},
+            'objects': [{
+                'id': 'signal-land', 'type': 'copper', 'shape': 'circle',
+                'net': 'signal', 'at': [0, 0], 'diameter': .8, 'layer': layer,
+            }],
+        },
+    }
+    unsigned = dict(artifact)
+    artifact['hashes'] = {
+        'payload': sha256(artifact['payload']), 'recipe': sha256(artifact['recipe']),
+        'artifact': sha256(unsigned),
+    }
+    Path(path).write_bytes(canonical(artifact))
+    return Path(path)
+
+
 class ControllerTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -93,10 +125,44 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.gang('J202')['anchor'], [80, 40])
         self.assertEqual(self.controller.gang('J101')['anchor'], [30, 20])
 
+    def test_rf_requirements_group_by_netclass_layer_and_footprint(self):
+        self.controller.set_layers(('F.Cu', 'B.Cu'))
+        self.controller.set_layer_mapping('L1', 'F.Cu')
+        self.controller.set_netclass_type('Control', 'DC')
+        from plugins.connector_interposer_workflow.core.libraries import read_footprint
+        part_path = self.root / 'GPPO.kicad_mod'
+        part_path.write_text(
+            '(footprint "GPPO" (layer "F.Cu") '
+            '(pad "1" thru_hole circle (at 0 0) (size 1 1) (drill .5) '
+            '(layers "*.Cu" "*.Mask")) '
+            '(pad "2" smd circle (at 0 2) (size 1 1) (layers "F.Cu" "F.Mask")))'
+        )
+        part = read_footprint(part_path, 'Approved:GPPO')
+        part_sha = part.sha256
+        self.controller.set_gang('J101', {
+            'part_id': str(part_path),
+            'library_id': 'Approved:GPPO', 'part_sha256': part_sha,
+        })
+        requirements = self.controller.rf_transition_requirements()
+        self.assertEqual(len(requirements), 1)
+        requirement = requirements[0]
+        self.assertEqual(
+            (requirement['netclass'], requirement['layer'], requirement['footprint']),
+            ('RF', 'F.Cu', 'Approved:GPPO'),
+        )
+        self.assertEqual(requirement['locations'], ('J101-1', 'J101-2'))
+        artifact = write_transition(
+            self.root / 'transition.gppo-rf.json', 'Approved:GPPO', part_sha,
+        )
+        self.controller.set_rf_transition(requirement['key'], artifact)
+        refreshed = self.controller.rf_transition_requirements()[0]
+        self.assertEqual(self.controller.validate_rf_transition(refreshed)['artifact_id'],
+                         'test-transition')
+
     def test_changed_external_artifact_blocks_apply(self):
         artifact = self.root/'rf.json'
         artifact.write_text('{"revision":"A"}')
-        self.controller.set_gang('J101', {'rf_artifact': str(artifact)})
+        self.controller.config['artifacts']['test'] = {'path': str(artifact)}
         self.controller.preview = {'reviewed': True}
         self.controller.preview_token = self.controller.token()
         artifact.write_text('{"revision":"B"}')
@@ -204,6 +270,8 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(PAGES[2], 'Layer assignment')
         self.assertEqual(PAGES[3], 'Routing permissions')
         self.assertEqual(PAGES[4], 'Connector assignments')
+        self.assertEqual(PAGES[5], 'Define gangs')
+        self.assertEqual(PAGES[6], 'RF transitions')
         for page_index, page_name in enumerate(PAGES):
             self.assertIsNotNone(self.wx.FindWindowByLabel(page_name, dialog.pages[page_index]))
         self.assertIsNone(self.wx.FindWindowByLabel('Apply layer assignments', dialog))
@@ -239,8 +307,9 @@ class NativeDialogTests(unittest.TestCase):
         self.assertIsInstance(dialog.interposer_symbol_assignment, SymbolAssignmentCtrl)
         self.assertIsInstance(dialog.interposer_footprint_assignment, FootprintAssignmentCtrl)
         self.assertIsInstance(dialog.hole_path, LibrarySelectionCtrl)
-        self.assertIsInstance(dialog.gang_fields['rf_artifact'], self.wx.TextCtrl)
-        self.assertNotIsInstance(dialog.gang_fields['rf_artifact'], LibrarySelectionCtrl)
+        self.assertIsInstance(dialog.gang_rows, self.wx.grid.Grid)
+        self.assertFalse(dialog.open_transition_designer.IsEnabled())
+        self.assertIsNone(self.wx.FindWindowByLabel('Per-location RF assignments…', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Accept library selections', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Project BOM MPN override (if absent)', dialog))
         footprint = Path(__file__).resolve().parents[1] / 'examples/gppo_demo/library/Example.pretty/GPPO_B012_L13_01_EXPERIMENTAL.kicad_mod'
@@ -572,6 +641,67 @@ class NativeDialogTests(unittest.TestCase):
                 dialog.Destroy()
                 self.app.Yield()
 
+    def test_define_gang_drafts_and_requirement_transition_assignment(self):
+        from plugins.connector_interposer_workflow.core.model import HEADERS
+        from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+
+        dialog = WorkflowDialog()
+        try:
+            from plugins.connector_interposer_workflow.core.libraries import read_footprint
+            temporary = tempfile.TemporaryDirectory()
+            self.addCleanup(temporary.cleanup)
+            part_path = Path(temporary.name) / 'GPPO.kicad_mod'
+            part_path.write_text(
+                '(footprint "GPPO" (layer "F.Cu") '
+                '(pad "1" thru_hole circle (at 0 0) (size 1 1) (drill .5) '
+                '(layers "*.Cu" "*.Mask")) '
+                '(pad "2" smd circle (at 0 2) (size 1 1) (layers "F.Cu" "F.Mask")))'
+            )
+            part = read_footprint(part_path, 'Approved:GPPO')
+            table = parse_sheet(Worksheet('Signals', (
+                HEADERS,
+                ('CLOCK1', 'CLOCK', 'E1', 'A1', 'J101', '1', 'L1'),
+                ('CLOCK2', 'CLOCK', 'E1', 'A2', 'J101', '2', 'L1'),
+            )))
+            dialog.controller.table = table
+            dialog.controller.set_netclass_type('CLOCK', 'RF')
+            dialog.controller.set_layers(('F.Cu', 'B.Cu'))
+            dialog.controller.set_layer_mapping('L1', 'F.Cu')
+            dialog.controller.set_gang('J101', {
+                'row_lengths': [2], 'pitch_x': 2.54,
+                'part_id': str(part_path),
+                'library_id': 'Approved:GPPO', 'part_sha256': part.sha256,
+            })
+            dialog.refresh_gangs()
+            self.assertEqual(dialog.current_gang, 'J101')
+            dialog.gang_pitch_x.ChangeValue('4')
+            dialog.gang_draft_changed()
+            self.assertEqual(dialog.controller.gang('J101')['pitch_x'], 2.54)
+            self.assertEqual(dialog.controller.config['drafts']['J101']['pitch_x'], 4)
+            self.assertIn('Modified', dialog.gang_draft_status.GetLabel())
+            dialog.accept_gang(None)
+            self.assertEqual(dialog.controller.gang('J101')['pitch_x'], 4)
+            self.assertNotIn('J101', dialog.controller.config['drafts'])
+
+            requirements = dialog.controller.rf_transition_requirements()
+            self.assertEqual(len(requirements), 1)
+            dialog.refresh_rf_transitions()
+            self.assertEqual(dialog.transition_list.GetItemText(0), 'Needs input')
+            self.assertFalse(dialog.open_transition_designer.IsEnabled())
+            artifact = write_transition(
+                Path(temporary.name) / 'test.gppo-rf.json', 'Approved:GPPO',
+                part.sha256, netclass='CLOCK',
+            )
+            dialog.controller.set_rf_transition(requirements[0]['key'], artifact)
+            dialog.refresh_rf_transitions()
+            self.assertEqual(dialog.transition_list.GetItemText(0), 'Ready')
+            self.assertEqual(dialog.transition_page_status.GetLabel(),
+                             '1 of 1 transition requirements assigned')
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
 
 
 
@@ -629,6 +759,12 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                                        'part_sha256': gang_parts['J101'].footprint.sha256,
                                        'symbol': {'path': str(symbol), 'library_id': 'Approved:GPPO', 'sha256': symbol_sha},
                                        'row_lengths': [3], 'pitch_x': 4, 'anchor': [20, 30], 'anchor_accepted': True})
+            transition = write_transition(
+                root / 'rf.gppo-rf.json', 'Approved:GPPO',
+                gang_parts['J101'].footprint.sha256,
+            )
+            for requirement in controller.rf_transition_requirements():
+                controller.set_rf_transition(requirement['key'], transition)
             part = interposer_parts['E1'].footprint
             controller.config['interposers']['E1'] = dict(
                 part.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True,
@@ -746,6 +882,12 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                            'sha256': approved_sha},
                 'row_lengths': [1], 'anchor': [20, 30], 'anchor_accepted': True,
             })
+            transition = write_transition(
+                root / 'rf.gppo-rf.json', 'Approved:GPPO',
+                gang_parts['J101'].footprint.sha256,
+            )
+            for requirement in controller.rf_transition_requirements():
+                controller.set_rf_transition(requirement['key'], transition)
             dc_part = read_footprint(dc_footprint, 'Approved:DSub')
             controller.set_dc_connector('J1', {
                 'path': dc_part.path, 'library_id': dc_part.library_id,

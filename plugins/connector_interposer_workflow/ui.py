@@ -154,9 +154,8 @@ class DataDialog(wx.Dialog):
 
 class PatternPreview(wx.Panel):
     def __init__(self, parent):
-        super().__init__(parent, size=(360, 260))
+        super().__init__(parent, size=(280, 260))
         self.name, self.points, self.error = '', {}, ''
-        self.clocks = {}
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.Bind(wx.EVT_PAINT, self.paint)
     def show(self, name, points=None, error=''):
@@ -185,10 +184,6 @@ class PatternPreview(wx.Panel):
             dc.SetBrush(wx.TRANSPARENT_BRUSH)
             dc.DrawCircle(px, py, 12)
             dc.DrawText(str(pin), px-4, py-8)
-            angle = math.radians(self.clocks.get(str(pin), 0))
-            tx, ty = px + int(25*math.cos(angle)), py - int(25*math.sin(angle))
-            dc.DrawLine(px, py, tx, ty)
-            for offset in (-.45, .45): dc.DrawLine(tx, ty, tx-int(7*math.cos(angle+offset)), ty+int(7*math.sin(angle+offset)))
             if str(pin) == '1':
                 dc.DrawLine(px-18, py, px+18, py)
                 dc.DrawLine(px, py-18, px, py+18)
@@ -591,10 +586,11 @@ class WorkflowDialog(wx.Dialog):
         self.build_routing_permissions(self.pages[3])
         self.build_connector_assignments(self.pages[4])
         self.build_gangs(self.pages[5])
-        self.build_anchors(self.pages[6])
-        self.build_outline(self.pages[7])
-        self.build_review(self.pages[8])
-        self.build_results(self.pages[9])
+        self.build_rf_transitions(self.pages[6])
+        self.build_anchors(self.pages[7])
+        self.build_outline(self.pages[8])
+        self.build_review(self.pages[9])
+        self.build_results(self.pages[10])
         self.book.Bind(wx.EVT_BOOKCTRL_PAGE_CHANGED, self.page_changed)
         body.Add(self.book, 1, wx.EXPAND | wx.RIGHT | wx.BOTTOM, 10)
         outer.Add(body, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
@@ -737,7 +733,8 @@ class WorkflowDialog(wx.Dialog):
             self._style_heading(control)
         for control in self._status_labels:
             self._style_status(control, getattr(control, '_workflow_status_state', 'neutral'))
-        for view in (self.mapper, self.netclass_type_grid, self.layer_map, self.rules):
+        for view in (self.mapper, self.netclass_type_grid, self.layer_map, self.rules,
+                     self.gang_rows):
             self._style_grid(view)
         self._style_mapper_theme()
         if hasattr(self, 'spreadsheet_feedback'):
@@ -747,6 +744,7 @@ class WorkflowDialog(wx.Dialog):
             )
         self.refresh_layers()
         self.refresh_gangs()
+        self.refresh_rf_transitions()
         self.refresh_connector_assignments(True)
         for preview in (self.pattern_view, self.outline_view):
             preview.Refresh()
@@ -1524,6 +1522,8 @@ class WorkflowDialog(wx.Dialog):
             self.pages[3].Layout()
         finally:
             self._updating_layers = False
+        if hasattr(self, 'transition_list'):
+            self.refresh_rf_transitions()
 
     def _style_layer_assignment_cell(self, row):
         assigned = bool(self.layer_map.GetCellValue(row, 1).strip())
@@ -1967,82 +1967,266 @@ class WorkflowDialog(wx.Dialog):
             (self.dc_assignment_status, assigned_dc == len(dc_names) and bool(dc_names)),
         ):
             self._style_status(control, 'success' if complete else 'warning')
+        if hasattr(self, 'transition_list'):
+            self.refresh_rf_transitions()
 
     def build_gangs(self, panel):
         self.task_box(
-            panel, 'Gangs', 'Define connector gang geometry',
-            'Configure each gang pattern, numbering, orientation and RF settings. Library part assignments are managed in Connector assignments. Preview labels are position indices.',
+            panel, 'Define gangs', 'Define each RF connector gang',
+            'Set the position pattern, numbering, connector orientation and mounting side. '
+            'Edits remain a draft until applied to the selected gang.',
         )
-        self.gang_filter = wx.SearchCtrl(panel, style=wx.TE_PROCESS_ENTER)
-        self.gang_filter.SetDescriptiveText('Filter gangs')
-        self.gang_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_gang_list())
-        panel.GetSizer().Add(self.gang_filter, 0, wx.EXPAND | wx.ALL, 8)
-        self.gang_list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 115))
-        for col, (heading, width) in enumerate((('Gang', 100), ('Positions', 85), ('Pattern', 140), ('Anchor', 110), ('Status', 200))): self.gang_list.InsertColumn(col, heading, width=width)
-        self.gang_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.guard(self.select_dashboard_gang))
-        panel.GetSizer().Add(self.gang_list, 0, wx.EXPAND | wx.ALL, 8)
-        self.gang_choice = wx.Choice(panel)
-        self.gang_choice.Bind(wx.EVT_CHOICE, self.guard(self.select_gang))
-        panel.GetSizer().Add(self.gang_choice, 0, wx.EXPAND | wx.ALL, 8)
         body = wx.BoxSizer(wx.HORIZONTAL)
-        form = wx.Panel(panel)
-        form.SetSizer(wx.BoxSizer(wx.VERTICAL))
-        self.gang_fields = {}
-        for key, label, value, picker in (
-            ('row_lengths', 'Row lengths', '4', False),
-            ('pitch_x', 'Horizontal pitch', '2.54', False), ('pitch_y', 'Vertical pitch', '2.54', False),
-            ('row_offsets', 'Per-row offsets', '', False), ('numbering', 'Explicit location traversal', '', False),
-            ('rotation', 'Orientation (degrees)', '0', False), ('rf_artifact', 'Approved RF artifact', '', True),
-            ('rf_clock', 'RF default clock (degrees)', '0', False), ('rf_overrides', 'Per-location clocks (1:90, 2:180)', '', False)):
-            self.gang_fields[key] = self.field(form, label, value, picker)
-        self.gang_units = wx.Choice(form, choices=['mm', 'mil', 'inch'])
-        self.gang_units.SetSelection(0)
-        form.GetSizer().Add(self.gang_units, 0, wx.EXPAND | wx.ALL, 8)
-        self.gang_side = wx.Choice(form, choices=['Front (F)', 'Back (B)'])
-        self.gang_side.SetSelection(0)
-        form.GetSizer().Add(self.gang_side, 0, wx.EXPAND | wx.ALL, 8)
-        self.mirror = wx.CheckBox(form, label='Explicitly mirror this gang pattern')
-        form.GetSizer().Add(self.mirror, 0, wx.ALL, 8)
-        body.Add(form, 1, wx.EXPAND)
-        self.pattern_view = PatternPreview(panel)
-        body.Add(self.pattern_view, 1, wx.EXPAND | wx.ALL, 10)
-        panel.GetSizer().Add(body, 1, wx.EXPAND)
-        row = wx.BoxSizer(wx.HORIZONTAL)
-        row.Add(self.button(panel, 'Accept pattern / refresh preview', self.accept_gang), 0, wx.RIGHT, 8)
-        row.Add(self.button(panel, 'Copy settings to selected gangs…', self.copy_gang), 0, wx.RIGHT, 8)
-        row.Add(self.button(panel, 'Per-location RF assignments…', self.rf_assignments))
-        panel.GetSizer().Add(row, 0, wx.ALL, 8)
-        for control in self.gang_fields.values():
-            if not isinstance(control, LibrarySelectionCtrl): control.Bind(wx.EVT_TEXT, self.gang_draft_changed)
+
+        selector_box = wx.StaticBox(panel, label='RF gangs')
+        selector = wx.StaticBoxSizer(selector_box, wx.VERTICAL)
+        self.gang_filter = wx.SearchCtrl(selector_box, style=wx.TE_PROCESS_ENTER)
+        self.gang_filter.SetDescriptiveText('Search gangs')
+        self.gang_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_gang_list())
+        selector.Add(self.gang_filter, 0, wx.EXPAND | wx.ALL, 8)
+        self.gang_list = wx.ListCtrl(
+            selector_box, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(240, 245),
+        )
+        for column, (heading, width) in enumerate((
+            ('Gang', 75), ('Positions', 75), ('Status', 115),
+        )):
+            self.gang_list.InsertColumn(column, heading, width=width)
+        self.gang_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.guard(self.select_dashboard_gang))
+        selector.Add(self.gang_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+        self.copy_gang_button = self.button(
+            selector_box, 'Copy settings…', self.copy_gang,
+        )
+        selector.Add(self.copy_gang_button, 0, wx.ALL, 8)
+        help_text = wx.StaticText(
+            selector_box,
+            label='Gangs come from the netlist. Pattern rows can be added or removed; gangs cannot.',
+        )
+        help_text.Wrap(220)
+        selector.Add(help_text, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        body.Add(selector, 0, wx.EXPAND | wx.RIGHT, 8)
+
+        editor_box = wx.StaticBox(panel, label='Select an RF gang')
+        editor = wx.StaticBoxSizer(editor_box, wx.VERTICAL)
+        self.gang_editor_title = editor_box
+        self.gang_notebook = wx.Notebook(editor_box)
+
+        pattern_page = wx.Panel(self.gang_notebook)
+        pattern_sizer = wx.BoxSizer(wx.VERTICAL)
+        pattern_page.SetSizer(pattern_sizer)
+        self.gang_rows = grid.Grid(pattern_page)
+        self.gang_rows.CreateGrid(1, 2)
+        self.gang_rows.SetRowLabelSize(45)
+        self.gang_rows.SetColLabelValue(0, 'Positions')
+        self.gang_rows.SetColLabelValue(1, 'X offset')
+        self.gang_rows.SetColSize(0, 120)
+        self.gang_rows.SetColSize(1, 150)
+        self.gang_rows.SetMinSize((330, 150))
+        self.gang_rows.Bind(grid.EVT_GRID_CELL_CHANGED, self.gang_draft_changed)
+        pattern_sizer.Add(self.gang_rows, 0, wx.EXPAND | wx.ALL, 8)
+        row_actions = wx.BoxSizer(wx.HORIZONTAL)
+        row_actions.Add(self.button(pattern_page, '+', self.add_gang_row), 0, wx.RIGHT, 5)
+        row_actions.Add(self.button(pattern_page, '−', self.remove_gang_row), 0, wx.RIGHT, 12)
+        self.gang_position_total = wx.StaticText(pattern_page, label='0 positions total')
+        row_actions.Add(self.gang_position_total, 0, wx.ALIGN_CENTER_VERTICAL)
+        pattern_sizer.Add(row_actions, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        dimensions = wx.FlexGridSizer(cols=2, hgap=8, vgap=8)
+        dimensions.Add(wx.StaticText(pattern_page, label='Dimension units'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.gang_units = wx.Choice(pattern_page, choices=['mm', 'mil', 'inch'])
+        dimensions.Add(self.gang_units, 1, wx.EXPAND)
+        dimensions.Add(wx.StaticText(pattern_page, label='Position spacing'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.gang_pitch_x = wx.TextCtrl(pattern_page, value='2.54')
+        dimensions.Add(self.gang_pitch_x, 1, wx.EXPAND)
+        dimensions.Add(wx.StaticText(pattern_page, label='Row spacing'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.gang_pitch_y = wx.TextCtrl(pattern_page, value='2.54')
+        dimensions.Add(self.gang_pitch_y, 1, wx.EXPAND)
+        dimensions.AddGrowableCol(1, 1)
+        pattern_sizer.Add(dimensions, 0, wx.EXPAND | wx.ALL, 8)
+        self.gang_notebook.AddPage(pattern_page, 'Pattern')
+
+        placement_page = wx.Panel(self.gang_notebook)
+        placement = wx.FlexGridSizer(cols=2, hgap=12, vgap=10)
+        placement_page.SetSizer(placement)
+        placement.Add(wx.StaticText(placement_page, label='Numbering'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.gang_numbering_mode = wx.Choice(
+            placement_page,
+            choices=['Row major', 'Serpentine', 'Column major', 'Custom'],
+        )
+        placement.Add(self.gang_numbering_mode, 1, wx.EXPAND)
+        placement.Add(wx.StaticText(placement_page, label='Custom numbering'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.gang_custom_numbering = wx.TextCtrl(placement_page)
+        self.gang_custom_numbering.SetToolTip('Comma-separated position indices in traversal order.')
+        placement.Add(self.gang_custom_numbering, 1, wx.EXPAND)
+        placement.Add(wx.StaticText(placement_page, label='Pattern rotation (degrees)'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.gang_pattern_rotation = wx.TextCtrl(placement_page, value='0')
+        placement.Add(self.gang_pattern_rotation, 1, wx.EXPAND)
+        placement.Add(wx.StaticText(placement_page, label='Connector orientation (degrees)'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.gang_connector_rotation = wx.TextCtrl(placement_page, value='0')
+        placement.Add(self.gang_connector_rotation, 1, wx.EXPAND)
+        placement.Add(wx.StaticText(placement_page, label='Connector mounting side'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.gang_side = wx.Choice(placement_page, choices=['Front (F)', 'Back (B)'])
+        placement.Add(self.gang_side, 1, wx.EXPAND)
+        placement.Add((1, 1))
+        self.mirror = wx.CheckBox(placement_page, label='Mirror position layout')
+        placement.Add(self.mirror, 0, wx.ALIGN_CENTER_VERTICAL)
+        placement.AddGrowableCol(1, 1)
+        self.gang_notebook.AddPage(placement_page, 'Numbering & placement')
+        editor.Add(self.gang_notebook, 1, wx.EXPAND | wx.ALL, 8)
+        body.Add(editor, 1, wx.EXPAND | wx.RIGHT, 8)
+
+        preview_box = wx.StaticBox(panel, label='Position preview')
+        preview = wx.StaticBoxSizer(preview_box, wx.VERTICAL)
+        self.pattern_view = PatternPreview(preview_box)
+        preview.Add(self.pattern_view, 1, wx.EXPAND | wx.ALL, 8)
+        self.gang_draft_status = self.status_label(preview_box, 'Select a gang')
+        preview.Add(self.gang_draft_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        actions = wx.BoxSizer(wx.HORIZONTAL)
+        actions.AddStretchSpacer()
+        actions.Add(self.button(preview_box, 'Revert', self.revert_gang), 0, wx.RIGHT, 8)
+        actions.Add(self.button(preview_box, 'Apply definition', self.accept_gang), 0)
+        preview.Add(actions, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        body.Add(preview, 1, wx.EXPAND)
+        panel.GetSizer().Add(body, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
+        for control in (
+            self.gang_pitch_x, self.gang_pitch_y, self.gang_custom_numbering,
+            self.gang_pattern_rotation, self.gang_connector_rotation,
+        ):
+            control.Bind(wx.EVT_TEXT, self.gang_draft_changed)
+        for control in (self.gang_units, self.gang_numbering_mode, self.gang_side):
+            control.Bind(wx.EVT_CHOICE, self.gang_draft_changed)
         self.mirror.Bind(wx.EVT_CHECKBOX, self.gang_draft_changed)
-        self.gang_units.Bind(wx.EVT_CHOICE, self.gang_draft_changed)
-        self.gang_side.Bind(wx.EVT_CHOICE, self.gang_draft_changed)
+        self.gang_numbering_mode.Bind(wx.EVT_CHOICE, self.numbering_mode_changed)
+
+    def _resize_gang_rows(self, count):
+        current = self.gang_rows.GetNumberRows()
+        if current < count:
+            self.gang_rows.AppendRows(count - current)
+        elif current > count:
+            self.gang_rows.DeleteRows(count, current - count)
+        for row in range(count):
+            self.gang_rows.SetRowLabelValue(row, str(row + 1))
+        height = self.gang_rows.GetColLabelSize() + sum(
+            self.gang_rows.GetRowSize(row) for row in range(count)
+        ) + 2
+        self.gang_rows.SetMinSize((-1, max(82, min(height, 230))))
+        self.gang_rows.SetMaxSize((-1, max(82, min(height, 230))))
+
+    def _gang_editor_values(self):
+        row_lengths, row_offsets = [], []
+        for row in range(self.gang_rows.GetNumberRows()):
+            count = self.gang_rows.GetCellValue(row, 0).strip()
+            offset = self.gang_rows.GetCellValue(row, 1).strip() or '0'
+            if not count:
+                raise ValueError(f'Row {row + 1}: enter a position count')
+            row_lengths.append(int(count))
+            row_offsets.append(float(offset))
+        mode = self.gang_numbering_mode.GetSelection()
+        traversals = ('row-major', 'serpentine', 'column-major')
+        numbering = []
+        traversal = traversals[mode] if 0 <= mode < len(traversals) else 'row-major'
+        if mode == 3:
+            numbering = [value.strip() for value in self.gang_custom_numbering.GetValue().split(',')
+                         if value.strip()]
+        return {
+            'row_lengths': row_lengths,
+            'row_offsets': row_offsets,
+            'pitch_x': float(self.gang_pitch_x.GetValue()),
+            'pitch_y': float(self.gang_pitch_y.GetValue()),
+            'units': self.gang_units.GetStringSelection(),
+            'traversal': traversal,
+            'numbering': numbering,
+            'rotation': float(self.gang_pattern_rotation.GetValue()),
+            'connector_rotation': float(self.gang_connector_rotation.GetValue()),
+            'mirror': self.mirror.GetValue(),
+            'side': 'B' if self.gang_side.GetSelection() == 1 else 'F',
+        }
+
+    def _preview_gang_values(self, values):
+        from .core.geometry import GangDefinition
+        applied = self.controller.gang(self.current_gang)
+        fields = GangDefinition.__dataclass_fields__
+        combined = dict(applied)
+        combined.update(values)
+        combined['gang'] = self.current_gang
+        definition = GangDefinition(**{key: value for key, value in combined.items()
+                                       if key in fields})
+        points = definition.positions()
+        expected = {record.connector_pin for record in self.controller.table.records
+                    if record.connector == self.current_gang}
+        if set(points) != expected:
+            raise ValueError(
+                f'Numbering must match {len(expected)} netlist positions exactly'
+            )
+        return points
 
     def gang_draft_changed(self, event=None):
-        if not self._loading_gang:
-            self.controller.config.setdefault('drafts', {})[self.current_gang or ''] = {key: control.GetValue() for key, control in self.gang_fields.items()}
-            self.controller.changed()
+        if not self._loading_gang and self.current_gang:
             try:
-                self.store_gang()
-                self.pattern_view.show(self.current_gang, self.controller.pattern(self.current_gang))
-            except Exception as error:
-                self.pattern_view.show(self.current_gang or '', error=str(error))
+                values = self._gang_editor_values()
+                self.controller.config['drafts'][self.current_gang] = values
+                self.controller.changed()
+                points = self._preview_gang_values(values)
+                self.pattern_view.show(self.current_gang, points)
+                self.gang_draft_status.SetLabel('Modified — apply or revert this gang definition.')
+                self._style_status(self.gang_draft_status, 'warning')
+                self.gang_position_total.SetLabel(f'{len(points)} positions total')
+            except (TypeError, ValueError) as error:
+                self.pattern_view.show(self.current_gang, error=str(error))
+                self.gang_draft_status.SetLabel('Needs input — ' + str(error))
+                self._style_status(self.gang_draft_status, 'error')
+            self.refresh_gang_list()
             self.refresh()
-        if event is not None: event.Skip()
+        if event is not None:
+            event.Skip()
+
+    def numbering_mode_changed(self, event):
+        self.gang_custom_numbering.Enable(self.gang_numbering_mode.GetSelection() == 3)
+        self.gang_draft_changed(event)
+
+    def add_gang_row(self, event):
+        self._loading_gang = True
+        try:
+            row = self.gang_rows.GetNumberRows()
+            self._resize_gang_rows(row + 1)
+            self.gang_rows.SetCellValue(row, 0, '1')
+            self.gang_rows.SetCellValue(row, 1, '0')
+        finally:
+            self._loading_gang = False
+        self.gang_draft_changed()
+
+    def remove_gang_row(self, event):
+        count = self.gang_rows.GetNumberRows()
+        if count <= 1:
+            raise ValueError('A gang requires at least one pattern row')
+        row = self.gang_rows.GetGridCursorRow()
+        if row < 0 or row >= count:
+            row = count - 1
+        self._loading_gang = True
+        try:
+            self.gang_rows.DeleteRows(row, 1)
+            self._resize_gang_rows(count - 1)
+        finally:
+            self._loading_gang = False
+        self.gang_draft_changed()
 
     def refresh_gangs(self):
         self.refresh_gang_list()
         names = self.controller.gang_names()
-        self.gang_choice.Set(list(names))
-        if hasattr(self, 'anchor_gang'):
-            self.anchor_gang.Set(list(names))
         if names:
-            self.gang_choice.SetStringSelection(self.current_gang if self.current_gang in names else names[0])
+            if self.current_gang not in names:
+                self.current_gang = names[0]
             self.select_gang(None)
         else:
             self.current_gang = None
-            if hasattr(self, 'pattern_view'):
-                self.pattern_view.show('', {})
+            self.gang_editor_title.SetLabel('No RF gangs in the netlist')
+            self.pattern_view.show('', {})
+            self.gang_draft_status.SetLabel('No RF gangs')
+            self._style_status(self.gang_draft_status, 'neutral')
+        if hasattr(self, 'anchor_gang'):
+            current = self.anchor_gang.GetStringSelection()
+            self.anchor_gang.Set(list(names))
+            if names:
+                self.anchor_gang.SetStringSelection(current if current in names else names[0])
         if hasattr(self, 'dc_anchor_connector'):
             dc_names = list(self.controller.dc_connector_names())
             current = self.dc_anchor_connector.GetStringSelection()
@@ -2050,119 +2234,338 @@ class WorkflowDialog(wx.Dialog):
             if dc_names:
                 self.dc_anchor_connector.SetStringSelection(current if current in dc_names else dc_names[0])
                 self.select_dc_anchor(None)
+        if hasattr(self, 'transition_list'):
+            self.refresh_rf_transitions()
 
     def refresh_gang_list(self):
+        selected = self.current_gang
         self.gang_list.DeleteAllItems()
         query = self.gang_filter.GetValue().casefold()
         for name in self.controller.gang_names():
-            if query and query not in name.casefold(): continue
-            settings = self.controller.gang(name)
+            if query and query not in name.casefold():
+                continue
             count = sum(record.connector == name for record in self.controller.table.records)
-            try:
-                points = self.controller.pattern(name)
-                status = 'Valid pattern' if len(points) == count else 'Population mismatch'
-            except ValueError:
-                status = 'Invalid pattern'
+            if name in self.controller.config.get('drafts', {}):
+                status = 'Modified'
+            else:
+                try:
+                    status = 'Ready' if len(self.controller.pattern(name)) == count else 'Needs input'
+                except (TypeError, ValueError):
+                    status = 'Needs input'
             index = self.gang_list.InsertItem(self.gang_list.GetItemCount(), name)
-            for col, value in enumerate((count, ' × '.join(map(str, settings['row_lengths'])), 'Accepted' if settings.get('anchor_accepted') else 'Required', status), 1): self.gang_list.SetItem(index, col, str(value))
+            self.gang_list.SetItem(index, 1, str(count))
+            self.gang_list.SetItem(index, 2, status)
+            if name == selected:
+                self.gang_list.Select(index)
 
     def select_dashboard_gang(self, event):
         name = self.gang_list.GetItemText(event.GetIndex())
-        self.gang_choice.SetStringSelection(name)
-        self.select_gang(None)
-
-    def store_gang(self):
-        if not self.current_gang: return
-        values = {}
-        for key, control in self.gang_fields.items():
-            value = control.GetValue().strip()
-            if key in ('row_lengths', 'numbering', 'row_offsets'):
-                values[key] = [int(v) if key == 'row_lengths' else float(v) if key == 'row_offsets' else v.strip() for v in value.split(',') if v.strip()]
-            elif key in ('pitch_x', 'pitch_y', 'rotation', 'rf_clock'):
-                values[key] = float(value)
-            elif key == 'rf_overrides':
-                values[key] = dict((pair.split(':')[0].strip(), float(pair.split(':')[1])) for pair in value.split(',') if pair.strip())
-            else: values[key] = value
-        values['mirror'] = self.mirror.GetValue()
-        values['units'] = self.gang_units.GetStringSelection()
-        values['side'] = 'B' if self.gang_side.GetSelection() == 1 else 'F'
-        self.controller.set_gang(self.current_gang, values)
+        if name != self.current_gang:
+            self.current_gang = name
+            self.select_gang(None)
 
     def select_gang(self, event):
-        self.current_gang = self.gang_choice.GetStringSelection()
-        if not self.current_gang: return
-        values = self.controller.gang(self.current_gang)
+        if not self.current_gang:
+            return
+        applied = self.controller.gang(self.current_gang)
+        values = dict(applied)
+        values.update(self.controller.config.get('drafts', {}).get(self.current_gang, {}))
+        rows = list(values.get('row_lengths') or [1])
+        offsets = list(values.get('row_offsets') or [0] * len(rows))
+        if len(offsets) != len(rows):
+            offsets = [0] * len(rows)
         self._loading_gang = True
         try:
-            for key, control in self.gang_fields.items():
-                value = self.controller.config.get('drafts', {}).get(self.current_gang, {}).get(key, values.get(key, ''))
-                if isinstance(value, list): value = ', '.join(map(str, value))
-                elif isinstance(value, dict): value = ', '.join(f'{k}:{v}' for k, v in value.items())
-                control.ChangeValue(str(value))
-            self.mirror.SetValue(values['mirror'])
+            self._resize_gang_rows(len(rows))
+            for row, (positions, offset) in enumerate(zip(rows, offsets)):
+                self.gang_rows.SetCellValue(row, 0, str(positions))
+                self.gang_rows.SetCellValue(row, 1, str(offset))
             self.gang_units.SetStringSelection(values.get('units', 'mm'))
+            self.gang_pitch_x.ChangeValue(str(values.get('pitch_x', 2.54)))
+            self.gang_pitch_y.ChangeValue(str(values.get('pitch_y', 2.54)))
+            numbering = values.get('numbering', [])
+            traversal_index = {'row-major': 0, 'serpentine': 1, 'column-major': 2}.get(
+                values.get('traversal', 'row-major'), 0,
+            )
+            self.gang_numbering_mode.SetSelection(3 if numbering else traversal_index)
+            self.gang_custom_numbering.ChangeValue(', '.join(map(str, numbering)))
+            self.gang_custom_numbering.Enable(bool(numbering))
+            self.gang_pattern_rotation.ChangeValue(str(values.get('rotation', 0)))
+            self.gang_connector_rotation.ChangeValue(str(values.get('connector_rotation', 0)))
             self.gang_side.SetSelection(1 if values.get('side') == 'B' else 0)
-        finally: self._loading_gang = False
-        self.anchor_gang.Set(list(self.controller.gang_names()))
-        self.anchor_gang.SetStringSelection(self.current_gang)
+            self.mirror.SetValue(bool(values.get('mirror', False)))
+        finally:
+            self._loading_gang = False
+        count = sum(record.connector == self.current_gang for record in self.controller.table.records)
+        self.gang_editor_title.SetLabel(f'{self.current_gang} · {count} positions from netlist')
+        if hasattr(self, 'anchor_gang'):
+            self.anchor_gang.SetStringSelection(self.current_gang)
         try:
-            points = self.controller.pattern(self.current_gang)
-            self.pattern_view.clocks = {str(pin): values.get('rf_overrides', {}).get(str(pin), values.get('rf_clock', 0)) for pin in points}
+            points = self._preview_gang_values(values)
             self.pattern_view.show(self.current_gang, points)
-        except (ValueError, TypeError) as error:
+            self.gang_position_total.SetLabel(f'{len(points)} positions total')
+            modified = self.current_gang in self.controller.config.get('drafts', {})
+            self.gang_draft_status.SetLabel(
+                'Modified — apply or revert this gang definition.' if modified
+                else 'Ready — this gang definition is applied.'
+            )
+            self._style_status(self.gang_draft_status, 'warning' if modified else 'success')
+        except (TypeError, ValueError) as error:
             self.pattern_view.show(self.current_gang, error=str(error))
+            self.gang_draft_status.SetLabel('Needs input — ' + str(error))
+            self._style_status(self.gang_draft_status, 'error')
 
     def accept_gang(self, event):
-        self.store_gang()
+        if not self.current_gang:
+            raise ValueError('Select a gang')
+        values = self._gang_editor_values()
+        self._preview_gang_values(values)
+        self.controller.set_gang(self.current_gang, values)
         self.controller.config.get('drafts', {}).pop(self.current_gang, None)
-        settings = self.controller.gang(self.current_gang)
-        self.pattern_view.show(self.current_gang, self.controller.pattern(self.current_gang))
+        self.controller.changed()
+        self.select_gang(None)
+        self.refresh_gang_list()
+        self.status.SetLabel(f'{self.current_gang} gang definition applied to the workflow.')
+
+    def revert_gang(self, event):
+        if not self.current_gang:
+            return
+        self.controller.config.get('drafts', {}).pop(self.current_gang, None)
+        self.controller.changed()
+        self.select_gang(None)
+        self.refresh_gang_list()
+        self.status.SetLabel(f'{self.current_gang} draft reverted to the applied definition.')
 
     def copy_gang(self, event):
-        self.store_gang()
+        if not self.current_gang:
+            raise ValueError('Select a gang')
+        if self.current_gang in self.controller.config.get('drafts', {}):
+            raise ValueError('Apply or revert the selected gang draft before copying settings')
         names = [name for name in self.controller.gang_names() if name != self.current_gang]
-        with wx.MultiChoiceDialog(self, 'Select explicit targets; anchors remain independent.', 'Copy gang settings', names) as dialog:
+        with wx.MultiChoiceDialog(
+            self, 'Select target gangs. Anchors and library parts remain independent.',
+            'Copy gang settings', names,
+        ) as dialog:
             if dialog.ShowModal() == wx.ID_OK:
-                self.controller.copy_gang(self.current_gang, [names[i] for i in dialog.GetSelections()])
+                targets = [names[index] for index in dialog.GetSelections()]
+                self.controller.copy_gang(self.current_gang, targets)
+                self.refresh_gangs()
+                self.status.SetLabel(
+                    f'Copied {self.current_gang} settings to {len(targets)} gang'
+                    f'{"" if len(targets) == 1 else "s"}.'
+                )
 
-    def rf_assignments(self, event):
-        self.store_gang()
-        if not self.current_gang: raise ValueError('Select a gang')
-        settings = self.controller.gang(self.current_gang)
-        records = sorted((r for r in self.controller.table.records if r.connector == self.current_gang), key=lambda r: int(r.connector_pin))
-        with wx.Dialog(self, title=self.current_gang + ' — RF instance assignments', size=(920, 540), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER) as dialog:
-            box = wx.BoxSizer(wx.VERTICAL)
-            box.Add(wx.StaticText(dialog, label='Optional per-location overrides. Blank entries use the gang default. Artifact sources remain read-only.'), 0, wx.ALL, 10)
-            view = grid.Grid(dialog)
-            view.CreateGrid(len(records), 4)
-            for col, heading in enumerate(('Location', 'Mapped signal layer', 'Clock override (degrees)', 'Approved artifact path')):
-                view.SetColLabelValue(col, heading)
-                view.SetColSize(col, (85, 140, 175, 420)[col])
-            for row, record in enumerate(records):
-                view.SetCellValue(row, 0, record.connector_pin)
-                view.SetCellValue(row, 1, self.controller.config['layer_mapping'].get(record.layer, 'UNMAPPED'))
-                view.SetReadOnly(row, 0)
-                view.SetReadOnly(row, 1)
-                view.SetCellValue(row, 2, str(settings.get('rf_overrides', {}).get(record.connector_pin, '')))
-                view.SetCellValue(row, 3, settings.get('rf_artifacts', {}).get(record.connector_pin, ''))
-            box.Add(view, 1, wx.EXPAND | wx.ALL, 10)
-            def browse(event):
-                row = view.GetGridCursorRow()
-                if row < 0: return
-                with wx.FileDialog(dialog, 'Select approved RF artifact', wildcard='RF artifacts (*.json)|*.json', style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as picker:
-                    if picker.ShowModal() == wx.ID_OK: view.SetCellValue(row, 3, picker.GetPath())
-            box.Add(self.button(dialog, 'Browse artifact for selected location…', browse), 0, wx.ALL, 10)
-            box.Add(dialog.CreateButtonSizer(wx.OK | wx.CANCEL), 0, wx.ALIGN_RIGHT | wx.ALL, 10)
-            dialog.SetSizer(box)
-            if dialog.ShowModal() == wx.ID_OK:
-                view.SaveEditControlValue()
-                clocks, artifacts = {}, {}
-                for row, record in enumerate(records):
-                    clock, artifact = view.GetCellValue(row, 2).strip(), view.GetCellValue(row, 3).strip()
-                    if clock: clocks[record.connector_pin] = float(clock)
-                    if artifact: artifacts[record.connector_pin] = artifact
-                self.controller.set_gang(self.current_gang, {'rf_overrides': clocks, 'rf_artifacts': artifacts})
-                self.select_gang(None)
+    def build_rf_transitions(self, panel):
+        self.task_box(
+            panel, 'RF transitions', 'Assign one approved transition to each unique RF requirement',
+            'Requirements are derived from netclass, mapped KiCad layer and connector footprint. '
+            'Published transition artifacts remain read-only and are compatibility-checked before review.',
+        )
+        controls = wx.BoxSizer(wx.HORIZONTAL)
+        self.transition_filter = wx.SearchCtrl(panel, style=wx.TE_PROCESS_ENTER)
+        self.transition_filter.SetDescriptiveText('Search requirements')
+        self.transition_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_rf_transitions())
+        controls.Add(self.transition_filter, 1, wx.RIGHT, 8)
+        self.transition_status_filter = wx.Choice(
+            panel, choices=['All statuses', 'Ready', 'Needs input', 'Blocked'],
+        )
+        self.transition_status_filter.SetSelection(0)
+        self.transition_status_filter.Bind(wx.EVT_CHOICE, lambda event: self.refresh_rf_transitions())
+        controls.Add(self.transition_status_filter, 0, wx.RIGHT, 8)
+        controls.Add(self.button(panel, 'Refresh transition library', self.refresh_transition_catalog), 0, wx.RIGHT, 8)
+        self.open_transition_designer = wx.Button(panel, label='Open RF Transition Designer…')
+        self.open_transition_designer.Enable(False)
+        self.open_transition_designer.SetToolTip('Reserved for the separately installed RF Transition Designer.')
+        controls.Add(self.open_transition_designer, 0)
+        panel.GetSizer().Add(controls, 0, wx.EXPAND | wx.ALL, 8)
+
+        self.transition_summary = wx.StaticText(panel, label='0 unique requirements · 0 RF locations')
+        panel.GetSizer().Add(self.transition_summary, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.transition_list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 210))
+        for column, (heading, width) in enumerate((
+            ('Status', 105), ('Netclass', 110), ('KiCad layer', 110),
+            ('Connector footprint', 280), ('Locations', 80), ('Approved transition', 250),
+        )):
+            self.transition_list.InsertColumn(column, heading, width=width)
+        self.transition_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.select_rf_transition)
+        panel.GetSizer().Add(self.transition_list, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+
+        detail_box = wx.StaticBox(panel, label='Selected requirement')
+        detail = wx.StaticBoxSizer(detail_box, wx.VERTICAL)
+        self.transition_detail = wx.StaticText(detail_box, label='Select a requirement')
+        self.transition_detail.Wrap(920)
+        detail.Add(self.transition_detail, 0, wx.EXPAND | wx.ALL, 8)
+        assignment = wx.BoxSizer(wx.HORIZONTAL)
+        assignment.Add(wx.StaticText(detail_box, label='Compatible transitions'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        self.transition_choice = wx.Choice(detail_box)
+        self.transition_choice.Bind(wx.EVT_CHOICE, self.assign_rf_transition)
+        assignment.Add(self.transition_choice, 1, wx.RIGHT, 8)
+        assignment.Add(self.button(detail_box, 'Browse artifact…', self.browse_rf_transition), 0, wx.RIGHT, 8)
+        assignment.Add(self.button(detail_box, 'Clear assignment', self.clear_rf_transition), 0)
+        detail.Add(assignment, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        panel.GetSizer().Add(detail, 0, wx.EXPAND | wx.ALL, 8)
+        self.transition_page_status = self.status_label(panel, '0 of 0 transition requirements assigned')
+        self.transition_page_status.SetMinSize((360, -1))
+        panel.GetSizer().Add(self.transition_page_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.transition_catalog = {}
+        self._transition_choice_paths = []
+        self.current_transition_requirement = None
+
+    def _transition_state(self, requirement):
+        if (not requirement['layer'] or not requirement['footprint'] or
+                len(requirement['part_sha256s']) != 1 or len(requirement['sides']) != 1):
+            return 'Blocked', 'Requirement inputs are incomplete or inconsistent'
+        if not requirement.get('assignment', {}).get('path'):
+            return 'Needs input', 'Choose an approved transition'
+        try:
+            artifact = self.controller.validate_rf_transition(requirement)
+            return 'Ready', f'{artifact["artifact_id"]} r{artifact["revision"]}'
+        except (OSError, ValueError) as error:
+            return 'Blocked', str(error)
+
+    def refresh_rf_transitions(self):
+        if not hasattr(self, 'transition_list'):
+            return
+        requirements = self.controller.rf_transition_requirements()
+        query = self.transition_filter.GetValue().casefold()
+        wanted = self.transition_status_filter.GetStringSelection()
+        self.transition_list.DeleteAllItems()
+        visible = []
+        ready = 0
+        locations = sum(len(item['locations']) for item in requirements)
+        for requirement in requirements:
+            state, detail = self._transition_state(requirement)
+            if state == 'Ready':
+                ready += 1
+            haystack = ' '.join((requirement['netclass'], requirement['layer'],
+                                 requirement['footprint'], ' '.join(requirement['locations']))).casefold()
+            if query and query not in haystack:
+                continue
+            if wanted and wanted != 'All statuses' and wanted != state:
+                continue
+            assignment = requirement.get('assignment', {})
+            label = (f'{assignment.get("artifact_id")} r{assignment.get("revision")}'
+                     if assignment.get('artifact_id') else detail)
+            row = self.transition_list.InsertItem(self.transition_list.GetItemCount(), state)
+            for column, value in enumerate((
+                requirement['netclass'], requirement['layer'] or 'Unmapped',
+                requirement['footprint'] or 'Unassigned', len(requirement['locations']), label,
+            ), 1):
+                self.transition_list.SetItem(row, column, str(value))
+            palette = ui_palette()
+            self.transition_list.SetItemBackgroundColour(
+                row, {'Ready': palette.success, 'Needs input': palette.warning,
+                      'Blocked': palette.error}[state],
+            )
+            self.transition_list.SetItemTextColour(row, palette.text)
+            visible.append(requirement)
+        self._visible_transition_requirements = visible
+        self.transition_summary.SetLabel(
+            f'{len(requirements)} unique requirement{("" if len(requirements) == 1 else "s")} · '
+            f'{locations} RF location{("" if locations == 1 else "s")}'
+        )
+        self.transition_page_status.SetLabel(
+            f'{ready} of {len(requirements)} transition requirements assigned'
+        )
+        self._style_status(
+            self.transition_page_status,
+            'success' if requirements and ready == len(requirements) else 'warning',
+        )
+        self.transition_page_status.GetParent().Layout()
+        if self.current_transition_requirement:
+            key = self.current_transition_requirement.get('key')
+            current = next((item for item in requirements if item['key'] == key), None)
+            self.current_transition_requirement = current
+            if current:
+                self._show_rf_transition_detail(current)
+
+    def select_rf_transition(self, event):
+        index = event.GetIndex()
+        if 0 <= index < len(self._visible_transition_requirements):
+            self.current_transition_requirement = self._visible_transition_requirements[index]
+            self._show_rf_transition_detail(self.current_transition_requirement)
+
+    def _show_rf_transition_detail(self, requirement):
+        self.transition_detail.SetLabel(
+            f'{requirement["netclass"]} · {requirement["layer"] or "Unmapped"} · '
+            f'{requirement["footprint"] or "Unassigned"}\n'
+            f'Locations: {", ".join(requirement["locations"])}'
+        )
+        compatible = []
+        for path, artifact in sorted(self.transition_catalog.items(), key=lambda item: (
+                item[1]['artifact_id'], str(item[1]['revision']), item[0])):
+            try:
+                self.controller._checked_transition(requirement, path)
+            except (OSError, ValueError):
+                continue
+            compatible.append((path, f'{artifact["artifact_id"]} r{artifact["revision"]}'))
+        assigned_path = requirement.get('assignment', {}).get('path', '')
+        if assigned_path and assigned_path not in {path for path, _label in compatible}:
+            label = requirement['assignment'].get('artifact_id', Path(assigned_path).name)
+            revision = requirement['assignment'].get('revision', '')
+            compatible.append((assigned_path, f'{label} r{revision}'.rstrip()))
+        self._transition_choice_paths = [''] + [path for path, _label in compatible]
+        self.transition_choice.Set(['Choose from project transition library'] +
+                                   [label for _path, label in compatible])
+        selection = (self._transition_choice_paths.index(assigned_path)
+                     if assigned_path in self._transition_choice_paths else 0)
+        self.transition_choice.SetSelection(selection)
+
+    def refresh_transition_catalog(self, event=None):
+        paths = set()
+        if self.controller.board_path:
+            root = self.controller.board_path.parent
+            paths.update(path for path in root.rglob('*.gppo-rf.json')
+                         if '.connector-interposer-pinned' not in path.parts)
+        paths.update(Path(selection['path']) for selection in self.controller.config['artifacts'].values()
+                     if selection.get('path'))
+        catalog = {}
+        from .artifacts import load_artifact
+        errors = 0
+        for path in paths:
+            try:
+                catalog[str(path.resolve())] = load_artifact(path)
+            except (OSError, ValueError):
+                errors += 1
+        self.transition_catalog = catalog
+        self.refresh_rf_transitions()
+        self.status.SetLabel(
+            f'Transition library refreshed: {len(catalog)} valid artifact'
+            f'{"" if len(catalog) == 1 else "s"}' +
+            (f'; {errors} invalid file{("" if errors == 1 else "s")} ignored.' if errors else '.')
+        )
+
+    def assign_rf_transition(self, event):
+        if not self.current_transition_requirement:
+            raise ValueError('Select an RF transition requirement')
+        index = self.transition_choice.GetSelection()
+        path = self._transition_choice_paths[index] if index >= 0 else ''
+        if not path:
+            return
+        self.controller.set_rf_transition(self.current_transition_requirement['key'], path)
+        self.refresh_rf_transitions()
+        self.status.SetLabel('RF transition assignment updated. Board files were not modified.')
+
+    def browse_rf_transition(self, event):
+        if not self.current_transition_requirement:
+            raise ValueError('Select an RF transition requirement')
+        with wx.FileDialog(
+            self, 'Select approved RF transition',
+            wildcard='RF transitions (*.gppo-rf.json)|*.gppo-rf.json|JSON (*.json)|*.json',
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+        ) as picker:
+            if picker.ShowModal() == wx.ID_OK:
+                self.controller.set_rf_transition(
+                    self.current_transition_requirement['key'], picker.GetPath(),
+                )
+                self.refresh_transition_catalog()
+
+    def clear_rf_transition(self, event):
+        if not self.current_transition_requirement:
+            return
+        self.controller.set_rf_transition(self.current_transition_requirement['key'], '')
+        self.refresh_rf_transitions()
+        self.status.SetLabel('RF transition assignment cleared. Board files were not modified.')
 
     def build_anchors(self, panel):
         self.task_box(
@@ -2551,7 +2954,7 @@ class WorkflowDialog(wx.Dialog):
         self._applying = False
         if self._closing: return
         self.results.ChangeValue(json.dumps(result, indent=2, default=str))
-        self.select_page(9)
+        self.select_page(PAGES.index('Apply / Results'))
         self.status.SetLabel('Project copy saved. Review the reconciliation report and validation results.')
         if isinstance(result, dict) and result.get('journal'): self.journal.ChangeValue(str(result['journal']))
         self.refresh()
@@ -2651,21 +3054,31 @@ class WorkflowDialog(wx.Dialog):
 
         self.assignment_filter.ChangeValue('')
         self.gang_filter.ChangeValue('')
-        defaults = {
-            'row_lengths': '4', 'pitch_x': '2.54', 'pitch_y': '2.54',
-            'row_offsets': '', 'numbering': '', 'rotation': '0', 'rf_artifact': '',
-            'rf_clock': '0', 'rf_overrides': '',
-        }
         self._loading_gang = True
         try:
-            for name, value in defaults.items():
-                self.gang_fields[name].ChangeValue(value)
+            self._resize_gang_rows(1)
+            self.gang_rows.SetCellValue(0, 0, '1')
+            self.gang_rows.SetCellValue(0, 1, '0')
+            self.gang_pitch_x.ChangeValue('2.54')
+            self.gang_pitch_y.ChangeValue('2.54')
             self.gang_units.SetSelection(0)
+            self.gang_numbering_mode.SetSelection(0)
+            self.gang_custom_numbering.ChangeValue('')
+            self.gang_custom_numbering.Enable(False)
+            self.gang_pattern_rotation.ChangeValue('0')
+            self.gang_connector_rotation.ChangeValue('0')
             self.gang_side.SetSelection(0)
             self.mirror.SetValue(False)
         finally:
             self._loading_gang = False
         self.pattern_view.show('', {})
+        self.transition_filter.ChangeValue('')
+        self.transition_status_filter.SetSelection(0)
+        self.transition_catalog = {}
+        self.current_transition_requirement = None
+        self.transition_list.DeleteAllItems()
+        self.transition_choice.Set([])
+        self.transition_detail.SetLabel('Select a requirement')
 
         for control, value in (
             (self.interposer_x, '0'), (self.interposer_y, '0'),
@@ -2695,6 +3108,7 @@ class WorkflowDialog(wx.Dialog):
 
         self.refresh_layers()
         self.refresh_gangs()
+        self.refresh_rf_transitions()
         self.refresh_connector_assignments(True)
         self.select_page(0)
         self.refresh()

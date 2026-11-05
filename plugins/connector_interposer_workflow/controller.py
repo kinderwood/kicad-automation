@@ -11,7 +11,7 @@ from .core.layers import LayerRules, validate_layers
 from .core.model import HEADERS, Issue
 
 PAGES = ("Netlist Source", "Netclass type", "Layer assignment", "Routing permissions",
-         "Connector assignments", "Gangs", "DXF Anchors", "Board Outline",
+         "Connector assignments", "Define gangs", "RF transitions", "DXF Anchors", "Board Outline",
          "Review Changes", "Apply / Results")
 
 
@@ -192,8 +192,8 @@ class WorkflowController:
             count = sum(r.connector == name for r in self.table.records) if self.table else 0
             self.config['gangs'][name] = {"gang": name, "row_lengths": [max(count, 1)], "pitch_x": 2.54,
                 "pitch_y": 2.54, "row_offsets": [], "numbering": [], "traversal": "row-major",
-                "rotation": 0, "mirror": False, "anchor": [0, 0], "units": "mm", "part_id": "", "symbol": {}, "rf_clock": 0,
-                "rf_overrides": {}, "rf_artifact": "", "anchor_accepted": False, "side": "F"}
+                "rotation": 0, "connector_rotation": 0, "mirror": False, "anchor": [0, 0],
+                "units": "mm", "part_id": "", "symbol": {}, "anchor_accepted": False, "side": "F"}
         return deepcopy(self.config['gangs'][name])
 
     def set_gang(self, name, values):
@@ -207,12 +207,131 @@ class WorkflowController:
             part = read_footprint(values['part_id'], values.get('library_id') or library_id(values['part_id']))
             merged['part_sha256'] = part.sha256
             merged['footprint_mpn'] = part.mpn
-        if values.get('rf_artifact') and Path(values['rf_artifact']).is_file() and (values['rf_artifact'] != previous.get('rf_artifact') or not previous.get('rf_artifact_hash')):
-            merged['rf_artifact_hash'] = json.loads(Path(values['rf_artifact']).read_text()).get('hashes', {}).get('artifact')
-        if values.get('rf_artifacts'):
-            merged['rf_artifact_pins'] = {pin: previous.get('rf_artifact_pins', {}).get(pin) if path == previous.get('rf_artifacts', {}).get(pin) and previous.get('rf_artifact_pins', {}).get(pin) else json.loads(Path(path).read_text()).get('hashes', {}).get('artifact') for pin, path in values['rf_artifacts'].items() if Path(path).is_file()}
         self.config['gangs'][name] = merged
         self.changed()
+
+    @staticmethod
+    def rf_requirement_key(netclass, layer, footprint):
+        return json.dumps([netclass, layer, footprint], ensure_ascii=False,
+                          separators=(',', ':'))
+
+    def rf_transition_requirements(self):
+        """Group RF locations by the project-wide transition assignment identity."""
+        grouped = {}
+        if not self.table:
+            return ()
+        for record in self.table.records:
+            if self.connector_type(record.connector) != 'RF':
+                continue
+            gang = self.gang(record.connector)
+            layer = self.config['layer_mapping'].get(record.layer, '')
+            footprint = gang.get('library_id', '')
+            key = self.rf_requirement_key(record.netclass, layer, footprint)
+            requirement = grouped.setdefault(key, {
+                'key': key, 'netclass': record.netclass, 'layer': layer,
+                'footprint': footprint, 'locations': [], 'part_sha256s': set(),
+                'part_paths': set(), 'sides': set(),
+            })
+            requirement['locations'].append(record.key)
+            if gang.get('part_sha256'):
+                requirement['part_sha256s'].add(gang['part_sha256'])
+            if gang.get('part_id'):
+                requirement['part_paths'].add(gang['part_id'])
+            requirement['sides'].add(gang.get('side', 'F'))
+        result = []
+        for requirement in grouped.values():
+            item = dict(requirement)
+            item['locations'] = tuple(sorted(item['locations']))
+            item['part_sha256s'] = tuple(sorted(item['part_sha256s']))
+            item['part_paths'] = tuple(sorted(item['part_paths']))
+            item['sides'] = tuple(sorted(item['sides']))
+            item['assignment'] = deepcopy(self.config['artifacts'].get(item['key'], {}))
+            result.append(item)
+        return tuple(sorted(result, key=lambda item: (
+            item['netclass'], item['layer'], item['footprint'], item['key'])))
+
+    def rf_transition_requirement(self, record):
+        gang = self.gang(record.connector)
+        key = self.rf_requirement_key(
+            record.netclass, self.config['layer_mapping'].get(record.layer, ''),
+            gang.get('library_id', ''),
+        )
+        return next((item for item in self.rf_transition_requirements()
+                     if item['key'] == key), None)
+
+    def _checked_transition(self, requirement, path):
+        from .artifacts import load_artifact
+        if not requirement['layer'] or not requirement['footprint']:
+            raise ValueError('Assign the KiCad layer and connector footprint first')
+        if len(requirement['part_sha256s']) != 1:
+            raise ValueError('The requirement does not resolve to one footprint revision')
+        if len(requirement['sides']) != 1:
+            raise ValueError('The requirement is used on both board sides')
+        artifact = load_artifact(
+            path, layers=self.copper_layers,
+            part_sha256=requirement['part_sha256s'][0],
+            netclass=requirement['netclass'],
+        )
+        compatibility = artifact['compatibility']
+        if compatibility['part_id'] != requirement['footprint']:
+            raise ValueError('RF transition was approved for a different connector footprint')
+        expected_side = 'front' if requirement['sides'][0] == 'F' else 'back'
+        if compatibility['side'] != expected_side:
+            raise ValueError('RF transition was approved for a different board side')
+        if len(requirement['part_paths']) != 1:
+            raise ValueError('The requirement does not resolve to one footprint source')
+        from .core.libraries import read_footprint
+        footprint = read_footprint(
+            self.resolve_path(requirement['part_paths'][0], requirement['part_sha256s'][0]),
+            requirement['footprint'], requirement['part_sha256s'][0],
+        )
+        signal_pads = [pad for pad in footprint.pads if pad.number == '1']
+        if not signal_pads:
+            raise ValueError('Connector footprint has no signal pad 1')
+        kinds = {pad.kind for pad in signal_pads}
+        if compatibility['mount'] == 'PTH' and kinds != {'thru_hole'}:
+            raise ValueError('PTH RF transition requires a plated through-hole signal pad')
+        if compatibility['mount'] == 'SMD' and not kinds <= {'smd', 'connect'}:
+            raise ValueError('SMD RF transition requires a surface-mount signal pad')
+        signal_layer = artifact['payload']['layer_roles']['signal']
+        if signal_layer != requirement['layer']:
+            raise ValueError(
+                f'RF transition signal layer {signal_layer} differs from mapped layer '
+                f'{requirement["layer"]}'
+            )
+        return artifact
+
+    def set_rf_transition(self, requirement_key, path):
+        requirement = next((item for item in self.rf_transition_requirements()
+                            if item['key'] == requirement_key), None)
+        if requirement is None:
+            raise ValueError('RF transition requirement is stale; refresh the page')
+        if not path:
+            self.config['artifacts'].pop(requirement_key, None)
+            self.changed()
+            return
+        source = Path(path).resolve()
+        artifact = self._checked_transition(requirement, source)
+        self.config['artifacts'][requirement_key] = {
+            'path': str(source), 'sha256': artifact['hashes']['artifact'],
+            'artifact_id': artifact['artifact_id'], 'revision': artifact['revision'],
+        }
+        self.changed()
+
+    def validate_rf_transition(self, requirement):
+        assignment = requirement.get('assignment', {})
+        if not assignment.get('path'):
+            raise ValueError('Choose an approved RF transition')
+        path = self.resolve_path(
+            assignment['path'], assignment.get('sha256'), 'rf', '.json',
+        )
+        artifact = self._checked_transition(requirement, path)
+        if (assignment.get('sha256') and
+                artifact['hashes']['artifact'] != assignment['sha256']):
+            raise ValueError(
+                'Selected RF transition revision changed; explicitly select the new revision'
+            )
+        return artifact
 
     def dc_connector(self, name):
         if name not in self.config['dc_connectors']:
@@ -239,10 +358,14 @@ class WorkflowController:
 
     def copy_gang(self, source, targets):
         values = self.gang(source)
+        copied_fields = (
+            'row_lengths', 'pitch_x', 'pitch_y', 'row_offsets', 'numbering',
+            'traversal', 'rotation', 'connector_rotation', 'mirror', 'units', 'side',
+        )
         for target in targets:
             if target == source:
                 continue
-            copied = {k: deepcopy(v) for k, v in values.items() if k not in ('gang', 'anchor', 'anchor_accepted')}
+            copied = {key: deepcopy(values[key]) for key in copied_fields if key in values}
             self.set_gang(target, copied)
 
     def validate(self):
@@ -341,6 +464,15 @@ class WorkflowController:
                         issues.append(Issue('gang_population', f'{name}: numbering must exactly match workbook locations'))
                 except (ValueError, TypeError) as error:
                     issues.append(Issue('gang_pattern', f'{name}: {error}'))
+            for requirement in self.rf_transition_requirements():
+                label = ' / '.join((
+                    requirement['netclass'], requirement['layer'] or 'unmapped layer',
+                    requirement['footprint'] or 'unassigned footprint',
+                ))
+                try:
+                    self.validate_rf_transition(requirement)
+                except (OSError, ValueError) as error:
+                    issues.append(Issue('rf_transition', f'{label}: {error}'))
             for name in self.dc_connector_names():
                 selection = self.dc_connector(name)
                 if not selection.get('symbol', {}).get('path'):
@@ -417,12 +549,13 @@ class WorkflowController:
         paths = [self.board_path, Path(self.config['workbook'].get('path', ''))]
         if self.board_path:
             paths.extend(self.board_path.with_suffix(suffix) for suffix in ('.kicad_pro', '.connector-interposer-instances.json'))
-        paths.extend(Path(g[key]) for g in self.config['gangs'].values() for key in ('part_id', 'rf_artifact') if g.get(key))
+        paths.extend(Path(g['part_id']) for g in self.config['gangs'].values() if g.get('part_id'))
         paths.extend(Path(g['symbol']['path']) for g in self.config['gangs'].values() if g.get('symbol', {}).get('path'))
         paths.extend(Path(v['path']) for v in self.config['dc_connectors'].values() if v.get('path'))
         paths.extend(Path(v['symbol']['path']) for v in self.config['dc_connectors'].values()
                      if v.get('symbol', {}).get('path'))
-        paths.extend(Path(path) for g in self.config['gangs'].values() for path in g.get('rf_artifacts', {}).values() if path)
+        paths.extend(Path(selection['path']) for selection in self.config['artifacts'].values()
+                     if selection.get('path'))
         paths.extend(Path(v['path']) for v in self.config['interposers'].values() if v.get('path'))
         paths.extend(Path(v['symbol']['path']) for v in self.config['interposers'].values() if v.get('symbol', {}).get('path'))
         paths.extend(Path(v['path']) for v in self.config.get('mounting_holes', []) if v.get('path'))
@@ -651,7 +784,6 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
         from .core.model import validate_records
         from .core.geometry import validate_mechanical_population
         from .schematic import PartSelection, generate_schematic, merge_library_table
-        from .artifacts import load_artifact
         if not controller.board_path or not controller.board_path.exists():
             raise ValueError('Save the source PCB before comparing')
         cfg, records = controller.config, controller.table.records
@@ -784,22 +916,19 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
             x, y = controller.pattern(record.connector)[record.connector_pin]
             instance = {'kind': 'connector', 'connector_type': 'RF', 'gang': record.connector,
                 'footprint': dict(part.footprint.pin(), approved=True, source_library_id=settings.get('library_id') or library_id(settings['part_id'])),
-                'pose': [x, y, settings['rotation']], 'pads': {'1': record.signal, '2': 'GND'},
+                'pose': [x, y, settings.get('connector_rotation', 0)], 'pads': {'1': record.signal, '2': 'GND'},
                 'symbol_path': bundle.paths[record.key], 'symbol_fields': symbol_fields(record.key), 'netclass': record.netclass,
                 'signal_layer': cfg['layer_mapping'][record.layer], 'side': settings.get('side', 'F')}
-            artifact_path = settings.get('rf_artifacts', {}).get(record.connector_pin) or settings.get('rf_artifact')
-            if artifact_path:
-                artifact_hash = settings.get('rf_artifact_pins', {}).get(record.connector_pin) if settings.get('rf_artifacts', {}).get(record.connector_pin) else settings.get('rf_artifact_hash')
-                artifact_path = controller.resolve_path(artifact_path, artifact_hash, 'rf', '.json')
-                artifact = load_artifact(artifact_path, layers=controller.copper_layers,
-                                         part_sha256=part.footprint.sha256, netclass=record.netclass)
-                if artifact_hash and artifact['hashes']['artifact'] != artifact_hash:
-                    raise ValueError(f'{record.key}: selected RF artifact revision changed; explicitly select the new approved revision')
-                signal_role = artifact.get('payload', {}).get('layer_roles', {}).get('signal')
-                if signal_role != cfg['layer_mapping'][record.layer]:
-                    raise ValueError(f'{record.key}: RF artifact signal layer {signal_role} differs from mapped routing layer {cfg["layer_mapping"][record.layer]}; select a compatible artifact')
-                instance['rf'] = {'artifact': artifact, 'nets': {'signal': record.signal, 'ground': 'GND'},
-                                  'layers': {}, 'clock': settings.get('rf_overrides', {}).get(record.connector_pin, settings['rf_clock'])}
+            requirement = controller.rf_transition_requirement(record)
+            if requirement is None:
+                raise ValueError(f'{record.key}: RF transition requirement is missing')
+            artifact = controller.validate_rf_transition(requirement)
+            instance['rf'] = {
+                'artifact': artifact,
+                'nets': {'signal': record.signal, 'ground': 'GND'},
+                'layers': {},
+                'clock': settings.get('connector_rotation', 0),
+            }
             instances[record.key] = instance
         for reference, part in dc_parts.items():
             selection = controller.dc_connector(reference)

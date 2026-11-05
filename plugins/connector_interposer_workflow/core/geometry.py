@@ -1,7 +1,7 @@
 """Gang placement: board X-right/Y-down, KiCad positive CCW angles, mm output."""
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 def finite(value):
@@ -33,15 +33,13 @@ class GangDefinition:
     anchor: tuple = (0, 0)
     units: str = "mm"
     part_id: str = ""
-    rf_clock: float = 0
-    rf_overrides: dict = field(default_factory=dict)
 
     def positions(self):
         if not self.gang or not self.row_lengths or any(type(n) is not int or n <= 0 for n in self.row_lengths):
             raise ValueError("Gang and positive integer row lengths are required")
         if self.units not in ("mm", "mil", "inch"):
             raise ValueError("Units must be mm, mil or inch")
-        values = (self.pitch_x, self.pitch_y, self.rotation, self.rf_clock, *self.anchor, *self.row_offsets)
+        values = (self.pitch_x, self.pitch_y, self.rotation, *self.anchor, *self.row_offsets)
         if len(self.anchor) != 2 or not all(finite(v) for v in values):
             raise ValueError("Gang coordinates and angles must be finite")
         if self.pitch_x <= 0 or self.pitch_y <= 0:
@@ -67,8 +65,6 @@ class GangDefinition:
         result = {pin: transform((x-ox, y-oy), anchor, self.rotation, self.mirror) for pin, (x, y) in local.items()}
         if len({(round(x, 12), round(y, 12)) for x, y in result.values()}) != len(result):
             raise ValueError("Gang locations overlap")
-        if any(str(pin) not in result or not finite(angle) for pin, angle in self.rf_overrides.items()):
-            raise ValueError("RF overrides require existing location indices and finite angles")
         return result
 
     def validate_population(self, records):
