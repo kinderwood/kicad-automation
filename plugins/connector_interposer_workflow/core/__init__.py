@@ -9,3 +9,4 @@ from .identities import stable_uuid, diff_snapshots, digest, canonical_json
 from .libraries import (ApprovedFootprint, ApprovedSymbol, footprint_matches_filters,
                         read_footprint, read_symbol)
 from .config import ProjectConfig
+from .units import DIMENSION_UNITS, dimension_text, normalize_unit, parse_dimension

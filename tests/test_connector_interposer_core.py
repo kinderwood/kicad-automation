@@ -204,6 +204,18 @@ class ConnectorTypeTests(unittest.TestCase):
 
 
 class GeometryTests(unittest.TestCase):
+    def test_independent_dimension_units_normalize_to_millimetres(self):
+        self.assertEqual(DIMENSION_UNITS, ('mm', 'mil', 'inch', 'um'))
+        self.assertEqual(parse_dimension('10mm'), (10, 'mm', '10'))
+        self.assertEqual(parse_dimension('10 mm'), (10, 'mm', '10'))
+        self.assertEqual(parse_dimension('100 mil')[0], 2.54)
+        self.assertEqual(parse_dimension('1 inch')[0], 25.4)
+        self.assertEqual(parse_dimension('250 um')[0], .25)
+        self.assertEqual(parse_dimension('10', 'mil'), (.254, 'mil', '10'))
+        self.assertEqual(dimension_text(25.4, 'inch'), '1')
+        with self.assertRaises(ValueError):
+            parse_dimension('10 parsecs')
+
     def test_custom_numbering_location_one_anchor_and_independence(self):
         g=GangDefinition('J1',(2,2),2,3,row_offsets=(0,1),numbering=(3,4,1,2),rotation=90,anchor=(10,20))
         points=g.positions()
@@ -212,7 +224,8 @@ class GeometryTests(unittest.TestCase):
         self.assertAlmostEqual(points['2'][1],18)
         self.assertEqual(GangDefinition('J2',(1,),100,100).positions(),{'1':(0,0)})
         self.assertEqual(set(GangDefinition('J2',(3,),2,3,numbering=(1,3,6)).positions()),{'1','3','6'})
-        self.assertEqual(GangDefinition('J3',(2,),100,100,units='mil').positions()['2'],(2.54,0))
+        self.assertEqual(GangDefinition('J3', (2,), 2.54, 2.54).positions()['2'],
+                         (2.54, 0))
         with self.assertRaises(ValueError):dataclasses.replace(g,numbering=(1,1,2,3)).positions()
         with self.assertRaises(ValueError):dataclasses.replace(g,pitch_x=float('nan')).positions()
 

@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.5**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.6**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -102,13 +102,15 @@ an already-open source board does not update the output copy.
    are not entered on this page.
 6. **Define RF gangs:** select an RF gang from the searchable netlist-derived list.
    On **Pattern**, add or remove rows, set the number of positions and X offset
-   for each row, then set position and row spacing. On **Numbering & placement**,
+   for each row, then set position and row pitch. Every linear input has its own
+   `mm`, `mil`, `inch` or `um` selector; a suffix such as `10mm` or `10 mm`
+   selects that unit when the field is committed. On **Numbering & placement**,
    choose row-major, serpentine, column-major or custom numbering; set pattern
    rotation independently from connector orientation; choose the mounting side
    and optional layout mirror. The numbered preview keeps location 1 marked as
-   the DXF anchor. Changes remain a draft until **Apply definition**; Review
-   Changes blocks while any gang has an unapplied draft. Copying settings never
-   changes gang anchors or selected library parts.
+   the DXF anchor. Valid changes update the gang immediately. New gangs remain
+   **Not defined** until edited; incomplete or population-mismatched entries are
+   **Invalid**. Copying settings never changes gang anchors or selected library parts.
 7. **RF transitions:** optionally assign one immutable published transition to each unique
    `(netclass, mapped KiCad layer, connector footprint)` requirement. One row can
    cover locations in several gangs. Unassigned requirements do not block Review
@@ -148,7 +150,7 @@ an already-open source board does not update the output copy.
    hashes; later edits are not silently overwritten.
 
 The source `.connector-interposer-workflow.json` sidecar stores project identity
-and UI drafts,
+and workflow settings,
 including mappings, excluded-row selections, netclass types, layer policy,
 independent RF gang definitions, per-connector symbol/footprint assignments,
 DC pin-1 anchors, the interposer assignment and placement,

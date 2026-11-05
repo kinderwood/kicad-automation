@@ -1,4 +1,4 @@
-"""Gang placement: board X-right/Y-down, KiCad positive CCW angles, mm output."""
+"""Gang placement: board X-right/Y-down, KiCad positive CCW angles, mm input/output."""
 import math
 import re
 from dataclasses import dataclass
@@ -31,14 +31,11 @@ class GangDefinition:
     rotation: float = 0
     mirror: bool = False
     anchor: tuple = (0, 0)
-    units: str = "mm"
     part_id: str = ""
 
     def positions(self):
         if not self.gang or not self.row_lengths or any(type(n) is not int or n <= 0 for n in self.row_lengths):
             raise ValueError("Gang and positive integer row lengths are required")
-        if self.units not in ("mm", "mil", "inch"):
-            raise ValueError("Units must be mm, mil or inch")
         values = (self.pitch_x, self.pitch_y, self.rotation, *self.anchor, *self.row_offsets)
         if len(self.anchor) != 2 or not all(finite(v) for v in values):
             raise ValueError("Gang coordinates and angles must be finite")
@@ -48,7 +45,6 @@ class GangDefinition:
             raise ValueError("Provide one stagger/offset per row")
         if self.traversal not in ("row-major", "serpentine", "column-major"):
             raise ValueError("Unsupported numbering traversal")
-        scale = {"mm": 1, "mil": .0254, "inch": 25.4}[self.units]
         coords = [(row, col) for row, count in enumerate(self.row_lengths) for col in range(count)]
         if self.traversal == "serpentine":
             coords = [(row, col) for row, count in enumerate(self.row_lengths) for col in (range(count) if row % 2 == 0 else reversed(range(count)))]
@@ -59,9 +55,9 @@ class GangDefinition:
             raise ValueError("Numbering requires distinct positive indices, including the location-1 anchor")
         local = {}
         for pin, (row, col) in zip(numbering, coords):
-            local[pin] = ((col*self.pitch_x+(self.row_offsets[row] if self.row_offsets else 0))*scale, row*self.pitch_y*scale)
+            local[pin] = (col*self.pitch_x+(self.row_offsets[row] if self.row_offsets else 0), row*self.pitch_y)
         ox, oy = local["1"]
-        anchor = tuple(float(v)*scale for v in self.anchor)
+        anchor = tuple(float(v) for v in self.anchor)
         result = {pin: transform((x-ox, y-oy), anchor, self.rotation, self.mirror) for pin, (x, y) in local.items()}
         if len({(round(x, 12), round(y, 12)) for x, y in result.values()}) != len(result):
             raise ValueError("Gang locations overlap")

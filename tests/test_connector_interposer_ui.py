@@ -116,14 +116,25 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual([issue.source_row for issue in issues if issue.code == 'layer_disallowed'], [3, 4])
 
     def test_independent_gangs_and_explicit_copy_preserve_anchors(self):
-        self.controller.set_gang('J101', {'pitch_x': 4, 'anchor': [30, 20], 'anchor_accepted': True})
-        self.controller.set_gang('J202', {'pitch_x': 9, 'anchor': [80, 40], 'anchor_accepted': True})
+        self.controller.set_gang('J101', {
+            'pitch_x': 4, 'anchor': [30, 20], 'anchor_accepted': True,
+            'display_units': {'pitch_x': 'mil', 'pitch_y': 'mm', 'row_offsets': [],
+                              'anchor_x': 'inch', 'anchor_y': 'inch'},
+        })
+        self.controller.set_gang('J202', {
+            'pitch_x': 9, 'anchor': [80, 40], 'anchor_accepted': True,
+            'display_units': {'pitch_x': 'mm', 'pitch_y': 'mm', 'row_offsets': [],
+                              'anchor_x': 'um', 'anchor_y': 'mil'},
+        })
         self.assertEqual(self.controller.pattern('J101')['2'], (34, 20))
         self.assertEqual(self.controller.gang('J202')['pitch_x'], 9)
         self.controller.copy_gang('J101', ['J202'])
         self.assertEqual(self.controller.gang('J202')['pitch_x'], 4)
         self.assertEqual(self.controller.gang('J202')['anchor'], [80, 40])
         self.assertEqual(self.controller.gang('J101')['anchor'], [30, 20])
+        self.assertEqual(self.controller.gang('J202')['display_units']['pitch_x'], 'mil')
+        self.assertEqual(self.controller.gang('J202')['display_units']['anchor_x'], 'um')
+        self.assertEqual(self.controller.gang('J202')['display_units']['anchor_y'], 'mil')
 
     def test_rf_requirements_group_by_netclass_layer_and_footprint(self):
         self.controller.set_layers(('F.Cu', 'B.Cu'))
@@ -652,7 +663,7 @@ class NativeDialogTests(unittest.TestCase):
                 dialog.Destroy()
                 self.app.Yield()
 
-    def test_define_gang_drafts_and_requirement_transition_assignment(self):
+    def test_live_gang_definitions_units_and_requirement_transition_assignment(self):
         from plugins.connector_interposer_workflow.core.model import HEADERS
         from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
         from plugins.connector_interposer_workflow.ui import WorkflowDialog
@@ -686,27 +697,32 @@ class NativeDialogTests(unittest.TestCase):
             })
             dialog.refresh_gangs()
             self.assertEqual(dialog.current_gang, 'J101')
-            self.assertGreater(dialog.gang_draft_status.GetPosition().y,
-                               dialog.apply_gang_button.GetPosition().y)
+            self.assertEqual(dialog.gang_list.GetItemText(0, 2), 'Not defined')
+            self.assertIsNone(self.wx.FindWindowByLabel('Apply definition', dialog.pages[5]))
+            self.assertIsNone(self.wx.FindWindowByLabel('Revert', dialog.pages[5]))
+            self.assertEqual(dialog.gang_editor_title.GetLabel(), 'J101 Gang definition')
+            self.assertEqual(dialog.gang_rows.GetColLabelValue(3), 'Unit')
             dialog.gang_rows.SetCellValue(0, 1, '3')
             dialog.gang_draft_changed()
             self.assertEqual(len(dialog.pattern_view.points), 3)
             self.assertIn('Needs input', dialog.gang_definition_status.GetLabel())
-            self.assertEqual(dialog.gang_draft_status.GetLabel(), 'Draft not applied')
+            self.assertEqual(dialog.gang_list.GetItemText(0, 2), 'Invalid')
             dialog.gang_rows.SetCellValue(0, 1, '2')
             dialog.gang_draft_changed()
-            dialog.gang_pitch_x.ChangeValue('4')
+            dialog.gang_pitch_x.ChangeValue('100 mil')
             dialog.gang_draft_changed()
             self.assertEqual(dialog.controller.gang('J101')['pitch_x'], 2.54)
-            self.assertEqual(dialog.controller.config['drafts']['J101']['pitch_x'], 4)
-            self.assertEqual(dialog.gang_draft_status.GetLabel(), 'Draft not applied')
+            self.assertEqual(
+                dialog.controller.gang('J101')['display_units']['pitch_x'], 'mil',
+            )
+            self.assertTrue(dialog.controller.gang('J101')['defined'])
+            self.assertEqual(dialog.gang_list.GetItemText(0, 2), 'Defined')
+            self.assertEqual(dialog.gang_preview_status.GetLabel(),
+                             'Current gang definition')
             self.assertEqual(dialog.gang_rows.GetColLabelValue(0), 'Row')
             visible_grid_height = (dialog.gang_rows.GetColLabelSize() +
                                    5 * dialog.gang_rows.GetDefaultRowSize())
             self.assertGreaterEqual(dialog.gang_rows.GetMinSize().height, visible_grid_height)
-            dialog.accept_gang(None)
-            self.assertEqual(dialog.controller.gang('J101')['pitch_x'], 4)
-            self.assertNotIn('J101', dialog.controller.config['drafts'])
 
             requirements = dialog.controller.rf_transition_requirements()
             self.assertEqual(len(requirements), 1)
@@ -724,6 +740,36 @@ class NativeDialogTests(unittest.TestCase):
             self.assertEqual(dialog.transition_list.GetItemText(0), 'Ready')
             self.assertEqual(dialog.transition_page_status.GetLabel(),
                              '1 assigned · 0 unassigned (optional)')
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
+    def test_dimension_inputs_normalize_suffixes_and_store_connector_placement_in_mm(self):
+        from plugins.connector_interposer_workflow.core.model import HEADERS
+        from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+
+        dialog = WorkflowDialog()
+        try:
+            dialog.controller.table = parse_sheet(Worksheet('Signals', (
+                HEADERS,
+                ('CLOCK1', 'CLOCK', 'E1', 'A1', 'J101', '1', 'L1'),
+            )))
+            dialog.controller.config['interposers']['E1'] = {'symbol': {'path': 'selected'}}
+            dialog.interposer_x.ChangeValue('1 inch')
+            dialog.interposer_y.ChangeValue('25000um')
+            dialog.accept_interposer_placement(None)
+            selection = dialog.controller.config['interposers']['E1']
+            self.assertEqual(selection['pose'][:2], [25.4, 25.0])
+            self.assertEqual(selection['pose_units'], ['inch', 'um'])
+
+            dialog.label_offset_x.ChangeValue('10 mm')
+            event = self.wx.CommandEvent()
+            dialog.label_offset_x._normalize(event)
+            self.assertEqual(dialog.label_offset_x.GetValue(), '10')
+            self.assertEqual(dialog.label_offset_x.units.GetStringSelection(), 'mm')
+            dialog.label_offset_y.ChangeValue('100 mil')
+            self.assertEqual(dialog.label_offset_y.value_mm(), 2.54)
         finally:
             dialog.Destroy()
             self.app.Yield()
@@ -784,7 +830,8 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             controller.set_gang('J101', {'part_id': gang_parts['J101'].footprint.path, 'library_id': 'Approved:GPPO',
                                        'part_sha256': gang_parts['J101'].footprint.sha256,
                                        'symbol': {'path': str(symbol), 'library_id': 'Approved:GPPO', 'sha256': symbol_sha},
-                                       'row_lengths': [3], 'pitch_x': 4, 'anchor': [20, 30], 'anchor_accepted': True})
+                                       'row_lengths': [3], 'pitch_x': 4, 'anchor': [20, 30],
+                                       'anchor_accepted': True, 'defined': True})
             part = interposer_parts['E1'].footprint
             controller.config['interposers']['E1'] = dict(
                 part.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True,
@@ -902,6 +949,7 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                 'symbol': {'path': str(approved_symbols), 'library_id': 'Approved:GPPO',
                            'sha256': approved_sha},
                 'row_lengths': [1], 'anchor': [20, 30], 'anchor_accepted': True,
+                'defined': True,
             })
             transition = write_transition(
                 root / 'rf.gppo-rf.json', 'Approved:GPPO',

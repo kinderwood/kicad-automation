@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.5 and the
+are authorized. Connector to Interposer Workflow is version 0.4.6 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -234,9 +234,9 @@ system-color change. Native GUI regression checks execute the same dialog tests
 under Adwaita light and dark themes. The complete light/dark dialog set passes
 in the selected KiCad 9.0.9.1 and 10.0.8 AppImage runtimes.
 
-Version 0.4.5 uses **Define RF gangs** and a
-separate **RF transitions** step. Gang geometry uses real draft/apply/revert
-state, editable pattern rows, live PCB-style preview, local definition status,
+Version 0.4.6 uses **Define RF gangs** and a
+separate **RF transitions** step. Gang geometry uses live validated updates,
+editable pattern rows, per-field linear units, a PCB-style preview and local definition status,
 numbering presets and independent pattern and connector rotations. Transition
 assignments are optional, project-wide and keyed by
 netclass, mapped KiCad layer and connector footprint; compatibility validation

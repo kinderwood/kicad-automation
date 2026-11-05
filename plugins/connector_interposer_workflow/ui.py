@@ -6,6 +6,7 @@ import wx
 import wx.grid as grid
 from .controller import HEADERS, PAGES, WorkflowController, library_id
 from .core.library_catalog import KiCadLibraryCatalog
+from .core.units import DIMENSION_UNITS, dimension_text, parse_dimension
 
 WORKBOOK_SUFFIXES = ('.xlsx', '.csv', '.txt')
 SPREADSHEET_PREVIEW_ROWS = 5
@@ -100,6 +101,65 @@ class StepList(wx.VListBox):
         self.SetBackgroundColour(palette.panel)
         self.SetForegroundColour(palette.panel_text)
         self.Refresh()
+
+
+class DimensionInput(wx.Panel):
+    """A numeric linear-dimension input with an independent unit selector."""
+    def __init__(self, parent, value='0', unit='mm'):
+        super().__init__(parent)
+        layout = wx.BoxSizer(wx.HORIZONTAL)
+        self.text = wx.TextCtrl(self, value=str(value), style=wx.TE_PROCESS_ENTER)
+        self.units = wx.Choice(self, choices=list(DIMENSION_UNITS))
+        self.units.SetStringSelection(unit)
+        self.units.SetMinSize((70, -1))
+        layout.Add(self.text, 1, wx.RIGHT, 4)
+        layout.Add(self.units, 0)
+        self.SetSizer(layout)
+        self._change_handler = None
+        self.text.Bind(wx.EVT_TEXT_ENTER, self._normalize)
+        self.text.Bind(wx.EVT_KILL_FOCUS, self._normalize)
+
+    def bind_changed(self, handler):
+        self._change_handler = handler
+        self.text.Bind(wx.EVT_TEXT, handler)
+        self.units.Bind(wx.EVT_CHOICE, handler)
+
+    def _normalize(self, event):
+        try:
+            _value_mm, unit, number_text = parse_dimension(
+                self.text.GetValue(), self.units.GetStringSelection(),
+            )
+        except ValueError:
+            pass
+        else:
+            self.text.ChangeValue(number_text)
+            self.units.SetStringSelection(unit)
+            if self._change_handler is not None:
+                self._change_handler()
+        event.Skip()
+
+    def value_mm(self):
+        value_mm, _unit, _number_text = parse_dimension(
+            self.text.GetValue(), self.units.GetStringSelection(),
+        )
+        return value_mm
+
+    def selected_unit(self):
+        _value_mm, unit, _number_text = parse_dimension(
+            self.text.GetValue(), self.units.GetStringSelection(),
+        )
+        return unit
+
+    def set_mm(self, value_mm, unit=None):
+        unit = unit or self.units.GetStringSelection() or 'mm'
+        self.units.SetStringSelection(unit)
+        self.text.ChangeValue(dimension_text(value_mm, unit))
+
+    def ChangeValue(self, value):
+        self.text.ChangeValue(str(value))
+
+    def GetValue(self):
+        return self.text.GetValue()
 
 
 class AssignmentRenderer(grid.GridCellStringRenderer):
@@ -197,7 +257,7 @@ class DataDialog(wx.Dialog):
 
 class PatternPreview(wx.Panel):
     def __init__(self, parent):
-        super().__init__(parent, size=(320, 300))
+        super().__init__(parent, size=(-1, 300))
         self.name, self.points = '', {}
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.Bind(wx.EVT_PAINT, self.paint)
@@ -215,19 +275,24 @@ class PatternPreview(wx.Panel):
         dc.SetBackground(wx.Brush(background))
         dc.Clear()
         dc.SetTextForeground(foreground)
-        dc.DrawText(self.name + ' — location preview', 10, 10)
+        dc.DrawText(self.name, 10, 10)
         if not self.points:
             return
         width, height = self.GetClientSize()
         xs, ys = zip(*self.points.values())
         spanx, spany = max(max(xs)-min(xs), 1), max(max(ys)-min(ys), 1)
-        scale = max(.01, min(max(20, width-100)/spanx, max(20, height-110)/spany))
+        # Keep extra room for platform DPI scaling and multi-digit labels.
+        scale = .72 * max(
+            .01, min(max(20, width - 100) / spanx, max(20, height - 110) / spany),
+        )
         for pin, (x, y) in self.points.items():
             px = int((x-min(xs))*scale+45)
             py = int((y-min(ys))*scale+60)
             colour = anchor if str(pin) == '1' else geometry
             dc.SetPen(wx.Pen(colour, 2))
-            dc.SetBrush(wx.TRANSPARENT_BRUSH)
+            # An explicit background brush stays hollow on Windows/GTK themes
+            # where the stock transparent brush can inherit a light fill.
+            dc.SetBrush(wx.Brush(background))
             dc.DrawCircle(px, py, 12)
             dc.SetTextForeground(colour)
             label = str(pin)
@@ -580,6 +645,7 @@ class WorkflowDialog(wx.Dialog):
         self.controller.dispatch = wx.CallAfter
         self.current_gang = None
         self._loading_gang = False
+        self._gang_invalid_edits = {}
         self._closing = False
         self._applying = False
         self._updating_spreadsheet = False
@@ -869,6 +935,17 @@ class WorkflowDialog(wx.Dialog):
         parent.GetSizer().Add(row, 0, wx.EXPAND | wx.ALL, 8)
         return control
 
+    def dimension_field(self, parent, label, value='0', unit='mm', invalidate=True):
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        row.Add(wx.StaticText(parent, label=label), 0,
+                wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
+        control = DimensionInput(parent, value, unit)
+        row.Add(control, 1, wx.EXPAND)
+        if invalidate:
+            control.bind_changed(self.input_changed)
+        parent.GetSizer().Add(row, 0, wx.EXPAND | wx.ALL, 8)
+        return control
+
     def library_field(self, parent, label, kind, allow_mechanical=False, on_change=None):
         row = wx.BoxSizer(wx.HORIZONTAL)
         row.Add(wx.StaticText(parent, label=label), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
@@ -882,10 +959,11 @@ class WorkflowDialog(wx.Dialog):
         self.controller.changed()
         self.refresh()
 
-    def input_changed(self, event):
+    def input_changed(self, event=None):
         self.controller.changed()
         if hasattr(self, 'view_button'): self.refresh()
-        event.Skip()
+        if event is not None:
+            event.Skip()
 
     def build_spreadsheet(self, panel):
         self.task_box(
@@ -1894,8 +1972,9 @@ class WorkflowDialog(wx.Dialog):
         if hasattr(self, 'anchor_interposer_ref'):
             self.anchor_interposer_ref.SetLabel('Ref des: ' + (reference or '—'))
             pose = interposer.get('pose', [0, 0, 0])
-            self.interposer_x.ChangeValue(str(pose[0]))
-            self.interposer_y.ChangeValue(str(pose[1]))
+            pose_units = interposer.get('pose_units', ['mm', 'mm'])
+            self.interposer_x.set_mm(pose[0], pose_units[0])
+            self.interposer_y.set_mm(pose[1], pose_units[1])
             self.interposer_rotation.ChangeValue(str(pose[2]))
             self.interposer_pose_status.SetLabel(
                 f'{reference} placement accepted' if reference and interposer.get('pose_accepted')
@@ -2027,7 +2106,7 @@ class WorkflowDialog(wx.Dialog):
         self.task_box(
             panel, 'Define RF gangs', 'Define each RF connector gang',
             'Set the position pattern, numbering, connector orientation and mounting side. '
-            'Edits remain a draft until applied to the selected gang.',
+            'Valid changes take effect immediately for the selected gang.',
         )
         body = wx.BoxSizer(wx.HORIZONTAL)
 
@@ -2037,9 +2116,13 @@ class WorkflowDialog(wx.Dialog):
         self.gang_filter.SetDescriptiveText('Search gangs')
         self.gang_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_gang_list())
         selector.Add(self.gang_filter, 0, wx.EXPAND | wx.ALL, 8)
+        selector_box.SetMinSize((265, -1))
+        selector_box.SetMaxSize((285, -1))
         self.gang_list = wx.ListCtrl(
-            selector_box, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(240, 245),
+            selector_box, style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
         )
+        self.gang_list.SetMinSize((245, 160))
+        self.gang_list.SetMaxSize((265, -1))
         for column, (heading, width) in enumerate((
             ('Gang', 75), ('Positions', 75), ('Status', 115),
         )):
@@ -2061,16 +2144,18 @@ class WorkflowDialog(wx.Dialog):
         pattern_sizer = wx.BoxSizer(wx.VERTICAL)
         pattern_page.SetSizer(pattern_sizer)
         self.gang_rows = grid.Grid(pattern_page)
-        self.gang_rows.CreateGrid(1, 3)
+        self.gang_rows.CreateGrid(1, 4)
         self.gang_rows.SetRowLabelSize(0)
         self.gang_rows.SetColLabelValue(0, 'Row')
         self.gang_rows.SetColLabelValue(1, 'Positions')
         self.gang_rows.SetColLabelValue(2, 'X offset')
-        self.gang_rows.SetColSize(0, 65)
-        self.gang_rows.SetColSize(1, 120)
-        self.gang_rows.SetColSize(2, 150)
+        self.gang_rows.SetColLabelValue(3, 'Unit')
+        self.gang_rows.SetColSize(0, 50)
+        self.gang_rows.SetColSize(1, 85)
+        self.gang_rows.SetColSize(2, 95)
+        self.gang_rows.SetColSize(3, 70)
         self.gang_rows.SetReadOnly(0, 0)
-        self.gang_rows.SetMinSize((350, 180))
+        self.gang_rows.SetMinSize((315, 180))
         self.gang_rows.Bind(grid.EVT_GRID_CELL_CHANGED, self.gang_draft_changed)
         pattern_sizer.Add(self.gang_rows, 0, wx.EXPAND | wx.ALL, 8)
         row_actions = wx.BoxSizer(wx.HORIZONTAL)
@@ -2080,14 +2165,11 @@ class WorkflowDialog(wx.Dialog):
         row_actions.Add(self.gang_position_total, 0, wx.ALIGN_CENTER_VERTICAL)
         pattern_sizer.Add(row_actions, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         dimensions = wx.FlexGridSizer(cols=2, hgap=8, vgap=8)
-        dimensions.Add(wx.StaticText(pattern_page, label='Dimension units'), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.gang_units = wx.Choice(pattern_page, choices=['mm', 'mil', 'inch'])
-        dimensions.Add(self.gang_units, 1, wx.EXPAND)
-        dimensions.Add(wx.StaticText(pattern_page, label='Position spacing'), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.gang_pitch_x = wx.TextCtrl(pattern_page, value='2.54')
+        dimensions.Add(wx.StaticText(pattern_page, label='Position pitch'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.gang_pitch_x = DimensionInput(pattern_page, value='2.54')
         dimensions.Add(self.gang_pitch_x, 1, wx.EXPAND)
-        dimensions.Add(wx.StaticText(pattern_page, label='Row spacing'), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.gang_pitch_y = wx.TextCtrl(pattern_page, value='2.54')
+        dimensions.Add(wx.StaticText(pattern_page, label='Row pitch'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.gang_pitch_y = DimensionInput(pattern_page, value='2.54')
         dimensions.Add(self.gang_pitch_y, 1, wx.EXPAND)
         dimensions.AddGrowableCol(1, 1)
         pattern_sizer.Add(dimensions, 0, wx.EXPAND | wx.ALL, 8)
@@ -2125,27 +2207,22 @@ class WorkflowDialog(wx.Dialog):
         editor.Add(self.gang_definition_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         body.Add(editor, 1, wx.EXPAND | wx.RIGHT, 8)
 
-        preview_box = wx.StaticBox(panel, label='Position preview')
+        preview_box = wx.StaticBox(panel, label='Gang preview')
+        preview_box.SetMinSize((285, -1))
         preview = wx.StaticBoxSizer(preview_box, wx.VERTICAL)
         self.pattern_view = PatternPreview(preview_box)
         preview.Add(self.pattern_view, 1, wx.EXPAND | wx.ALL, 8)
-        actions = wx.BoxSizer(wx.HORIZONTAL)
-        actions.AddStretchSpacer()
-        actions.Add(self.button(preview_box, 'Revert', self.revert_gang), 0, wx.RIGHT, 8)
-        self.apply_gang_button = self.button(preview_box, 'Apply definition', self.accept_gang)
-        actions.Add(self.apply_gang_button, 0)
-        preview.Add(actions, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        self.gang_draft_status = self.status_label(preview_box, 'Select a gang')
-        preview.Add(self.gang_draft_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.gang_preview_status = self.status_label(preview_box, 'Select a gang')
+        preview.Add(self.gang_preview_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         body.Add(preview, 1, wx.EXPAND)
         panel.GetSizer().Add(body, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        for control in (
-            self.gang_pitch_x, self.gang_pitch_y, self.gang_custom_numbering,
-            self.gang_pattern_rotation, self.gang_connector_rotation,
-        ):
+        for control in (self.gang_custom_numbering, self.gang_pattern_rotation,
+                        self.gang_connector_rotation):
             control.Bind(wx.EVT_TEXT, self.gang_draft_changed)
-        for control in (self.gang_units, self.gang_numbering_mode, self.gang_side):
+        self.gang_pitch_x.bind_changed(self.gang_draft_changed)
+        self.gang_pitch_y.bind_changed(self.gang_draft_changed)
+        for control in (self.gang_numbering_mode, self.gang_side):
             control.Bind(wx.EVT_CHOICE, self.gang_draft_changed)
         self.mirror.Bind(wx.EVT_CHECKBOX, self.gang_draft_changed)
         self.gang_numbering_mode.Bind(wx.EVT_CHOICE, self.numbering_mode_changed)
@@ -2159,6 +2236,12 @@ class WorkflowDialog(wx.Dialog):
         for row in range(count):
             self.gang_rows.SetCellValue(row, 0, str(row + 1))
             self.gang_rows.SetReadOnly(row, 0)
+            self.gang_rows.SetCellEditor(
+                row, 3, grid.GridCellChoiceEditor(list(DIMENSION_UNITS), False),
+            )
+            if not self.gang_rows.GetCellValue(row, 3):
+                self.gang_rows.SetCellValue(row, 3, 'mm')
+            self.gang_rows.SetCellRenderer(row, 3, AssignmentRenderer(True))
         display_index = wx.Display.GetFromWindow(self)
         area = (wx.Display(display_index).GetClientArea()
                 if display_index != wx.NOT_FOUND else wx.GetClientDisplayRect())
@@ -2172,14 +2255,18 @@ class WorkflowDialog(wx.Dialog):
             self.pages[5].FitInside()
 
     def _gang_editor_values(self):
-        row_lengths, row_offsets = [], []
+        row_lengths, row_offsets, row_offset_units = [], [], []
         for row in range(self.gang_rows.GetNumberRows()):
             count = self.gang_rows.GetCellValue(row, 1).strip()
             offset = self.gang_rows.GetCellValue(row, 2).strip() or '0'
             if not count:
                 raise ValueError(f'Row {row + 1}: enter a position count')
             row_lengths.append(int(count))
-            row_offsets.append(float(offset))
+            offset_mm, offset_unit, _number_text = parse_dimension(
+                offset, self.gang_rows.GetCellValue(row, 3) or 'mm',
+            )
+            row_offsets.append(offset_mm)
+            row_offset_units.append(offset_unit)
         mode = self.gang_numbering_mode.GetSelection()
         traversals = ('row-major', 'serpentine', 'column-major')
         numbering = []
@@ -2190,16 +2277,65 @@ class WorkflowDialog(wx.Dialog):
         return {
             'row_lengths': row_lengths,
             'row_offsets': row_offsets,
-            'pitch_x': float(self.gang_pitch_x.GetValue()),
-            'pitch_y': float(self.gang_pitch_y.GetValue()),
-            'units': self.gang_units.GetStringSelection(),
+            'pitch_x': self.gang_pitch_x.value_mm(),
+            'pitch_y': self.gang_pitch_y.value_mm(),
+            'display_units': {
+                'pitch_x': self.gang_pitch_x.selected_unit(),
+                'pitch_y': self.gang_pitch_y.selected_unit(),
+                'row_offsets': row_offset_units,
+                'anchor_x': self.controller.gang(self.current_gang).get(
+                    'display_units', {},
+                ).get('anchor_x', 'mm'),
+                'anchor_y': self.controller.gang(self.current_gang).get(
+                    'display_units', {},
+                ).get('anchor_y', 'mm'),
+            },
             'traversal': traversal,
             'numbering': numbering,
             'rotation': float(self.gang_pattern_rotation.GetValue()),
             'connector_rotation': float(self.gang_connector_rotation.GetValue()),
             'mirror': self.mirror.GetValue(),
             'side': 'B' if self.gang_side.GetSelection() == 1 else 'F',
+            'defined': True,
         }
+
+    def _capture_gang_edit(self):
+        return {
+            'row_lengths': [self.gang_rows.GetCellValue(row, 1)
+                            for row in range(self.gang_rows.GetNumberRows())],
+            'row_offsets': [self.gang_rows.GetCellValue(row, 2)
+                            for row in range(self.gang_rows.GetNumberRows())],
+            'row_offset_units': [self.gang_rows.GetCellValue(row, 3) or 'mm'
+                                 for row in range(self.gang_rows.GetNumberRows())],
+            'pitch_x': self.gang_pitch_x.GetValue(),
+            'pitch_x_unit': self.gang_pitch_x.units.GetStringSelection(),
+            'pitch_y': self.gang_pitch_y.GetValue(),
+            'pitch_y_unit': self.gang_pitch_y.units.GetStringSelection(),
+            'numbering_mode': self.gang_numbering_mode.GetSelection(),
+            'numbering': self.gang_custom_numbering.GetValue(),
+            'rotation': self.gang_pattern_rotation.GetValue(),
+            'connector_rotation': self.gang_connector_rotation.GetValue(),
+            'side': self.gang_side.GetSelection(),
+            'mirror': self.mirror.GetValue(),
+        }
+
+    def _restore_gang_edit(self, edit):
+        self._resize_gang_rows(len(edit['row_lengths']))
+        for row, count in enumerate(edit['row_lengths']):
+            self.gang_rows.SetCellValue(row, 1, count)
+            self.gang_rows.SetCellValue(row, 2, edit['row_offsets'][row])
+            self.gang_rows.SetCellValue(row, 3, edit['row_offset_units'][row])
+        self.gang_pitch_x.ChangeValue(edit['pitch_x'])
+        self.gang_pitch_x.units.SetStringSelection(edit['pitch_x_unit'])
+        self.gang_pitch_y.ChangeValue(edit['pitch_y'])
+        self.gang_pitch_y.units.SetStringSelection(edit['pitch_y_unit'])
+        self.gang_numbering_mode.SetSelection(edit['numbering_mode'])
+        self.gang_custom_numbering.ChangeValue(edit['numbering'])
+        self.gang_custom_numbering.Enable(edit['numbering_mode'] == 3)
+        self.gang_pattern_rotation.ChangeValue(edit['rotation'])
+        self.gang_connector_rotation.ChangeValue(edit['connector_rotation'])
+        self.gang_side.SetSelection(edit['side'])
+        self.mirror.SetValue(edit['mirror'])
 
     def _preview_gang_values(self, values):
         from .core.geometry import GangDefinition
@@ -2220,11 +2356,9 @@ class WorkflowDialog(wx.Dialog):
                 f'Numbering must match {len(expected)} netlist positions exactly'
             )
 
-    def _show_gang_definition(self, values, modified, clear_preview=False):
+    def _show_gang_definition(self, values, defined, clear_preview=False):
         if clear_preview:
             self.pattern_view.show(self.current_gang, {})
-        self.gang_draft_status.SetLabel('Draft not applied' if modified else 'Applied')
-        self._style_status(self.gang_draft_status, 'warning' if modified else 'success')
         points = None
         try:
             points = self._preview_gang_values(values)
@@ -2245,29 +2379,61 @@ class WorkflowDialog(wx.Dialog):
                     pass
             self.gang_definition_status.SetLabel('Needs input — ' + str(error))
             self._style_status(self.gang_definition_status, 'error')
-            self.apply_gang_button.Enable(False)
+            self.gang_preview_status.SetLabel('Last renderable geometry')
+            self._style_status(self.gang_preview_status, 'warning')
             return False
-        self.gang_definition_status.SetLabel(
-            f'Definition matches {len(points)} netlist position'
-            f'{"" if len(points) == 1 else "s"}'
-        )
-        self._style_status(self.gang_definition_status, 'success')
-        self.apply_gang_button.Enable(True)
+        if defined:
+            self.gang_definition_status.SetLabel(
+                f'Defined · matches {len(points)} netlist position'
+                f'{"" if len(points) == 1 else "s"}'
+            )
+            self._style_status(self.gang_definition_status, 'success')
+            self.gang_preview_status.SetLabel('Current gang definition')
+            self._style_status(self.gang_preview_status, 'success')
+        else:
+            self.gang_definition_status.SetLabel('Not defined · change a setting to define this gang')
+            self._style_status(self.gang_definition_status, 'warning')
+            self.gang_preview_status.SetLabel('Preview only · gang not defined')
+            self._style_status(self.gang_preview_status, 'warning')
         return True
 
     def gang_draft_changed(self, event=None):
         if not self._loading_gang and self.current_gang:
+            if (event is not None and isinstance(event, grid.GridEvent)
+                    and event.GetCol() == 2):
+                row = event.GetRow()
+                try:
+                    _value_mm, unit, number_text = parse_dimension(
+                        self.gang_rows.GetCellValue(row, 2) or '0',
+                        self.gang_rows.GetCellValue(row, 3) or 'mm',
+                    )
+                except ValueError:
+                    pass
+                else:
+                    self._loading_gang = True
+                    try:
+                        self.gang_rows.SetCellValue(row, 2, number_text)
+                        self.gang_rows.SetCellValue(row, 3, unit)
+                    finally:
+                        self._loading_gang = False
+            values = None
             try:
                 values = self._gang_editor_values()
-                self.controller.config['drafts'][self.current_gang] = values
-                self.controller.changed()
+                points = self._preview_gang_values(values)
+                self._validate_gang_population(points)
             except (TypeError, ValueError) as error:
-                self.gang_definition_status.SetLabel('Needs input — ' + str(error))
-                self._style_status(self.gang_definition_status, 'error')
-                self.gang_draft_status.SetLabel('Draft not applied')
-                self._style_status(self.gang_draft_status, 'warning')
-                self.apply_gang_button.Enable(False)
+                self._gang_invalid_edits[self.current_gang] = self._capture_gang_edit()
+                if values is not None:
+                    self._show_gang_definition(values, False)
+                else:
+                    self.gang_definition_status.SetLabel('Needs input — ' + str(error))
+                    self._style_status(self.gang_definition_status, 'error')
+                    self.gang_preview_status.SetLabel('Last renderable geometry')
+                    self._style_status(self.gang_preview_status, 'warning')
             else:
+                self._gang_invalid_edits.pop(self.current_gang, None)
+                self.controller.set_gang(self.current_gang, values)
+                self.controller.config.get('drafts', {}).pop(self.current_gang, None)
                 self._show_gang_definition(values, True)
             self.refresh_gang_list()
             self.refresh()
@@ -2285,6 +2451,7 @@ class WorkflowDialog(wx.Dialog):
             self._resize_gang_rows(row + 1)
             self.gang_rows.SetCellValue(row, 1, '1')
             self.gang_rows.SetCellValue(row, 2, '0')
+            self.gang_rows.SetCellValue(row, 3, 'mm')
         finally:
             self._loading_gang = False
         self.gang_draft_changed()
@@ -2317,14 +2484,14 @@ class WorkflowDialog(wx.Dialog):
             self.pattern_view.show('', {})
             self.gang_definition_status.SetLabel('No RF gangs')
             self._style_status(self.gang_definition_status, 'neutral')
-            self.gang_draft_status.SetLabel('No RF gangs')
-            self._style_status(self.gang_draft_status, 'neutral')
-            self.apply_gang_button.Enable(False)
+            self.gang_preview_status.SetLabel('No RF gangs')
+            self._style_status(self.gang_preview_status, 'neutral')
         if hasattr(self, 'anchor_gang'):
             current = self.anchor_gang.GetStringSelection()
             self.anchor_gang.Set(list(names))
             if names:
                 self.anchor_gang.SetStringSelection(current if current in names else names[0])
+                self.select_anchor_gang()
         if hasattr(self, 'dc_anchor_connector'):
             dc_names = list(self.controller.dc_connector_names())
             current = self.dc_anchor_connector.GetStringSelection()
@@ -2343,13 +2510,18 @@ class WorkflowDialog(wx.Dialog):
             if query and query not in name.casefold():
                 continue
             count = sum(record.connector == name for record in self.controller.table.records)
-            if name in self.controller.config.get('drafts', {}):
-                status = 'Modified'
+            if name in self._gang_invalid_edits:
+                status = 'Invalid'
             else:
                 try:
-                    status = 'Ready' if len(self.controller.pattern(name)) == count else 'Needs input'
+                    gang = self.controller.gang(name)
+                    points = self.controller.pattern(name)
+                    expected = {record.connector_pin for record in self.controller.table.records
+                                if record.connector == name}
+                    status = ('Defined' if gang.get('defined') and set(points) == expected
+                              else 'Not defined' if not gang.get('defined') else 'Invalid')
                 except (TypeError, ValueError):
-                    status = 'Needs input'
+                    status = 'Invalid'
             index = self.gang_list.InsertItem(self.gang_list.GetItemCount(), name)
             self.gang_list.SetItem(index, 1, str(count))
             self.gang_list.SetItem(index, 2, status)
@@ -2366,68 +2538,71 @@ class WorkflowDialog(wx.Dialog):
         if not self.current_gang:
             return
         applied = self.controller.gang(self.current_gang)
-        values = dict(applied)
-        values.update(self.controller.config.get('drafts', {}).get(self.current_gang, {}))
-        rows = list(values.get('row_lengths') or [1])
-        offsets = list(values.get('row_offsets') or [0] * len(rows))
-        if len(offsets) != len(rows):
-            offsets = [0] * len(rows)
         self._loading_gang = True
         try:
-            self._resize_gang_rows(len(rows))
-            for row, (positions, offset) in enumerate(zip(rows, offsets)):
-                self.gang_rows.SetCellValue(row, 1, str(positions))
-                self.gang_rows.SetCellValue(row, 2, str(offset))
-            self.gang_units.SetStringSelection(values.get('units', 'mm'))
-            self.gang_pitch_x.ChangeValue(str(values.get('pitch_x', 2.54)))
-            self.gang_pitch_y.ChangeValue(str(values.get('pitch_y', 2.54)))
-            numbering = values.get('numbering', [])
-            traversal_index = {'row-major': 0, 'serpentine': 1, 'column-major': 2}.get(
-                values.get('traversal', 'row-major'), 0,
-            )
-            self.gang_numbering_mode.SetSelection(3 if numbering else traversal_index)
-            self.gang_custom_numbering.ChangeValue(', '.join(map(str, numbering)))
-            self.gang_custom_numbering.Enable(bool(numbering))
-            self.gang_pattern_rotation.ChangeValue(str(values.get('rotation', 0)))
-            self.gang_connector_rotation.ChangeValue(str(values.get('connector_rotation', 0)))
-            self.gang_side.SetSelection(1 if values.get('side') == 'B' else 0)
-            self.mirror.SetValue(bool(values.get('mirror', False)))
+            if self.current_gang in self._gang_invalid_edits:
+                self._restore_gang_edit(self._gang_invalid_edits[self.current_gang])
+            else:
+                rows = list(applied.get('row_lengths') or [1])
+                offsets = list(applied.get('row_offsets') or [0] * len(rows))
+                if len(offsets) != len(rows):
+                    offsets = [0] * len(rows)
+                units = applied.get('display_units', {})
+                offset_units = list(units.get('row_offsets') or ['mm'] * len(rows))
+                if len(offset_units) != len(rows):
+                    offset_units = ['mm'] * len(rows)
+                self._resize_gang_rows(len(rows))
+                for row, (positions, offset, unit) in enumerate(
+                        zip(rows, offsets, offset_units)):
+                    self.gang_rows.SetCellValue(row, 1, str(positions))
+                    self.gang_rows.SetCellValue(row, 2, dimension_text(offset, unit))
+                    self.gang_rows.SetCellValue(row, 3, unit)
+                self.gang_pitch_x.set_mm(applied.get('pitch_x', 2.54),
+                                         units.get('pitch_x', 'mm'))
+                self.gang_pitch_y.set_mm(applied.get('pitch_y', 2.54),
+                                         units.get('pitch_y', 'mm'))
+                numbering = applied.get('numbering', [])
+                traversal_index = {'row-major': 0, 'serpentine': 1, 'column-major': 2}.get(
+                    applied.get('traversal', 'row-major'), 0,
+                )
+                self.gang_numbering_mode.SetSelection(3 if numbering else traversal_index)
+                self.gang_custom_numbering.ChangeValue(', '.join(map(str, numbering)))
+                self.gang_custom_numbering.Enable(bool(numbering))
+                self.gang_pattern_rotation.ChangeValue(str(applied.get('rotation', 0)))
+                self.gang_connector_rotation.ChangeValue(
+                    str(applied.get('connector_rotation', 0)),
+                )
+                self.gang_side.SetSelection(1 if applied.get('side') == 'B' else 0)
+                self.mirror.SetValue(bool(applied.get('mirror', False)))
         finally:
             self._loading_gang = False
-        count = sum(record.connector == self.current_gang for record in self.controller.table.records)
-        self.gang_editor_title.SetLabel(f'{self.current_gang} · {count} positions from netlist')
+        self.gang_editor_title.SetLabel(f'{self.current_gang} Gang definition')
         if hasattr(self, 'anchor_gang'):
             self.anchor_gang.SetStringSelection(self.current_gang)
-        modified = self.current_gang in self.controller.config.get('drafts', {})
-        self._show_gang_definition(values, modified, clear_preview=True)
-
-    def accept_gang(self, event):
-        if not self.current_gang:
-            raise ValueError('Select a gang')
-        values = self._gang_editor_values()
-        points = self._preview_gang_values(values)
-        self._validate_gang_population(points)
-        self.controller.set_gang(self.current_gang, values)
-        self.controller.config.get('drafts', {}).pop(self.current_gang, None)
-        self.controller.changed()
-        self.select_gang(None)
-        self.refresh_gang_list()
-        self.status.SetLabel(f'{self.current_gang} gang definition applied to the workflow.')
-
-    def revert_gang(self, event):
-        if not self.current_gang:
-            return
-        self.controller.config.get('drafts', {}).pop(self.current_gang, None)
-        self.controller.changed()
-        self.select_gang(None)
-        self.refresh_gang_list()
-        self.status.SetLabel(f'{self.current_gang} draft reverted to the applied definition.')
+            self.select_anchor_gang()
+        if self.current_gang in self._gang_invalid_edits:
+            try:
+                values = self._gang_editor_values()
+            except (TypeError, ValueError) as error:
+                self._show_gang_definition(applied, bool(applied.get('defined')), True)
+                self.gang_definition_status.SetLabel('Needs input — ' + str(error))
+                self._style_status(self.gang_definition_status, 'error')
+                self.gang_preview_status.SetLabel('Last renderable geometry')
+                self._style_status(self.gang_preview_status, 'warning')
+            else:
+                self._show_gang_definition(values, False, clear_preview=True)
+        else:
+            self._show_gang_definition(
+                applied, bool(applied.get('defined')), clear_preview=True,
+            )
 
     def copy_gang(self, event):
         if not self.current_gang:
             raise ValueError('Select a gang')
-        if self.current_gang in self.controller.config.get('drafts', {}):
-            raise ValueError('Apply or revert the selected gang draft before copying settings')
+        if self.current_gang in self._gang_invalid_edits:
+            raise ValueError('Correct the selected gang definition before copying settings')
+        if not self.controller.gang(self.current_gang).get('defined'):
+            raise ValueError('Define the selected gang before copying its settings')
         names = [name for name in self.controller.gang_names() if name != self.current_gang]
         with wx.MultiChoiceDialog(
             self, 'Select target gangs. Anchors and library parts remain independent.',
@@ -2669,11 +2844,13 @@ class WorkflowDialog(wx.Dialog):
         self.anchor_interposer_ref = wx.StaticText(interposer_box, label='Ref des: —')
         interposer.Add(self.anchor_interposer_ref, 0, wx.ALL, 8)
         placement = wx.FlexGridSizer(cols=6, hgap=8, vgap=6)
-        placement.Add(wx.StaticText(interposer_box, label='X (mm)'), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.interposer_x = wx.TextCtrl(interposer_box, value='0')
+        placement.Add(wx.StaticText(interposer_box, label='X'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.interposer_x = DimensionInput(interposer_box, value='0')
+        self.interposer_x.bind_changed(self.input_changed)
         placement.Add(self.interposer_x, 1, wx.EXPAND)
-        placement.Add(wx.StaticText(interposer_box, label='Y (mm)'), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.interposer_y = wx.TextCtrl(interposer_box, value='0')
+        placement.Add(wx.StaticText(interposer_box, label='Y'), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.interposer_y = DimensionInput(interposer_box, value='0')
+        self.interposer_y.bind_changed(self.input_changed)
         placement.Add(self.interposer_y, 1, wx.EXPAND)
         placement.Add(wx.StaticText(interposer_box, label='Orientation (degrees)'), 0, wx.ALIGN_CENTER_VERTICAL)
         self.interposer_rotation = wx.TextCtrl(interposer_box, value='0')
@@ -2687,12 +2864,13 @@ class WorkflowDialog(wx.Dialog):
         panel.GetSizer().Add(interposer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         self.anchor_gang = wx.Choice(panel)
+        self.anchor_gang.Bind(wx.EVT_CHOICE, self.select_anchor_gang)
         panel.GetSizer().Add(self.anchor_gang, 0, wx.EXPAND | wx.ALL, 8)
         self.user_layer = self.field(panel, 'Imported mechanical user layer', 'Dwgs.User')
-        self.label_offset_x = self.field(panel, 'Label offset X from circle (mm)', '0')
-        self.label_offset_y = self.field(panel, 'Label offset Y from circle (mm)', '0')
-        self.anchor_x = self.field(panel, 'Location 1 X (mm)', '0')
-        self.anchor_y = self.field(panel, 'Location 1 Y (mm)', '0')
+        self.label_offset_x = self.dimension_field(panel, 'Label offset X from circle', '0')
+        self.label_offset_y = self.dimension_field(panel, 'Label offset Y from circle', '0')
+        self.anchor_x = self.dimension_field(panel, 'Location 1 X', '0')
+        self.anchor_y = self.dimension_field(panel, 'Location 1 Y', '0')
         panel.GetSizer().Add(self.button(panel, 'Use selected circle center', self.capture_circle), 0, wx.ALL, 8)
         panel.GetSizer().Add(self.button(panel, 'Accept anchor', self.accept_anchor), 0, wx.ALL, 8)
         self.anchor_status = self.note(panel, 'No anchor captured.')
@@ -2729,6 +2907,20 @@ class WorkflowDialog(wx.Dialog):
         self.hole_ref = self.field(panel, 'Mounting-hole reference', 'H1')
         panel.GetSizer().Add(self.button(panel, 'Add mounting hole at this anchor', self.add_hole), 0, wx.ALL, 8)
 
+    def select_anchor_gang(self, event=None):
+        gang = self.anchor_gang.GetStringSelection()
+        if not gang:
+            return
+        settings = self.controller.gang(gang)
+        anchor = settings.get('anchor', [0, 0])
+        units = settings.get('display_units', {})
+        self.anchor_x.set_mm(anchor[0], units.get('anchor_x', 'mm'))
+        self.anchor_y.set_mm(anchor[1], units.get('anchor_y', 'mm'))
+        accepted = bool(settings.get('anchor_accepted'))
+        self.anchor_status.SetLabel(
+            f'{gang} anchor accepted' if accepted else f'{gang} anchor required'
+        )
+
     def accept_interposer_placement(self, event):
         reference = self._interposer_reference()
         if not reference:
@@ -2736,11 +2928,14 @@ class WorkflowDialog(wx.Dialog):
         selection = self.controller.config['interposers'].get(reference)
         if not selection:
             raise ValueError('Assign the interposer symbol and footprint first')
-        pose = [float(self.interposer_x.GetValue()), float(self.interposer_y.GetValue()),
+        pose = [self.interposer_x.value_mm(), self.interposer_y.value_mm(),
                 float(self.interposer_rotation.GetValue())]
         if not all(math.isfinite(value) for value in pose):
             raise ValueError('Interposer placement values must be finite numbers')
         selection['pose'] = pose
+        selection['pose_units'] = [
+            self.interposer_x.selected_unit(), self.interposer_y.selected_unit(),
+        ]
         selection['pose_accepted'] = True
         self.controller.changed()
         self.interposer_pose_status.SetLabel(f'{reference} placement accepted')
@@ -2755,8 +2950,8 @@ class WorkflowDialog(wx.Dialog):
         if self.pcbnew.GetBoard().GetLayerName(circle.GetLayer()) != self.user_layer.GetValue():
             raise ValueError('Circle must belong to the selected mechanical user layer')
         center = circle.GetCenter()
-        self.anchor_x.ChangeValue(str(center.x/1e6))
-        self.anchor_y.ChangeValue(str(center.y/1e6))
+        self.anchor_x.set_mm(center.x / 1e6)
+        self.anchor_y.set_mm(center.y / 1e6)
         self._circle_draft = {'uuid': circle.m_Uuid.AsString(), 'center_nm': [center.x, center.y]}
         self.anchor_status.SetLabel('Draft circle center captured; accept to persist it. Board unchanged.')
 
@@ -2823,7 +3018,10 @@ class WorkflowDialog(wx.Dialog):
         })
         self.controller.config['mechanical']['layer'] = self.user_layer.GetValue()
         self.controller.config['mechanical']['label_offset'] = [
-            float(self.label_offset_x.GetValue()), float(self.label_offset_y.GetValue()),
+            self.label_offset_x.value_mm(), self.label_offset_y.value_mm(),
+        ]
+        self.controller.config['mechanical']['label_offset_units'] = [
+            self.label_offset_x.selected_unit(), self.label_offset_y.selected_unit(),
         ]
         self.controller.config['mechanical']['accepted'] = True
         self.dc_anchor_status.SetLabel(f'{reference} pin 1 placement accepted')
@@ -2839,10 +3037,21 @@ class WorkflowDialog(wx.Dialog):
             if source is None or [source.GetCenter().x, source.GetCenter().y] != self._circle_draft['center_nm']:
                 raise ValueError('Circle changed; capture its center again')
         settings = self.controller.gang(gang)
-        scale = {'mm': 1, 'mil': .0254, 'inch': 25.4}[settings.get('units', 'mm')]
-        self.controller.set_gang(gang, {'anchor': [float(self.anchor_x.GetValue())/scale, float(self.anchor_y.GetValue())/scale], 'anchor_accepted': True})
+        display_units = dict(settings.get('display_units', {}))
+        display_units['anchor_x'] = self.anchor_x.selected_unit()
+        display_units['anchor_y'] = self.anchor_y.selected_unit()
+        self.controller.set_gang(gang, {
+            'anchor': [self.anchor_x.value_mm(), self.anchor_y.value_mm()],
+            'display_units': display_units,
+            'anchor_accepted': True,
+        })
         self.controller.config['mechanical']['layer'] = self.user_layer.GetValue()
-        self.controller.config['mechanical']['label_offset'] = [float(self.label_offset_x.GetValue()), float(self.label_offset_y.GetValue())]
+        self.controller.config['mechanical']['label_offset'] = [
+            self.label_offset_x.value_mm(), self.label_offset_y.value_mm(),
+        ]
+        self.controller.config['mechanical']['label_offset_units'] = [
+            self.label_offset_x.selected_unit(), self.label_offset_y.selected_unit(),
+        ]
         self.controller.config['mechanical']['accepted'] = True
         self.controller.changed()
         self.anchor_status.SetLabel(f'{gang} anchor accepted. Exact mechanical identities are checked during review.')
@@ -2851,7 +3060,7 @@ class WorkflowDialog(wx.Dialog):
         backend = self.controller.backend
         if backend is None or not hasattr(backend, 'call'): raise ValueError('KiCad native backend is unavailable')
         layer = self.user_layer.GetValue()
-        offset = [float(self.label_offset_x.GetValue()), float(self.label_offset_y.GetValue())]
+        offset = [self.label_offset_x.value_mm(), self.label_offset_y.value_mm()]
         def complete(result):
             if self._closing: return
             self.mechanical_list.DeleteAllItems()
@@ -2886,7 +3095,8 @@ class WorkflowDialog(wx.Dialog):
         holes = self.controller.config['mounting_holes']
         if any(h['reference'] == reference for h in holes): raise ValueError('Mounting-hole reference already exists')
         holes.append({'reference': reference, 'path': str(Path(path).resolve()), 'sha256': part.sha256,
-                      'library_id': part.library_id, 'pose': [float(self.anchor_x.GetValue()), float(self.anchor_y.GetValue()), 0]})
+                      'library_id': part.library_id,
+                      'pose': [self.anchor_x.value_mm(), self.anchor_y.value_mm(), 0]})
         self.controller.changed()
         self.anchor_status.SetLabel(f'{reference} added as board-only, excluded from BOM and position files.')
 
@@ -3128,6 +3338,7 @@ class WorkflowDialog(wx.Dialog):
         self._spreadsheet_columns = {}
         self._assignment_signature = None
         self.current_gang = None
+        self._gang_invalid_edits.clear()
         self._review_details = []
         self._circle_draft = None
         self._dc_circle_draft = None
@@ -3151,9 +3362,9 @@ class WorkflowDialog(wx.Dialog):
             self._resize_gang_rows(1)
             self.gang_rows.SetCellValue(0, 1, '1')
             self.gang_rows.SetCellValue(0, 2, '0')
-            self.gang_pitch_x.ChangeValue('2.54')
-            self.gang_pitch_y.ChangeValue('2.54')
-            self.gang_units.SetSelection(0)
+            self.gang_rows.SetCellValue(0, 3, 'mm')
+            self.gang_pitch_x.set_mm(2.54, 'mm')
+            self.gang_pitch_y.set_mm(2.54, 'mm')
             self.gang_numbering_mode.SetSelection(0)
             self.gang_custom_numbering.ChangeValue('')
             self.gang_custom_numbering.Enable(False)
@@ -3173,14 +3384,16 @@ class WorkflowDialog(wx.Dialog):
         self.transition_detail.SetLabel('Select a requirement')
 
         for control, value in (
-            (self.interposer_x, '0'), (self.interposer_y, '0'),
             (self.interposer_rotation, '0'), (self.user_layer, 'Dwgs.User'),
-            (self.label_offset_x, '0'), (self.label_offset_y, '0'),
-            (self.anchor_x, '0'), (self.anchor_y, '0'),
             (self.dc_anchor_rotation, '0'), (self.hole_ref, 'H1'),
             (self.output_dir, ''), (self.journal, ''),
         ):
             control.ChangeValue(value)
+        for control in (
+            self.interposer_x, self.interposer_y, self.label_offset_x,
+            self.label_offset_y, self.anchor_x, self.anchor_y,
+        ):
+            control.set_mm(0, 'mm')
         self.dc_anchor_side.SetSelection(0)
         self.hole_path.set_selection({})
         self.anchor_status.SetLabel('No anchor captured.')
@@ -3239,8 +3452,9 @@ class WorkflowDialog(wx.Dialog):
         if cfg.get('interposers'):
             ref, part = next(iter(cfg['interposers'].items()))
             pose = part.get('pose', [0, 0, 0])
-            self.interposer_x.ChangeValue(str(pose[0]))
-            self.interposer_y.ChangeValue(str(pose[1]))
+            pose_units = part.get('pose_units', ['mm', 'mm'])
+            self.interposer_x.set_mm(pose[0], pose_units[0])
+            self.interposer_y.set_mm(pose[1], pose_units[1])
             self.interposer_rotation.ChangeValue(str(pose[2]))
             self.anchor_interposer_ref.SetLabel('Ref des: ' + ref)
             if part.get('pose_accepted'):
@@ -3251,8 +3465,9 @@ class WorkflowDialog(wx.Dialog):
         self.outline_view.show(cfg['outline'].get('source_preview', {}))
         self.user_layer.ChangeValue(cfg['mechanical'].get('layer', 'Dwgs.User'))
         offset = cfg['mechanical'].get('label_offset', [0, 0])
-        self.label_offset_x.ChangeValue(str(offset[0]))
-        self.label_offset_y.ChangeValue(str(offset[1]))
+        offset_units = cfg['mechanical'].get('label_offset_units', ['mm', 'mm'])
+        self.label_offset_x.set_mm(offset[0], offset_units[0])
+        self.label_offset_y.set_mm(offset[1], offset_units[1])
         self.refresh_layers()
         self.refresh_gangs()
         self.refresh_connector_assignments(True)

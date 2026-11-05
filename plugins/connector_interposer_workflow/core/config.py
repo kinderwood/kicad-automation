@@ -3,7 +3,7 @@ from dataclasses import asdict, dataclass, field
 import uuid
 from .identities import canonical_json
 
-CONFIG_VERSION = 4
+CONFIG_VERSION = 5
 
 @dataclass
 class ProjectConfig:

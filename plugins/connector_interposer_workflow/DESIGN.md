@@ -66,6 +66,13 @@ preview operate on one netlist-derived gang at a time. RF transition selection
 does not belong to a gang definition because locations in the same gang can
 have different electrical requirements.
 
+Linear geometry is stored in millimetres at the controller/backend boundary.
+Each editable linear field in Define RF gangs and Connector placement has an
+independent `mm`, `mil`, `inch` or `um` selector. A typed unit suffix updates
+that selector when the field is committed. Gang definitions update live after
+validation; their list state is Not defined, Defined or Invalid. The preview
+uses hollow connector circles and does not own apply/revert state.
+
 UI copy follows a control-ownership rule. The blue task box carries the page's
 short purpose and any cross-page consequence. Labels name controls; tooltips
 hold uncommon details that do not need to stay visible. Do not add nearby prose
