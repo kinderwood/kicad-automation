@@ -367,10 +367,17 @@ class DataDialog(wx.Dialog):
 
 class PatternPreview(wx.Panel):
     def __init__(self, parent):
-        super().__init__(parent, size=(-1, 300))
+        super().__init__(parent)
+        # An unspecified width in the constructor becomes a large native best
+        # width on GTK and can force the containing scrolled page wider than
+        # its viewport. Keep only a useful minimum and let the sizer expand it.
+        self.SetMinSize((250, 300))
         self.name, self.points = '', {}
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.Bind(wx.EVT_PAINT, self.paint)
+
+    def DoGetBestSize(self):
+        return wx.Size(250, 300)
     def show(self, name, points=None):
         self.name = name
         if points is not None:
@@ -388,26 +395,55 @@ class PatternPreview(wx.Panel):
         dc.DrawText(self.name, 10, 10)
         if not self.points:
             return
-        width, height = self.GetClientSize()
-        xs, ys = zip(*self.points.values())
-        spanx, spany = max(max(xs)-min(xs), 1), max(max(ys)-min(ys), 1)
-        # Keep extra room for platform DPI scaling and multi-digit labels.
-        scale = .72 * max(
-            .01, min(max(20, width - 100) / spanx, max(20, height - 110) / spany),
-        )
-        for pin, (x, y) in self.points.items():
-            px = int((x-min(xs))*scale+45)
-            py = int((y-min(ys))*scale+60)
+        screen_points, radius = self.screen_layout(*self.GetClientSize())
+        for pin, (px, py) in screen_points.items():
             colour = anchor if str(pin) == '1' else geometry
             dc.SetPen(wx.Pen(colour, 2))
             # An explicit background brush stays hollow on Windows/GTK themes
             # where the stock transparent brush can inherit a light fill.
             dc.SetBrush(wx.Brush(background))
-            dc.DrawCircle(px, py, 12)
+            dc.DrawCircle(px, py, radius)
             dc.SetTextForeground(colour)
             label = str(pin)
             label_width, label_height = dc.GetTextExtent(label)
             dc.DrawText(label, px-label_width//2, py-label_height//2)
+
+    def screen_layout(self, width, height):
+        """Center the gang centroid and fit every location into the live preview."""
+        if not self.points:
+            return {}, 0
+        values = tuple(self.points.values())
+        center_x = sum(point[0] for point in values) / len(values)
+        center_y = sum(point[1] for point in values) / len(values)
+        relative = {
+            pin: (point[0] - center_x, point[1] - center_y)
+            for pin, point in self.points.items()
+        }
+        canvas_center = (width / 2, 40 + max(20, height - 56) / 2)
+        half_width = max(10, width / 2 - 26)
+        half_height = max(10, (height - 56) / 2 - 14)
+        extent_x = max(abs(point[0]) for point in relative.values())
+        extent_y = max(abs(point[1]) for point in relative.values())
+        scales = []
+        if extent_x > 1e-12:
+            scales.append(half_width / extent_x)
+        if extent_y > 1e-12:
+            scales.append(half_height / extent_y)
+        scale = max(.01, min(scales)) if scales else 1
+        laid_out = {
+            pin: (round(canvas_center[0] + point[0] * scale),
+                  round(canvas_center[1] + point[1] * scale))
+            for pin, point in relative.items()
+        }
+        screen_values = tuple(laid_out.values())
+        distances = [
+            math.hypot(first[0] - second[0], first[1] - second[1])
+            for index, first in enumerate(screen_values)
+            for second in screen_values[index + 1:]
+        ]
+        minimum_distance = min(distances) if distances else 36
+        radius = max(5, min(12, round(minimum_distance * .34)))
+        return laid_out, radius
 
 
 class OutlinePreview(wx.Panel):
@@ -697,15 +733,22 @@ class SymbolAssignmentCtrl(wx.Panel):
 
 
 class FootprintAssignmentCtrl(wx.Panel):
-    """Filtered footprint dropdown with table-cell interaction styling."""
+    """Filtered footprint assignment rendered as a one-click table cell."""
     def __init__(self, parent, on_change):
-        super().__init__(parent, style=wx.BORDER_SIMPLE)
+        super().__init__(parent, style=wx.BORDER_SIMPLE | wx.WANTS_CHARS)
         self.on_change, self.options = on_change, []
+        self.selected = {}
         row = wx.BoxSizer(wx.HORIZONTAL)
-        self.choice = wx.Choice(self)
-        self.choice.Bind(wx.EVT_CHOICE, self._changed)
-        row.Add(self.choice, 1, wx.EXPAND | wx.ALL, 4)
+        self.display = wx.StaticText(
+            self, label='Choose an allowed footprint', style=wx.ST_ELLIPSIZE_END,
+        )
+        row.Add(self.display, 1, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 7)
+        self.chevron = wx.StaticText(self, label='▾')
+        row.Add(self.chevron, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, 8)
         self.SetSizer(row)
+        for control in (self, self.display, self.chevron):
+            control.Bind(wx.EVT_LEFT_DOWN, self._clicked)
+        self.Bind(wx.EVT_KEY_DOWN, self._key_down)
         self.set_options((), {})
 
     def set_options(self, options, selected):
@@ -715,30 +758,75 @@ class FootprintAssignmentCtrl(wx.Panel):
                 not any(option.get('library_id') == selected['library_id'] for option in self.options)):
             self.options.append(selected)
             self.options.sort(key=lambda option: option['library_id'])
-        labels = ['Choose an allowed footprint'] + [option['library_id'] for option in self.options]
-        self.choice.Set(labels)
         selected_id = selected.get('library_id', '')
-        index = next((i + 1 for i, option in enumerate(self.options)
-                      if option['library_id'] == selected_id), 0)
-        self.choice.SetSelection(index)
-        self._style(index > 0)
+        self.selected = next(
+            (dict(option) for option in self.options
+             if option.get('library_id') == selected_id),
+            {},
+        )
+        self.display.SetLabel(
+            self.selected.get('library_id', 'Choose an allowed footprint'),
+        )
+        self._style(bool(self.selected))
 
     def selection(self):
-        index = self.choice.GetSelection()
-        return dict(self.options[index - 1]) if index > 0 else {}
+        return dict(self.selected)
 
-    def _changed(self, event):
-        self._style(self.choice.GetSelection() > 0)
-        self.on_change(self.selection())
+    def select_index(self, index):
+        """Select a menu option by zero-based index for tests and adapters."""
+        if index < 0 or index >= len(self.options):
+            return
+        self._select(self.options[index])
+
+    def _clicked(self, event):
+        if self.IsEnabled():
+            self.SetFocus()
+            self._show_menu()
+
+    def _key_down(self, event):
+        if event.GetKeyCode() in (
+                wx.WXK_SPACE, wx.WXK_RETURN,
+                getattr(wx, 'WXK_NUMPAD_ENTER', wx.WXK_RETURN),
+            ):
+            self._show_menu()
+            return
         event.Skip()
+
+    def _show_menu(self):
+        if not self.IsEnabled() or not self.options:
+            return
+        menu = wx.Menu()
+        selected_id = self.selected.get('library_id', '')
+        for option in self.options:
+            item = menu.AppendRadioItem(wx.ID_ANY, option['library_id'])
+            item.Check(option['library_id'] == selected_id)
+            menu.Bind(
+                wx.EVT_MENU,
+                lambda event, value=dict(option): self._select(value),
+                item,
+            )
+        owner = wx.GetTopLevelParent(self)
+        position = wx.Point(0, self.GetClientSize().height)
+        try:
+            if hasattr(owner, '_popup_assignment_menu'):
+                owner._popup_assignment_menu(self, menu, position)
+            else:
+                self.PopupMenu(menu, position)
+        finally:
+            menu.Destroy()
+
+    def _select(self, selection):
+        self.set_options(self.options, selection)
+        self.on_change(self.selection())
 
     def _style(self, assigned):
         palette = ui_palette()
         colour = palette.assigned if assigned else palette.warning
         self.SetBackgroundColour(colour)
         self.SetForegroundColour(palette.text)
-        self.choice.SetBackgroundColour(colour)
-        self.choice.SetForegroundColour(palette.text)
+        for control in (self.display, self.chevron):
+            control.SetBackgroundColour(colour)
+            control.SetForegroundColour(palette.text)
         self.Refresh()
 
 
@@ -868,11 +956,13 @@ class WorkflowDialog(wx.Dialog):
         if display_index == wx.NOT_FOUND:
             display_index = 0
         display_area = wx.Display(display_index).GetClientArea()
-        minimum_width = min(960, max(720, int(display_area.width * .82)))
-        minimum_height = min(680, max(560, int(display_area.height * .74)))
+        minimum_width = min(980, max(760, int(display_area.width * .65)))
+        minimum_height = min(640, max(560, int(display_area.height * .62)))
         self.SetMinSize((minimum_width, minimum_height))
-        self.SetSize((min(1600, max(minimum_width, int(display_area.width * .94))),
-                      min(920, max(minimum_height, int(display_area.height * .90)))))
+        initial_width = max(minimum_width, min(1340, int(display_area.width * .86)))
+        initial_height = max(minimum_height, min(800, int(display_area.height * .84)))
+        self.SetSize((initial_width, initial_height))
+        self.CentreOnScreen()
         self.Bind(wx.EVT_CLOSE, self.close)
         self.Bind(wx.EVT_SYS_COLOUR_CHANGED, self.system_colours_changed)
         self.apply_theme()
@@ -941,6 +1031,47 @@ class WorkflowDialog(wx.Dialog):
         view.SetMinSize((width, height))
         view.SetMaxSize((width, height))
 
+    def _show_grid_choice_menu(self, view, row, column, choices, on_choice):
+        """Open a synchronous native menu for a rendered table assignment cell."""
+        if self._closing or row < 0 or column < 0:
+            return
+        view.SetGridCursor(row, column)
+        view.MakeCellVisible(row, column)
+        current = view.GetCellValue(row, column).strip()
+        menu = wx.Menu()
+        for choice in ('', *tuple(choices)):
+            item = menu.AppendRadioItem(
+                wx.ID_ANY, choice if choice else 'Clear assignment',
+            )
+            item.Check(choice == current)
+            menu.Bind(
+                wx.EVT_MENU,
+                lambda event, value=choice: on_choice(value),
+                item,
+            )
+        rectangle = view.CellToRect(row, column)
+        x, y = view.CalcScrolledPosition(
+            rectangle.x, rectangle.y + rectangle.height,
+        )
+        try:
+            self._popup_assignment_menu(
+                view.GetGridWindow(), menu, wx.Point(x, y),
+            )
+        finally:
+            menu.Destroy()
+
+    @staticmethod
+    def _grid_choice_key(event, view, editable_column, show):
+        row, column = view.GetGridCursorRow(), view.GetGridCursorCol()
+        if (column == editable_column
+                and event.GetKeyCode() in (
+                    wx.WXK_SPACE, wx.WXK_RETURN,
+                    getattr(wx, 'WXK_NUMPAD_ENTER', wx.WXK_RETURN),
+                )):
+            show(row)
+            return
+        event.Skip()
+
     def _style_status(self, control, state):
         palette = ui_palette()
         background = {
@@ -957,6 +1088,17 @@ class WorkflowDialog(wx.Dialog):
         palette = ui_palette()
         control.SetBackgroundColour(palette.heading)
         control.SetForegroundColour(palette.panel_text)
+
+    @staticmethod
+    def _fix_table_cell_width(control, width, height):
+        control.SetMinSize((width, height))
+        control.SetMaxSize((width, height))
+
+    @staticmethod
+    def _style_table_data_cell(control):
+        palette = ui_palette()
+        control.SetBackgroundColour(palette.window)
+        control.SetForegroundColour(palette.text)
 
     def _style_mapper_theme(self):
         palette = ui_palette()
@@ -985,6 +1127,9 @@ class WorkflowDialog(wx.Dialog):
                 control.SetForegroundColour(palette.text)
         for control in self._persistent_headings:
             self._style_heading(control)
+        self._style_table_data_cell(self.interposer_ref_display)
+        for assignment_rows in (self.gang_assignment_rows, self.dc_assignment_rows):
+            assignment_rows.SetBackgroundColour(palette.window)
         for control in self._status_labels:
             self._style_status(control, getattr(control, '_workflow_status_state', 'neutral'))
         for view in (self.mapper, self.netclass_type_grid, self.layer_map, self.rules,
@@ -1312,31 +1457,10 @@ class WorkflowDialog(wx.Dialog):
         """Open a one-click native menu without leaving a wx.Grid editor active."""
         if self._closing or column < 2 or column >= len(HEADERS) + 2:
             return
-        self.mapper.SetGridCursor(0, column)
-        self.mapper.MakeCellVisible(0, column)
-        current = self.mapper.GetCellValue(0, column).strip()
-        menu = wx.Menu()
-        choices = [''] + list(self._spreadsheet_columns)
-        for choice in choices:
-            item = menu.AppendRadioItem(
-                wx.ID_ANY, choice if choice else 'Clear assignment',
-            )
-            item.Check(choice == current)
-            menu.Bind(
-                wx.EVT_MENU,
-                lambda event, value=choice: self._set_mapping_choice(column, value),
-                item,
-            )
-        rectangle = self.mapper.CellToRect(0, column)
-        x, y = self.mapper.CalcScrolledPosition(
-            rectangle.x, rectangle.y + rectangle.height,
+        self._show_grid_choice_menu(
+            self.mapper, 0, column, self._spreadsheet_columns,
+            lambda value: self._set_mapping_choice(column, value),
         )
-        try:
-            self._popup_assignment_menu(
-                self.mapper.GetGridWindow(), menu, wx.Point(x, y),
-            )
-        finally:
-            menu.Destroy()
 
     @staticmethod
     def _popup_assignment_menu(window, menu, position):
@@ -1630,8 +1754,13 @@ class WorkflowDialog(wx.Dialog):
             self.netclass_type_grid.SetColSize(column, width)
         self.netclass_type_grid.SetMinSize((-1, self.netclass_type_grid.GetColLabelSize() + 2))
         self.netclass_type_grid.SetMaxSize((-1, self.netclass_type_grid.GetColLabelSize() + 2))
-        self.netclass_type_grid.Bind(grid.EVT_GRID_CELL_CHANGED, self.netclass_type_changed)
         self.netclass_type_grid.Bind(grid.EVT_GRID_CELL_LEFT_CLICK, self.netclass_type_clicked)
+        self.netclass_type_grid.Bind(
+            wx.EVT_KEY_DOWN,
+            lambda event: self._grid_choice_key(
+                event, self.netclass_type_grid, 3, self._show_netclass_type_menu,
+            ),
+        )
         sizer.Add(self.netclass_type_grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
         self.netclass_type_status = self.status_label(box, '0 of 0 assigned')
         sizer.Add(self.netclass_type_status, 0, wx.ALL, 8)
@@ -1657,7 +1786,7 @@ class WorkflowDialog(wx.Dialog):
                 view.SetCellValue(row, column, value)
                 if column < 3:
                     view.SetReadOnly(row, column)
-            view.SetCellEditor(row, 3, grid.GridCellChoiceEditor(['RF', 'DC'], False))
+            view.SetReadOnly(row, 3)
             self._style_netclass_type_cell(row)
         self._fit_grid_contents(view, (
             (column_values[0], 110, 240),
@@ -1718,27 +1847,42 @@ class WorkflowDialog(wx.Dialog):
 
     def netclass_type_clicked(self, event):
         if event.GetCol() == 3:
-            wx.CallAfter(self._enable_netclass_type_editor, event.GetRow())
+            self._show_netclass_type_menu(event.GetRow())
+            return
         event.Skip()
 
-    def _enable_netclass_type_editor(self, row):
-        if not self._closing:
-            self.netclass_type_grid.SetGridCursor(row, 3)
-            self.netclass_type_grid.MakeCellVisible(row, 3)
-            self.netclass_type_grid.EnableCellEditControl()
+    def _show_netclass_type_menu(self, row):
+        if 0 <= row < self.netclass_type_grid.GetNumberRows():
+            self._show_grid_choice_menu(
+                self.netclass_type_grid, row, 3, ('RF', 'DC'),
+                lambda value: self._set_netclass_type_choice(row, value),
+            )
 
-    def netclass_type_changed(self, event):
-        if event.GetCol() != 3:
-            event.Skip(); return
-        row = event.GetRow()
+    def _set_netclass_type_choice(self, row, kind):
+        if row < 0 or row >= self.netclass_type_grid.GetNumberRows():
+            return
         name = self.netclass_type_grid.GetCellValue(row, 0)
-        kind = self.netclass_type_grid.GetCellValue(row, 3)
-        self.controller.set_netclass_type(name, kind)
-        self._style_netclass_type_cell(row)
+        self.netclass_type_grid.SetCellValue(row, 3, kind)
+        if kind:
+            self.controller.set_netclass_type(name, kind)
+        else:
+            self.controller.config['netclass_types'].pop(name, None)
+            self.controller.changed()
         self.refresh_netclass_types()
         self.refresh_gangs()
         self.refresh_connector_assignments(True)
-        self.status.SetLabel(f'{name} classified as {kind}. Board files were not modified.')
+        self.status.SetLabel(
+            f'{name} classified as {kind}. Board files were not modified.' if kind else
+            f'{name} is unassigned. Board files were not modified.'
+        )
+
+    def netclass_type_changed(self, event):
+        """Compatibility entry point for callers that commit a value directly."""
+        if event.GetCol() != 3:
+            event.Skip(); return
+        self._set_netclass_type_choice(
+            event.GetRow(), self.netclass_type_grid.GetCellValue(event.GetRow(), 3),
+        )
         event.Skip()
 
     def build_layer_assignment(self, panel):
@@ -1773,8 +1917,13 @@ class WorkflowDialog(wx.Dialog):
         status_row.AddStretchSpacer()
         layer_sizer.Add(status_row, 0, wx.EXPAND | wx.ALL, 8)
         panel.GetSizer().Add(layer_sizer, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        self.layer_map.Bind(grid.EVT_GRID_CELL_CHANGED, self.layer_assignment_changed)
         self.layer_map.Bind(grid.EVT_GRID_CELL_LEFT_CLICK, self.layer_assignment_clicked)
+        self.layer_map.Bind(
+            wx.EVT_KEY_DOWN,
+            lambda event: self._grid_choice_key(
+                event, self.layer_map, 1, self._show_layer_assignment_menu,
+            ),
+        )
 
     def build_routing_permissions(self, panel):
         self.task_box(
@@ -1799,9 +1948,7 @@ class WorkflowDialog(wx.Dialog):
                 self.layer_map.SetCellValue(row, 0, name)
                 self.layer_map.SetReadOnly(row, 0)
                 self.layer_map.SetCellValue(row, 1, self.controller.config['layer_mapping'].get(name, ''))
-                self.layer_map.SetCellEditor(
-                    row, 1, grid.GridCellChoiceEditor(list(self.controller.copper_layers), False),
-                )
+                self.layer_map.SetReadOnly(row, 1)
                 self._style_layer_assignment_cell(row)
             self._fit_grid_contents(self.layer_map, (
                 (names, 120, 220),
@@ -1894,23 +2041,22 @@ class WorkflowDialog(wx.Dialog):
 
     def layer_assignment_clicked(self, event):
         if event.GetCol() == 1:
-            wx.CallAfter(self._enable_layer_assignment_editor, event.GetRow())
+            self._show_layer_assignment_menu(event.GetRow())
+            return
         event.Skip()
 
-    def _enable_layer_assignment_editor(self, row):
-        if self._closing:
-            return
-        self.layer_map.SetGridCursor(row, 1)
-        self.layer_map.MakeCellVisible(row, 1)
-        self.layer_map.EnableCellEditControl()
+    def _show_layer_assignment_menu(self, row):
+        if 0 <= row < self.layer_map.GetNumberRows():
+            self._show_grid_choice_menu(
+                self.layer_map, row, 1, self.controller.copper_layers,
+                lambda value: self._set_layer_assignment_choice(row, value),
+            )
 
-    def layer_assignment_changed(self, event):
-        if self._updating_layers or event.GetCol() != 1:
-            event.Skip()
+    def _set_layer_assignment_choice(self, row, kicad_layer):
+        if row < 0 or row >= self.layer_map.GetNumberRows():
             return
-        row = event.GetRow()
         netlist_layer = self.layer_map.GetCellValue(row, 0)
-        kicad_layer = self.layer_map.GetCellValue(row, 1)
+        self.layer_map.SetCellValue(row, 1, kicad_layer)
         if kicad_layer:
             self.controller.set_layer_mapping(netlist_layer, kicad_layer)
         else:
@@ -1920,6 +2066,10 @@ class WorkflowDialog(wx.Dialog):
                  for index in range(self.layer_map.GetNumberRows())]
         assigned = sum(bool(self.controller.config['layer_mapping'].get(name)) for name in names)
         self.layer_mapping_status.SetLabel(f'{assigned} of {len(names)} assigned')
+        self._style_status(
+            self.layer_mapping_status,
+            'success' if names and assigned == len(names) else 'warning',
+        )
         self._style_layer_assignment_cell(row)
         self.status.SetLabel(
             f'{netlist_layer} now maps to {kicad_layer}. The current workflow changed; '
@@ -1927,6 +2077,15 @@ class WorkflowDialog(wx.Dialog):
             f'{netlist_layer} is unassigned. The current workflow changed; board files were not modified.'
         )
         self.refresh()
+
+    def layer_assignment_changed(self, event):
+        """Compatibility entry point for callers that commit a value directly."""
+        if self._updating_layers or event.GetCol() != 1:
+            event.Skip()
+            return
+        self._set_layer_assignment_choice(
+            event.GetRow(), self.layer_map.GetCellValue(event.GetRow(), 1),
+        )
         event.Skip()
 
     def routing_permission_changed(self, event):
@@ -1955,29 +2114,29 @@ class WorkflowDialog(wx.Dialog):
         interposer_box = wx.StaticBox(panel, label='Interposer assignment')
         interposer = wx.StaticBoxSizer(interposer_box, wx.VERTICAL)
         self.interposer_assignment_grid = wx.FlexGridSizer(cols=3, hgap=0, vgap=0)
-        self.interposer_assignment_grid.AddGrowableCol(1, 1)
-        self.interposer_assignment_grid.AddGrowableCol(2, 1)
-        for label in ('Ref des', 'Symbol', 'Footprint'):
+        for label, width in (('Ref des', 100), ('Symbol', 300), ('Footprint', 320)):
             heading = wx.StaticText(interposer_box, label=label, style=wx.BORDER_SIMPLE)
             font = heading.GetFont(); font.SetWeight(wx.FONTWEIGHT_BOLD); heading.SetFont(font)
             self._style_heading(heading)
             self._persistent_headings.append(heading)
-            heading.SetMinSize((120 if label == 'Ref des' else 360, 34))
-            self.interposer_assignment_grid.Add(heading, 0 if label == 'Ref des' else 1,
-                                                wx.EXPAND | wx.ALL, 0)
+            self._fix_table_cell_width(heading, width, 34)
+            self.interposer_assignment_grid.Add(heading, 0, wx.EXPAND | wx.ALL, 0)
         self.interposer_ref_display = wx.StaticText(interposer_box, label='—', style=wx.BORDER_SIMPLE)
-        self.interposer_ref_display.SetMinSize((120, 38))
+        self._fix_table_cell_width(self.interposer_ref_display, 100, 38)
+        self._style_table_data_cell(self.interposer_ref_display)
         self.interposer_assignment_grid.Add(self.interposer_ref_display, 0, wx.EXPAND)
         self.interposer_symbol_assignment = SymbolAssignmentCtrl(
             interposer_box, self, 'Choose interposer symbol', False,
             lambda selection, symbol: self.assign_interposer_symbol(selection, symbol),
         )
-        self.interposer_assignment_grid.Add(self.interposer_symbol_assignment, 1, wx.EXPAND)
+        self._fix_table_cell_width(self.interposer_symbol_assignment, 300, 38)
+        self.interposer_assignment_grid.Add(self.interposer_symbol_assignment, 0, wx.EXPAND)
         self.interposer_footprint_assignment = FootprintAssignmentCtrl(
             interposer_box, self.assign_interposer_footprint,
         )
-        self.interposer_assignment_grid.Add(self.interposer_footprint_assignment, 1, wx.EXPAND)
-        interposer.Add(self.interposer_assignment_grid, 0, wx.EXPAND | wx.ALL, 8)
+        self._fix_table_cell_width(self.interposer_footprint_assignment, 320, 38)
+        self.interposer_assignment_grid.Add(self.interposer_footprint_assignment, 0, wx.EXPAND)
+        interposer.Add(self.interposer_assignment_grid, 0, wx.ALL, 8)
         self.interposer_assignment_status = self.status_label(interposer_box, '0 of 0 interposers assigned')
         interposer.Add(self.interposer_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         panel.GetSizer().Add(interposer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -1987,14 +2146,14 @@ class WorkflowDialog(wx.Dialog):
         self.assignment_filter = wx.SearchCtrl(gangs_box, style=wx.TE_PROCESS_ENTER)
         self.assignment_filter.SetDescriptiveText('Filter gangs')
         self.assignment_filter.SetMinSize((330, -1))
+        self.assignment_filter.SetMaxSize((330, -1))
         self.assignment_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_connector_assignments(True))
         gangs.Add(self.assignment_filter, 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
         self.gang_assignment_rows = wx.Panel(gangs_box)
+        self.gang_assignment_rows.SetBackgroundColour(ui_palette().window)
         assignment_grid = wx.FlexGridSizer(cols=4, hgap=0, vgap=0)
-        assignment_grid.AddGrowableCol(2, 1)
-        assignment_grid.AddGrowableCol(3, 1)
         self.gang_assignment_rows.SetSizer(assignment_grid)
-        gangs.Add(self.gang_assignment_rows, 0, wx.EXPAND | wx.ALL, 8)
+        gangs.Add(self.gang_assignment_rows, 0, wx.ALL, 8)
         self.gang_assignment_status = self.status_label(gangs_box, '0 of 0 gangs assigned')
         gangs.Add(self.gang_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         panel.GetSizer().Add(gangs, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -2004,10 +2163,10 @@ class WorkflowDialog(wx.Dialog):
         dc_box = wx.StaticBox(panel, label='DC connector assignments')
         dc = wx.StaticBoxSizer(dc_box, wx.VERTICAL)
         self.dc_assignment_rows = wx.Panel(dc_box)
+        self.dc_assignment_rows.SetBackgroundColour(ui_palette().window)
         dc_grid = wx.FlexGridSizer(cols=4, hgap=0, vgap=0)
-        dc_grid.AddGrowableCol(2, 1); dc_grid.AddGrowableCol(3, 1)
         self.dc_assignment_rows.SetSizer(dc_grid)
-        dc.Add(self.dc_assignment_rows, 0, wx.EXPAND | wx.ALL, 8)
+        dc.Add(self.dc_assignment_rows, 0, wx.ALL, 8)
         self.dc_assignment_status = self.status_label(dc_box, '0 of 0 DC connectors assigned')
         dc.Add(self.dc_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         panel.GetSizer().Add(dc, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -2272,11 +2431,11 @@ class WorkflowDialog(wx.Dialog):
             self._bulk_assignments[kind] = state
         label = wx.StaticText(parent, label='All', style=wx.BORDER_SIMPLE)
         quantity = wx.StaticText(parent, label='—', style=wx.BORDER_SIMPLE)
-        for control, width in ((label, 120), (quantity, 100)):
+        for control, width in ((label, 100), (quantity, 80)):
             font = control.GetFont()
             font.SetWeight(wx.FONTWEIGHT_BOLD)
             control.SetFont(font)
-            control.SetMinSize((width, 38))
+            self._fix_table_cell_width(control, width, 38)
             control.SetBackgroundColour(ui_palette().info)
             control.SetForegroundColour(ui_palette().text)
         if kind == 'rf':
@@ -2302,11 +2461,11 @@ class WorkflowDialog(wx.Dialog):
             self._allowed_footprint_specs(symbol), state.get('footprint', {}),
         )
         footprint_control.Enable(bool(symbol))
+        self._fix_table_cell_width(symbol_control, 300, 38)
+        self._fix_table_cell_width(footprint_control, 320, 38)
         for control in (label, quantity, symbol_control, footprint_control):
             sizer.Add(
-                control,
-                1 if control in (symbol_control, footprint_control) else 0,
-                wx.EXPAND,
+                control, 0, wx.EXPAND,
             )
         setattr(self, controls_attribute, {
             'symbol': symbol_control, 'footprint': footprint_control,
@@ -2355,11 +2514,12 @@ class WorkflowDialog(wx.Dialog):
         sizer = self.gang_assignment_rows.GetSizer()
         sizer.Clear(True)
         self.gang_assignment_controls = {}
-        for label, width in (('Gang', 120), ('Positions', 100), ('Symbol', 340), ('Footprint', 380)):
+        self.gang_assignment_rows.SetBackgroundColour(ui_palette().window)
+        for label, width in (('Gang', 100), ('Positions', 80), ('Symbol', 300), ('Footprint', 320)):
             heading = wx.StaticText(self.gang_assignment_rows, label=label, style=wx.BORDER_SIMPLE)
             font = heading.GetFont(); font.SetWeight(wx.FONTWEIGHT_BOLD); heading.SetFont(font)
-            self._style_heading(heading); heading.SetMinSize((width, 34))
-            sizer.Add(heading, 1 if label in ('Symbol', 'Footprint') else 0, wx.EXPAND)
+            self._style_heading(heading); self._fix_table_cell_width(heading, width, 34)
+            sizer.Add(heading, 0, wx.EXPAND)
         self._add_all_assignment_row(
             self.gang_assignment_rows, sizer, 'rf', names,
         )
@@ -2369,9 +2529,11 @@ class WorkflowDialog(wx.Dialog):
             settings = self.controller.gang(name)
             count = sum(record.connector == name for record in self.controller.table.records)
             gang_label = wx.StaticText(self.gang_assignment_rows, label=name, style=wx.BORDER_SIMPLE)
-            gang_label.SetMinSize((120, 38))
+            self._fix_table_cell_width(gang_label, 100, 38)
+            self._style_table_data_cell(gang_label)
             positions = wx.StaticText(self.gang_assignment_rows, label=str(count), style=wx.BORDER_SIMPLE)
-            positions.SetMinSize((100, 38))
+            self._fix_table_cell_width(positions, 80, 38)
+            self._style_table_data_cell(positions)
             symbol_control = SymbolAssignmentCtrl(
                 self.gang_assignment_rows, self, 'Choose connector symbol', True,
                 lambda selection, symbol, gang=name: self.assign_gang_symbol(gang, selection, symbol),
@@ -2388,8 +2550,10 @@ class WorkflowDialog(wx.Dialog):
                 'sha256': settings.get('part_sha256', ''),
             })
             footprint_control.Enable(bool(symbol))
+            self._fix_table_cell_width(symbol_control, 300, 38)
+            self._fix_table_cell_width(footprint_control, 320, 38)
             for control in (gang_label, positions, symbol_control, footprint_control):
-                sizer.Add(control, 1 if control in (symbol_control, footprint_control) else 0, wx.EXPAND)
+                sizer.Add(control, 0, wx.EXPAND)
             self.gang_assignment_controls[name] = {
                 'symbol': symbol_control, 'footprint': footprint_control,
             }
@@ -2398,11 +2562,12 @@ class WorkflowDialog(wx.Dialog):
         dc_sizer = self.dc_assignment_rows.GetSizer()
         dc_sizer.Clear(True)
         self.dc_assignment_controls = {}
-        for label, width in (('Ref des', 120), ('Pins used', 100), ('Symbol', 340), ('Footprint', 380)):
+        self.dc_assignment_rows.SetBackgroundColour(ui_palette().window)
+        for label, width in (('Ref des', 100), ('Pins used', 80), ('Symbol', 300), ('Footprint', 320)):
             heading = wx.StaticText(self.dc_assignment_rows, label=label, style=wx.BORDER_SIMPLE)
             font = heading.GetFont(); font.SetWeight(wx.FONTWEIGHT_BOLD); heading.SetFont(font)
-            self._style_heading(heading); heading.SetMinSize((width, 34))
-            dc_sizer.Add(heading, 1 if label in ('Symbol', 'Footprint') else 0, wx.EXPAND)
+            self._style_heading(heading); self._fix_table_cell_width(heading, width, 34)
+            dc_sizer.Add(heading, 0, wx.EXPAND)
         self._add_all_assignment_row(
             self.dc_assignment_rows, dc_sizer, 'dc', dc_names,
         )
@@ -2412,9 +2577,11 @@ class WorkflowDialog(wx.Dialog):
             selection = self.controller.dc_connector(name)
             used = sum(record.connector == name for record in self.controller.table.records)
             reference_label = wx.StaticText(self.dc_assignment_rows, label=name, style=wx.BORDER_SIMPLE)
-            reference_label.SetMinSize((120, 38))
+            self._fix_table_cell_width(reference_label, 100, 38)
+            self._style_table_data_cell(reference_label)
             pins = wx.StaticText(self.dc_assignment_rows, label=str(used), style=wx.BORDER_SIMPLE)
-            pins.SetMinSize((100, 38))
+            self._fix_table_cell_width(pins, 80, 38)
+            self._style_table_data_cell(pins)
             symbol_control = SymbolAssignmentCtrl(
                 self.dc_assignment_rows, self, 'Choose DC connector symbol', False,
                 lambda spec, symbol, connector=name: self.assign_dc_symbol(connector, spec, symbol),
@@ -2428,9 +2595,10 @@ class WorkflowDialog(wx.Dialog):
             symbol = self._configured_symbol(symbol_spec, False)
             footprint_control.set_options(self._allowed_footprint_specs(symbol), selection)
             footprint_control.Enable(bool(symbol))
+            self._fix_table_cell_width(symbol_control, 300, 38)
+            self._fix_table_cell_width(footprint_control, 320, 38)
             for control in (reference_label, pins, symbol_control, footprint_control):
-                dc_sizer.Add(control, 1 if control in (symbol_control, footprint_control) else 0,
-                             wx.EXPAND)
+                dc_sizer.Add(control, 0, wx.EXPAND)
             self.dc_assignment_controls[name] = {
                 'symbol': symbol_control, 'footprint': footprint_control,
             }
@@ -2481,15 +2649,15 @@ class WorkflowDialog(wx.Dialog):
         self.gang_filter.SetDescriptiveText('Search gangs')
         self.gang_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_gang_list())
         selector.Add(self.gang_filter, 0, wx.EXPAND | wx.ALL, 8)
-        selector_box.SetMinSize((250, -1))
-        selector_box.SetMaxSize((270, -1))
+        selector_box.SetMinSize((225, -1))
+        selector_box.SetMaxSize((240, -1))
         self.gang_list = wx.ListCtrl(
             selector_box, style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
         )
-        self.gang_list.SetMinSize((230, 60))
-        self.gang_list.SetMaxSize((250, 60))
+        self.gang_list.SetMinSize((205, 60))
+        self.gang_list.SetMaxSize((220, 60))
         for column, (heading, width) in enumerate((
-            ('Gang', 58), ('Positions', 68), ('Status', 94),
+            ('Gang', 55), ('Positions', 62), ('Status', 80),
         )):
             self.gang_list.InsertColumn(column, heading, width=width)
         self.gang_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.guard(self.select_dashboard_gang))
@@ -2501,6 +2669,7 @@ class WorkflowDialog(wx.Dialog):
         body.Add(selector, 0, wx.ALIGN_TOP | wx.RIGHT, 8)
 
         editor_box = wx.StaticBox(panel, label='Select an RF gang')
+        editor_box.SetMaxSize((380, -1))
         editor = wx.StaticBoxSizer(editor_box, wx.VERTICAL)
         self.gang_editor_title = editor_box
         self.gang_notebook = wx.Notebook(editor_box)
@@ -2571,9 +2740,10 @@ class WorkflowDialog(wx.Dialog):
 
         preview_box = wx.StaticBox(panel, label='Gang preview')
         preview_box.SetMinSize((285, -1))
+        preview_box.SetMaxSize((395, -1))
         preview = wx.StaticBoxSizer(preview_box, wx.VERTICAL)
         self.pattern_view = PatternPreview(preview_box)
-        preview.Add(self.pattern_view, 1, wx.EXPAND | wx.ALL, 8)
+        preview.Add(self.pattern_view, 1, wx.EXPAND | wx.ALL | wx.FIXED_MINSIZE, 8)
         self.gang_preview_status = self.status_label(preview_box, 'Select a gang')
         preview.Add(self.gang_preview_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         body.Add(preview, 1, wx.EXPAND)

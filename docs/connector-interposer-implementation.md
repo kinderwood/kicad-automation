@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.11 and the
+are authorized. Connector to Interposer Workflow is version 0.4.12 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -251,6 +251,13 @@ does not change the assignment and leaves no cell editor active. This removes
 the focus-dependent editor state observed under the exact KiCad 9.0.0 runtime
 after clicking outside an open assignment control. The mapping grid also ends
 after its measured, bounded columns instead of stretching across the page.
+
+Version 0.4.12 applies that one-click assignment-menu pattern to Netclass type,
+Layer assignment and connector footprint cells. Connector tables use the
+semantic table background and bounded symbol/footprint columns. The dialog now
+opens at a display-bounded nominal 1340×800 instead of occupying up to 1600×920.
+The RF gang preview centers the point centroid, retains that center through
+rotation, refits after input changes and reduces marker radius for dense arrays.
 
 Additional actual PCB Editor checks use the selected 9.0.9.1 AppImage and
 10.0.8: normal startup discovers both actions and Workflow opens from the

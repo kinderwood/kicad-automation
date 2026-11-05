@@ -1,4 +1,5 @@
 """Workflow session invariants and optional real native-dialog smoke coverage."""
+import math
 import os
 from pathlib import Path
 import sys
@@ -317,6 +318,18 @@ class NativeDialogTests(unittest.TestCase):
         self.assertGreater(task_heading.GetFont().GetPointSize(), dialog.GetFont().GetPointSize())
         dialog.Show()
         self.app.Yield()
+        display_index = self.wx.Display.GetFromWindow(dialog)
+        display_area = self.wx.Display(display_index).GetClientArea()
+        expected_minimum_width = min(980, max(760, int(display_area.width * .65)))
+        expected_minimum_height = min(640, max(560, int(display_area.height * .62)))
+        self.assertLessEqual(
+            dialog.GetSize().width,
+            max(expected_minimum_width, min(1340, int(display_area.width * .86))),
+        )
+        self.assertLessEqual(
+            dialog.GetSize().height,
+            max(expected_minimum_height, min(800, int(display_area.height * .84))),
+        )
         self.assertLessEqual(dialog.pages[0].GetVirtualSize().width,
                              dialog.pages[0].GetClientSize().width)
         self.assertFalse(dialog.view_button.IsEnabled())
@@ -356,6 +369,19 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(dialog.netclass_type_grid.GetNumberRows(), 1)
         self.assertEqual(dialog.netclass_type_grid.GetCellBackgroundColour(0, 3).Get()[:3],
                          palette.warning.Get()[:3])
+        self.assertTrue(dialog.netclass_type_grid.IsReadOnly(0, 3))
+        self.assertFalse(dialog.netclass_type_grid.IsCellEditControlShown())
+        menu_labels = []
+        def dismiss_menu(_window, menu, _position):
+            menu_labels.append(tuple(item.GetItemLabelText() for item in menu.GetMenuItems()))
+            return False
+        with mock.patch.object(dialog, '_popup_assignment_menu', side_effect=dismiss_menu):
+            dialog._show_netclass_type_menu(0)
+            dialog._show_layer_assignment_menu(0)
+        self.assertEqual(menu_labels[0], ('Clear assignment', 'RF', 'DC'))
+        self.assertEqual(menu_labels[1], ('Clear assignment', 'F.Cu', 'In1.Cu', 'B.Cu'))
+        self.assertFalse(dialog.netclass_type_grid.IsCellEditControlShown())
+        self.assertFalse(dialog.layer_map.IsCellEditControlShown())
         dialog.auto_assign_netclass_types(None)
         self.assertEqual(dialog.controller.config['netclass_types']['RF'], 'RF')
         self.assertEqual(dialog.netclass_type_status.GetLabel(), '1 of 1 assigned')
@@ -619,7 +645,7 @@ class NativeDialogTests(unittest.TestCase):
 
     def test_connector_assignments_filter_loaded_footprints_per_gang(self):
         import hashlib
-        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog, ui_palette
         from plugins.connector_interposer_workflow.core.libraries import read_symbol
         example = Path(__file__).resolve().parents[1] / 'examples/gppo_demo'
         with tempfile.TemporaryDirectory() as temporary:
@@ -663,10 +689,15 @@ class NativeDialogTests(unittest.TestCase):
                     [option['library_id'] for option in dialog.interposer_footprint_assignment.options],
                     ['Example:Interposer_800'],
                 )
-                dialog.interposer_footprint_assignment.choice.SetSelection(1)
-                dialog.assign_interposer_footprint(
-                    dialog.interposer_footprint_assignment.selection(),
-                )
+                footprint_menu = []
+                def dismiss_footprint_menu(_window, menu, _position):
+                    footprint_menu.extend(item.GetItemLabelText() for item in menu.GetMenuItems())
+                    return False
+                with mock.patch.object(
+                        dialog, '_popup_assignment_menu', side_effect=dismiss_footprint_menu):
+                    dialog.interposer_footprint_assignment._show_menu()
+                self.assertEqual(footprint_menu, ['Example:Interposer_800'])
+                dialog.interposer_footprint_assignment.select_index(0)
                 self.assertEqual(dialog.interposer_assignment_status.GetLabel(),
                                  '1 of 1 interposers assigned')
 
@@ -679,10 +710,19 @@ class NativeDialogTests(unittest.TestCase):
                     self.assertTrue(footprint.IsEnabled())
                     self.assertEqual([option['library_id'] for option in footprint.options],
                                      ['Example:GPPO_B012_L13_01_EXPERIMENTAL'])
-                    footprint.choice.SetSelection(1)
-                    dialog.assign_gang_footprint(gang, footprint.selection())
+                    footprint.select_index(0)
                 self.assertEqual(dialog.gang_assignment_status.GetLabel(),
                                  '2 of 2 gangs assigned')
+                self.assertEqual(
+                    dialog.gang_assignment_rows.GetBackgroundColour().Get()[:3],
+                    ui_palette().window.Get()[:3],
+                )
+                self.assertLessEqual(
+                    dialog.gang_assignment_controls['J101']['symbol'].GetSize().width, 300,
+                )
+                self.assertLessEqual(
+                    dialog.gang_assignment_controls['J101']['footprint'].GetSize().width, 320,
+                )
                 self.assertIsNone(self.wx.FindWindowByLabel('Status', dialog.pages[4]))
             finally:
                 dialog.Destroy()
@@ -946,6 +986,10 @@ class NativeDialogTests(unittest.TestCase):
             dialog.select_page(5)
             dialog.Show()
             self.app.Yield()
+            self.assertLessEqual(
+                dialog.pages[5].GetVirtualSize().width,
+                dialog.pages[5].GetClientSize().width,
+            )
 
             dialog.gang_pitch_x.text.SetFocus()
             dialog.gang_pitch_x.text.SetValue('200 mil')
@@ -963,7 +1007,7 @@ class NativeDialogTests(unittest.TestCase):
             self.app.Yield()
             focused = self.wx.Window.FindFocus()
             self.assertIsInstance(focused, self.wx.TextCtrl)
-            focused.SetValue('50 mil')
+            focused.SetValue('100 mil')
             dialog.gang_rows.SaveEditControlValue()
             dialog.gang_rows.DisableCellEditControl()
             self.app.Yield()
@@ -972,8 +1016,32 @@ class NativeDialogTests(unittest.TestCase):
             self.assertEqual(gang['row_lengths'], [10, 9])
             self.assertAlmostEqual(gang['pitch_x'], 5.08)
             self.assertAlmostEqual(gang['pitch_y'], 4.39928)
-            self.assertEqual(gang['row_offsets'], [0, 1.27])
+            self.assertEqual(gang['row_offsets'], [0, 2.54])
             self.assertTrue(gang['defined'])
+            first_layout, radius = dialog.pattern_view.screen_layout(285, 300)
+            first_center = (
+                sum(point[0] for point in first_layout.values()) / len(first_layout),
+                sum(point[1] for point in first_layout.values()) / len(first_layout),
+            )
+            self.assertAlmostEqual(first_center[0], 285 / 2, delta=.6)
+            self.assertAlmostEqual(first_center[1], 40 + (300 - 56) / 2, delta=.6)
+            minimum_spacing = min(
+                math.hypot(first[0] - second[0], first[1] - second[1])
+                for index, first in enumerate(first_layout.values())
+                for second in tuple(first_layout.values())[index + 1:]
+            )
+            self.assertGreaterEqual(minimum_spacing, radius * 2)
+
+            dialog.gang_pattern_rotation.ChangeValue('37')
+            dialog.gang_draft_changed()
+            rotated_layout, _radius = dialog.pattern_view.screen_layout(285, 300)
+            rotated_center = (
+                sum(point[0] for point in rotated_layout.values()) / len(rotated_layout),
+                sum(point[1] for point in rotated_layout.values()) / len(rotated_layout),
+            )
+            self.assertAlmostEqual(rotated_center[0], first_center[0], delta=.6)
+            self.assertAlmostEqual(rotated_center[1], first_center[1], delta=.6)
+            self.assertNotEqual(rotated_layout, first_layout)
         finally:
             dialog.Destroy()
             self.app.Yield()

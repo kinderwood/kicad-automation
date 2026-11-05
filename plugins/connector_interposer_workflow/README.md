@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.11**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.12**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -73,9 +73,11 @@ an already-open source board does not update the output copy.
    assign** fills blank rows only. Exact `J#` references identify DC, exact
    `J###` references identify RF, and the exact `DC` netclass identifies DC.
    Unrecognized references remain manual; mixed or conflicting evidence blocks
-   review. Manual choices are preserved.
+   review. Manual choices are preserved. Type cells use the same one-click
+   native assignment menu, colored state and click-away behavior as Netlist source.
 3. **Layer assignment:** map each distinct netlist layer name to an enabled
-   KiCad copper layer. Each selection updates the current workflow immediately;
+   KiCad copper layer. Layer cells use the same one-click native assignment menu
+   and colored state as Netlist source. Each selection updates the current workflow immediately;
    there is no separate acceptance button. The KiCad-layer cells use the same
    amber-missing and blue-assigned interaction treatment as Netlist source,
    including persistent dropdown chevrons. **Auto assign** fills blank rows only
@@ -99,7 +101,9 @@ an already-open source board does not update the output copy.
    Each symbol must contain footprint filters; its
    footprint cell lists only filtered library parts whose electrical pad
    numbers exactly match the symbol pins. Selections update the workflow
-   immediately. The visually separated **All** row in either connector table
+   immediately. Footprints use a one-click table-integrated menu; long symbol
+   and footprint names are ellipsized inside bounded columns. The visually
+   separated **All** row in either connector table
    applies its symbol or footprint choice to every connector of that type,
    including filtered rows. Editing an individual row clears the **All** action
    controls without reverting assignments already made. The workflow instantiates these librarian-authored parts; it
@@ -114,7 +118,9 @@ an already-open source board does not update the output copy.
    choose row-major, serpentine, column-major or custom numbering; set pattern
    rotation independently from connector orientation; choose the mounting side
    and optional layout mirror. The numbered preview keeps location 1 marked as
-   the DXF anchor. Valid changes update the gang immediately. New gangs remain
+   the DXF anchor. The preview keeps the gang centroid at its center while
+   pattern rotation changes, refits after every render and reduces circle radius
+   when necessary to keep dense locations distinct. Valid changes update the gang immediately. New gangs remain
    **Not defined** until edited; incomplete or population-mismatched entries are
    **Invalid**. Copying settings never changes gang anchors or selected library parts.
 7. **RF transitions:** optionally assign one immutable published transition to each unique

@@ -16,6 +16,10 @@ its rows instead of consuming the remaining window. No browser, webview,
 authoring wizard or generative recipe editor is part of this package's layout
 flow.
 
+The dialog opens at a nominal 1340×800 desktop size, bounded by the active
+display, with a smaller resize minimum and per-page scrolling. A page must not
+force a larger initial window merely to consume unused space.
+
 Custom surfaces use semantic colors derived from wx system colors. Text and
 ordinary native controls inherit the platform appearance; task panels,
 assignment states, status badges, grid stripes, headings and drawn previews
@@ -25,7 +29,7 @@ not permitted because GTK can pair them with dark-theme text. Native GUI checks
 run under both Adwaita light and dark appearances.
 
 Layer assignment and Routing permissions update the current workflow directly
-from their native grid editors. They do not add page-level acceptance buttons;
+from their table controls. They do not add page-level acceptance buttons;
 the global status area reports the change, and **Save workflow settings**
 persists it separately from the reviewed project-copy Apply operation. Saving
 asks before overwriting an existing sidecar. **Delete workflow settings** removes
@@ -41,12 +45,15 @@ assignment and Netclass type size their columns from the headers, displayed
 values and complete choice sets, with bounds for unusually long project names.
 Their tables retain all rows and do not expand horizontally across the page.
 
-Netlist source assignment cells are rendered interaction surfaces rather than
-persistent wx.Grid editors. One click or Space/Enter opens a native choice menu;
-dismissing it leaves no editor active. This avoids focus-dependent edit state and
-keeps mouse interaction single-step. The mapping grid sizes its columns from
-bounded content measurements and its outer width ends after the final defined
-column.
+Table-integrated assignment cells are rendered interaction surfaces rather than
+persistent wx.Grid editors. Netlist source, Netclass type and Layer assignment
+use the same colored state, chevron and one-click native choice menu. Space or
+Enter opens the menu; dismissing it leaves no editor active. Connector footprint
+cells use the same interaction in their composed tables. This avoids
+focus-dependent edit state and keeps mouse interaction single-step. Mapping
+grids size columns from bounded content measurements and end after the final
+defined column. Dense interactive forms such as gang numbering retain standard
+native form controls instead of table-integrated assignment cells.
 
 Netclass type uses the same native assignment table, amber/blue cell states,
 persistent choice affordance, status placement and explicit Auto assign pattern.
@@ -87,6 +94,9 @@ dimension keeps its number left aligned and its unit selector right aligned in
 the same cell. Gang definitions update live after validation; their list state
 is Not defined, Defined or Invalid. The preview uses hollow connector circles,
 with pin 1 distinguished by colour only, and does not own apply/revert state.
+It maps the gang centroid to the preview center, so rotation is visually stable,
+and recomputes zoom and marker radius after each render to keep dense patterns
+inside the available canvas without overlapping circles.
 
 UI copy follows a control-ownership rule. The blue task box carries the page's
 short purpose and any cross-page consequence. Labels name controls; tooltips
