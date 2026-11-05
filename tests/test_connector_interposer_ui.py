@@ -717,6 +717,15 @@ class NativeDialogTests(unittest.TestCase):
                     dialog.gang_assignment_rows.GetBackgroundColour().Get()[:3],
                     ui_palette().window.Get()[:3],
                 )
+                self.assertTrue(
+                    dialog.gang_assignment_rows.GetWindowStyleFlag() & self.wx.BORDER_SIMPLE,
+                )
+                self.assertGreaterEqual(dialog.gang_assignment_table.GetPosition().x, 4)
+                self.assertGreaterEqual(dialog.gang_assignment_table.GetPosition().y, 4)
+                self.assertFalse(any(
+                    isinstance(child, self.wx.StaticLine)
+                    for child in dialog.gang_assignment_table.GetChildren()
+                ))
                 self.assertLessEqual(
                     dialog.gang_assignment_controls['J101']['symbol'].GetSize().width, 300,
                 )

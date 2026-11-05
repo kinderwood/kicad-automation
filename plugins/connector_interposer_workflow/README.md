@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.12**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.13**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -102,7 +102,10 @@ an already-open source board does not update the output copy.
    footprint cell lists only filtered library parts whose electrical pad
    numbers exactly match the symbol pins. Selections update the workflow
    immediately. Footprints use a one-click table-integrated menu; long symbol
-   and footprint names are ellipsized inside bounded columns. The visually
+   and footprint names are ellipsized inside bounded columns. Each composed
+   connector table sits inside one bordered window-colour surface with a small
+   inset; the **All** action row is separated from connector data by table space
+   instead of a heavy divider. The visually
    separated **All** row in either connector table
    applies its symbol or footprint choice to every connector of that type,
    including filtered rows. Editing an individual row clears the **All** action

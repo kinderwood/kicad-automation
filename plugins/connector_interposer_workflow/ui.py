@@ -1100,6 +1100,21 @@ class WorkflowDialog(wx.Dialog):
         control.SetBackgroundColour(palette.window)
         control.SetForegroundColour(palette.text)
 
+    @staticmethod
+    def _assignment_table(parent, columns):
+        """Create a bordered table surface with a semantic window-colour inset."""
+        palette = ui_palette()
+        surface = wx.Panel(parent, style=wx.BORDER_SIMPLE)
+        surface.SetBackgroundColour(palette.window)
+        inset = wx.BoxSizer(wx.VERTICAL)
+        table = wx.Panel(surface)
+        table.SetBackgroundColour(palette.window)
+        cells = wx.FlexGridSizer(cols=columns, hgap=0, vgap=0)
+        table.SetSizer(cells)
+        inset.Add(table, 0, wx.ALL, 4)
+        surface.SetSizer(inset)
+        return surface, table, cells
+
     def _style_mapper_theme(self):
         palette = ui_palette()
         for column in range(self.mapper.GetNumberCols()):
@@ -1128,8 +1143,12 @@ class WorkflowDialog(wx.Dialog):
         for control in self._persistent_headings:
             self._style_heading(control)
         self._style_table_data_cell(self.interposer_ref_display)
-        for assignment_rows in (self.gang_assignment_rows, self.dc_assignment_rows):
-            assignment_rows.SetBackgroundColour(palette.window)
+        for table_surface in (
+                self.interposer_assignment_surface, self.interposer_assignment_table,
+                self.gang_assignment_rows, self.gang_assignment_table,
+                self.dc_assignment_rows, self.dc_assignment_table,
+            ):
+            table_surface.SetBackgroundColour(palette.window)
         for control in self._status_labels:
             self._style_status(control, getattr(control, '_workflow_status_state', 'neutral'))
         for view in (self.mapper, self.netclass_type_grid, self.layer_map, self.rules,
@@ -2113,30 +2132,36 @@ class WorkflowDialog(wx.Dialog):
         )
         interposer_box = wx.StaticBox(panel, label='Interposer assignment')
         interposer = wx.StaticBoxSizer(interposer_box, wx.VERTICAL)
-        self.interposer_assignment_grid = wx.FlexGridSizer(cols=3, hgap=0, vgap=0)
+        (self.interposer_assignment_surface,
+         self.interposer_assignment_table,
+         self.interposer_assignment_grid) = self._assignment_table(interposer_box, 3)
         for label, width in (('Ref des', 100), ('Symbol', 300), ('Footprint', 320)):
-            heading = wx.StaticText(interposer_box, label=label, style=wx.BORDER_SIMPLE)
+            heading = wx.StaticText(
+                self.interposer_assignment_table, label=label, style=wx.BORDER_SIMPLE,
+            )
             font = heading.GetFont(); font.SetWeight(wx.FONTWEIGHT_BOLD); heading.SetFont(font)
             self._style_heading(heading)
             self._persistent_headings.append(heading)
             self._fix_table_cell_width(heading, width, 34)
             self.interposer_assignment_grid.Add(heading, 0, wx.EXPAND | wx.ALL, 0)
-        self.interposer_ref_display = wx.StaticText(interposer_box, label='—', style=wx.BORDER_SIMPLE)
+        self.interposer_ref_display = wx.StaticText(
+            self.interposer_assignment_table, label='—', style=wx.BORDER_SIMPLE,
+        )
         self._fix_table_cell_width(self.interposer_ref_display, 100, 38)
         self._style_table_data_cell(self.interposer_ref_display)
         self.interposer_assignment_grid.Add(self.interposer_ref_display, 0, wx.EXPAND)
         self.interposer_symbol_assignment = SymbolAssignmentCtrl(
-            interposer_box, self, 'Choose interposer symbol', False,
+            self.interposer_assignment_table, self, 'Choose interposer symbol', False,
             lambda selection, symbol: self.assign_interposer_symbol(selection, symbol),
         )
         self._fix_table_cell_width(self.interposer_symbol_assignment, 300, 38)
         self.interposer_assignment_grid.Add(self.interposer_symbol_assignment, 0, wx.EXPAND)
         self.interposer_footprint_assignment = FootprintAssignmentCtrl(
-            interposer_box, self.assign_interposer_footprint,
+            self.interposer_assignment_table, self.assign_interposer_footprint,
         )
         self._fix_table_cell_width(self.interposer_footprint_assignment, 320, 38)
         self.interposer_assignment_grid.Add(self.interposer_footprint_assignment, 0, wx.EXPAND)
-        interposer.Add(self.interposer_assignment_grid, 0, wx.ALL, 8)
+        interposer.Add(self.interposer_assignment_surface, 0, wx.ALL, 8)
         self.interposer_assignment_status = self.status_label(interposer_box, '0 of 0 interposers assigned')
         interposer.Add(self.interposer_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         panel.GetSizer().Add(interposer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -2149,10 +2174,9 @@ class WorkflowDialog(wx.Dialog):
         self.assignment_filter.SetMaxSize((330, -1))
         self.assignment_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_connector_assignments(True))
         gangs.Add(self.assignment_filter, 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
-        self.gang_assignment_rows = wx.Panel(gangs_box)
-        self.gang_assignment_rows.SetBackgroundColour(ui_palette().window)
-        assignment_grid = wx.FlexGridSizer(cols=4, hgap=0, vgap=0)
-        self.gang_assignment_rows.SetSizer(assignment_grid)
+        (self.gang_assignment_rows,
+         self.gang_assignment_table,
+         _assignment_grid) = self._assignment_table(gangs_box, 4)
         gangs.Add(self.gang_assignment_rows, 0, wx.ALL, 8)
         self.gang_assignment_status = self.status_label(gangs_box, '0 of 0 gangs assigned')
         gangs.Add(self.gang_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -2162,10 +2186,9 @@ class WorkflowDialog(wx.Dialog):
 
         dc_box = wx.StaticBox(panel, label='DC connector assignments')
         dc = wx.StaticBoxSizer(dc_box, wx.VERTICAL)
-        self.dc_assignment_rows = wx.Panel(dc_box)
-        self.dc_assignment_rows.SetBackgroundColour(ui_palette().window)
-        dc_grid = wx.FlexGridSizer(cols=4, hgap=0, vgap=0)
-        self.dc_assignment_rows.SetSizer(dc_grid)
+        (self.dc_assignment_rows,
+         self.dc_assignment_table,
+         _dc_grid) = self._assignment_table(dc_box, 4)
         dc.Add(self.dc_assignment_rows, 0, wx.ALL, 8)
         self.dc_assignment_status = self.status_label(dc_box, '0 of 0 DC connectors assigned')
         dc.Add(self.dc_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -2471,9 +2494,11 @@ class WorkflowDialog(wx.Dialog):
             'symbol': symbol_control, 'footprint': footprint_control,
         })
         for _column in range(4):
-            separator = wx.StaticLine(parent)
-            separator.SetMinSize((-1, 9))
-            sizer.Add(separator, 1, wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
+            gap = wx.Panel(parent)
+            gap.SetBackgroundColour(ui_palette().window)
+            gap.SetMinSize((-1, 8))
+            gap.SetMaxSize((-1, 8))
+            sizer.Add(gap, 0, wx.EXPAND)
 
     def refresh_connector_assignments(self, force=False):
         reference = self._interposer_reference()
@@ -2511,35 +2536,36 @@ class WorkflowDialog(wx.Dialog):
         self.interposer_symbol_assignment.Enable(bool(reference))
         self.interposer_footprint_assignment.Enable(bool(reference and symbol))
 
-        sizer = self.gang_assignment_rows.GetSizer()
+        sizer = self.gang_assignment_table.GetSizer()
         sizer.Clear(True)
         self.gang_assignment_controls = {}
         self.gang_assignment_rows.SetBackgroundColour(ui_palette().window)
+        self.gang_assignment_table.SetBackgroundColour(ui_palette().window)
         for label, width in (('Gang', 100), ('Positions', 80), ('Symbol', 300), ('Footprint', 320)):
-            heading = wx.StaticText(self.gang_assignment_rows, label=label, style=wx.BORDER_SIMPLE)
+            heading = wx.StaticText(self.gang_assignment_table, label=label, style=wx.BORDER_SIMPLE)
             font = heading.GetFont(); font.SetWeight(wx.FONTWEIGHT_BOLD); heading.SetFont(font)
             self._style_heading(heading); self._fix_table_cell_width(heading, width, 34)
             sizer.Add(heading, 0, wx.EXPAND)
         self._add_all_assignment_row(
-            self.gang_assignment_rows, sizer, 'rf', names,
+            self.gang_assignment_table, sizer, 'rf', names,
         )
         for name in names:
             if query and query not in name.casefold():
                 continue
             settings = self.controller.gang(name)
             count = sum(record.connector == name for record in self.controller.table.records)
-            gang_label = wx.StaticText(self.gang_assignment_rows, label=name, style=wx.BORDER_SIMPLE)
+            gang_label = wx.StaticText(self.gang_assignment_table, label=name, style=wx.BORDER_SIMPLE)
             self._fix_table_cell_width(gang_label, 100, 38)
             self._style_table_data_cell(gang_label)
-            positions = wx.StaticText(self.gang_assignment_rows, label=str(count), style=wx.BORDER_SIMPLE)
+            positions = wx.StaticText(self.gang_assignment_table, label=str(count), style=wx.BORDER_SIMPLE)
             self._fix_table_cell_width(positions, 80, 38)
             self._style_table_data_cell(positions)
             symbol_control = SymbolAssignmentCtrl(
-                self.gang_assignment_rows, self, 'Choose connector symbol', True,
+                self.gang_assignment_table, self, 'Choose connector symbol', True,
                 lambda selection, symbol, gang=name: self.assign_gang_symbol(gang, selection, symbol),
             )
             footprint_control = FootprintAssignmentCtrl(
-                self.gang_assignment_rows,
+                self.gang_assignment_table,
                 lambda selection, gang=name: self.assign_gang_footprint(gang, selection),
             )
             selected_symbol = settings.get('symbol', {})
@@ -2557,37 +2583,39 @@ class WorkflowDialog(wx.Dialog):
             self.gang_assignment_controls[name] = {
                 'symbol': symbol_control, 'footprint': footprint_control,
             }
+        self.gang_assignment_table.Layout()
         self.gang_assignment_rows.Layout()
 
-        dc_sizer = self.dc_assignment_rows.GetSizer()
+        dc_sizer = self.dc_assignment_table.GetSizer()
         dc_sizer.Clear(True)
         self.dc_assignment_controls = {}
         self.dc_assignment_rows.SetBackgroundColour(ui_palette().window)
+        self.dc_assignment_table.SetBackgroundColour(ui_palette().window)
         for label, width in (('Ref des', 100), ('Pins used', 80), ('Symbol', 300), ('Footprint', 320)):
-            heading = wx.StaticText(self.dc_assignment_rows, label=label, style=wx.BORDER_SIMPLE)
+            heading = wx.StaticText(self.dc_assignment_table, label=label, style=wx.BORDER_SIMPLE)
             font = heading.GetFont(); font.SetWeight(wx.FONTWEIGHT_BOLD); heading.SetFont(font)
             self._style_heading(heading); self._fix_table_cell_width(heading, width, 34)
             dc_sizer.Add(heading, 0, wx.EXPAND)
         self._add_all_assignment_row(
-            self.dc_assignment_rows, dc_sizer, 'dc', dc_names,
+            self.dc_assignment_table, dc_sizer, 'dc', dc_names,
         )
         for name in dc_names:
             if query and query not in name.casefold():
                 continue
             selection = self.controller.dc_connector(name)
             used = sum(record.connector == name for record in self.controller.table.records)
-            reference_label = wx.StaticText(self.dc_assignment_rows, label=name, style=wx.BORDER_SIMPLE)
+            reference_label = wx.StaticText(self.dc_assignment_table, label=name, style=wx.BORDER_SIMPLE)
             self._fix_table_cell_width(reference_label, 100, 38)
             self._style_table_data_cell(reference_label)
-            pins = wx.StaticText(self.dc_assignment_rows, label=str(used), style=wx.BORDER_SIMPLE)
+            pins = wx.StaticText(self.dc_assignment_table, label=str(used), style=wx.BORDER_SIMPLE)
             self._fix_table_cell_width(pins, 80, 38)
             self._style_table_data_cell(pins)
             symbol_control = SymbolAssignmentCtrl(
-                self.dc_assignment_rows, self, 'Choose DC connector symbol', False,
+                self.dc_assignment_table, self, 'Choose DC connector symbol', False,
                 lambda spec, symbol, connector=name: self.assign_dc_symbol(connector, spec, symbol),
             )
             footprint_control = FootprintAssignmentCtrl(
-                self.dc_assignment_rows,
+                self.dc_assignment_table,
                 lambda spec, connector=name: self.assign_dc_footprint(connector, spec),
             )
             symbol_spec = selection.get('symbol', {})
@@ -2602,6 +2630,7 @@ class WorkflowDialog(wx.Dialog):
             self.dc_assignment_controls[name] = {
                 'symbol': symbol_control, 'footprint': footprint_control,
             }
+        self.dc_assignment_table.Layout()
         self.dc_assignment_rows.Layout()
         self.pages[4].FitInside()
         self._refresh_assignment_status()

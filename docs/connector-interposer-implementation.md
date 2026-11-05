@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.12 and the
+are authorized. Connector to Interposer Workflow is version 0.4.13 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -258,6 +258,12 @@ semantic table background and bounded symbol/footprint columns. The dialog now
 opens at a display-bounded nominal 1340×800 instead of occupying up to 1600×920.
 The RF gang preview centers the point centroid, retains that center through
 rotation, refits after input changes and reduces marker radius for dense arrays.
+
+Version 0.4.13 places the composed interposer, RF gang and DC connector tables
+inside bordered semantic window-colour surfaces with a small inset. It replaces
+the four-part grey separator below each **All** action row with table-colour
+space, so headers, read-only connector data and colored assignment cells read as
+one contained table.
 
 Additional actual PCB Editor checks use the selected 9.0.9.1 AppImage and
 10.0.8: normal startup discovers both actions and Workflow opens from the

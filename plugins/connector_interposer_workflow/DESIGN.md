@@ -66,7 +66,11 @@ library symbol and footprint. The workbook supplies the interposer and connector
 references. Separate RF gang and DC connector sections use the same assignment
 cells. Symbol cells launch the native loaded-library browser;
 footprint cells offer only parts allowed by the symbol filters and exact pin/pad
-compatibility. Each connector section starts with a separated **All** action row.
+compatibility. Each composed table has one bordered semantic window-colour
+surface and a small inset around its header and cells, matching the visual
+containment of native grids. Each connector section starts with a separated
+**All** action row; window-colour table space provides separation without a
+heavy rule.
 Its choices apply to the complete RF or DC connector set, regardless of the
 current filter. An individual edit clears the action row while retaining the
 resulting per-connector assignments. Gang geometry, placement and BOM overrides do not belong on this
