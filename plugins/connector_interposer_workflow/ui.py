@@ -209,7 +209,10 @@ class DimensionCellEditor(grid.GridCellEditor):
         self.start = self.pending = ''
 
     def Create(self, parent, control_id, event_handler):
-        self.panel = wx.Panel(parent, control_id)
+        # GridCellEditor.SetControl requires wx.Control, not a generic wx.Window.
+        # Passing wx.Panel raises inside the SWIG callback and can leave wx.Grid
+        # unwinding through a half-created editor, which crashes the host process.
+        self.panel = wx.Control(parent, control_id, style=wx.BORDER_NONE)
         layout = wx.BoxSizer(wx.HORIZONTAL)
         self.text = wx.TextCtrl(self.panel, style=wx.TE_PROCESS_ENTER | wx.BORDER_NONE)
         self.units = wx.Choice(self.panel, choices=list(DIMENSION_UNITS))
@@ -219,6 +222,11 @@ class DimensionCellEditor(grid.GridCellEditor):
         self.panel.SetSizer(layout)
         self.SetControl(self.panel)
         self.panel.PushEventHandler(event_handler)
+
+    def Destroy(self):
+        if self.panel is not None:
+            self.panel.PopEventHandler()
+        super().Destroy()
 
     def SetSize(self, rect):
         self.panel.SetSize(rect)

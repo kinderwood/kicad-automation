@@ -709,10 +709,12 @@ class NativeDialogTests(unittest.TestCase):
             self.assertEqual(dialog.gang_notebook.GetPageText(1), 'Numbering')
             self.assertEqual(dialog.gang_pitch_x.units.GetStringSelection(), 'mil')
             self.assertEqual(dialog.gang_pitch_x.GetValue(), '100')
-            self.assertIsInstance(dialog.gang_rows.GetCellRenderer(0, 2),
-                                  DimensionCellRenderer)
-            self.assertIsInstance(dialog.gang_rows.GetCellEditor(0, 2),
-                                  DimensionCellEditor)
+            renderer = dialog.gang_rows.GetCellRenderer(0, 2)
+            editor = dialog.gang_rows.GetCellEditor(0, 2)
+            self.assertIsInstance(renderer, DimensionCellRenderer)
+            self.assertIsInstance(editor, DimensionCellEditor)
+            renderer.DecRef()
+            editor.DecRef()
             self.assertLess(
                 sum(dialog.gang_list.GetColumnWidth(column) for column in range(3)),
                 dialog.gang_list.GetClientSize().width,
@@ -756,6 +758,57 @@ class NativeDialogTests(unittest.TestCase):
             self.assertEqual(dialog.transition_list.GetItemText(0), 'Ready')
             self.assertEqual(dialog.transition_page_status.GetLabel(),
                              '1 assigned · 0 unassigned (optional)')
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
+    def test_19_position_gang_offset_editor_activates_and_commits(self):
+        """Regression: a wx.Panel editor raised in SWIG and crashed the KiCad host."""
+        from plugins.connector_interposer_workflow.core.model import HEADERS
+        from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+
+        dialog = WorkflowDialog()
+        try:
+            rows = [HEADERS]
+            rows.extend(
+                (f'SIGNAL{pin}', 'RF', 'E1', f'A{pin}', 'J501', str(pin), 'L2')
+                for pin in range(1, 20)
+            )
+            dialog.controller.table = parse_sheet(Worksheet('Signals', tuple(rows)))
+            dialog.controller.set_netclass_type('RF', 'RF')
+            dialog.refresh_gangs()
+            dialog.select_page(5)
+            dialog.Show()
+            self.app.Yield()
+
+            dialog.gang_pitch_x.text.SetFocus()
+            dialog.gang_pitch_x.text.SetValue('200 mil')
+            dialog.gang_pitch_y.text.SetFocus()
+            self.app.Yield()
+            dialog.gang_pitch_y.text.SetValue('173.2 mil')
+            dialog.gang_rows.SetCellValue(0, 1, '10')
+            dialog.gang_draft_changed()
+            dialog.add_gang_row(None)
+            dialog.gang_rows.SetCellValue(1, 1, '9')
+            dialog.gang_draft_changed()
+
+            dialog.gang_rows.SetGridCursor(1, 2)
+            dialog.gang_rows.EnableCellEditControl()
+            self.app.Yield()
+            focused = self.wx.Window.FindFocus()
+            self.assertIsInstance(focused, self.wx.TextCtrl)
+            focused.SetValue('50 mil')
+            dialog.gang_rows.SaveEditControlValue()
+            dialog.gang_rows.DisableCellEditControl()
+            self.app.Yield()
+
+            gang = dialog.controller.gang('J501')
+            self.assertEqual(gang['row_lengths'], [10, 9])
+            self.assertAlmostEqual(gang['pitch_x'], 5.08)
+            self.assertAlmostEqual(gang['pitch_y'], 4.39928)
+            self.assertEqual(gang['row_offsets'], [0, 1.27])
+            self.assertTrue(gang['defined'])
         finally:
             dialog.Destroy()
             self.app.Yield()
