@@ -666,7 +666,9 @@ class NativeDialogTests(unittest.TestCase):
     def test_live_gang_definitions_units_and_requirement_transition_assignment(self):
         from plugins.connector_interposer_workflow.core.model import HEADERS
         from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
-        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+        from plugins.connector_interposer_workflow.ui import (
+            DimensionCellEditor, DimensionCellRenderer, WorkflowDialog,
+        )
 
         dialog = WorkflowDialog()
         try:
@@ -701,7 +703,21 @@ class NativeDialogTests(unittest.TestCase):
             self.assertIsNone(self.wx.FindWindowByLabel('Apply definition', dialog.pages[5]))
             self.assertIsNone(self.wx.FindWindowByLabel('Revert', dialog.pages[5]))
             self.assertEqual(dialog.gang_editor_title.GetLabel(), 'J101 Gang definition')
-            self.assertEqual(dialog.gang_rows.GetColLabelValue(3), 'Unit')
+            self.assertEqual(dialog.gang_rows.GetNumberCols(), 3)
+            self.assertEqual(dialog.gang_rows.GetColLabelValue(2), 'X offset')
+            self.assertEqual(dialog.gang_rows.GetCellValue(0, 2), '0 mil')
+            self.assertEqual(dialog.gang_notebook.GetPageText(1), 'Numbering')
+            self.assertEqual(dialog.gang_pitch_x.units.GetStringSelection(), 'mil')
+            self.assertEqual(dialog.gang_pitch_x.GetValue(), '100')
+            self.assertIsInstance(dialog.gang_rows.GetCellRenderer(0, 2),
+                                  DimensionCellRenderer)
+            self.assertIsInstance(dialog.gang_rows.GetCellEditor(0, 2),
+                                  DimensionCellEditor)
+            self.assertLess(
+                sum(dialog.gang_list.GetColumnWidth(column) for column in range(3)),
+                dialog.gang_list.GetClientSize().width,
+            )
+            self.assertLess(dialog.gang_list.GetSize().height, 200)
             dialog.gang_rows.SetCellValue(0, 1, '3')
             dialog.gang_draft_changed()
             self.assertEqual(len(dialog.pattern_view.points), 3)

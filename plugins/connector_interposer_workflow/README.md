@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.6**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.7**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -103,8 +103,9 @@ an already-open source board does not update the output copy.
 6. **Define RF gangs:** select an RF gang from the searchable netlist-derived list.
    On **Pattern**, add or remove rows, set the number of positions and X offset
    for each row, then set position and row pitch. Every linear input has its own
-   `mm`, `mil`, `inch` or `um` selector; a suffix such as `10mm` or `10 mm`
-   selects that unit when the field is committed. On **Numbering & placement**,
+   `mm`, `mil`, `inch` or `um` selector, defaulting to `mil`; a suffix such as
+   `10mm` or `10 mm` selects that unit when the field is committed. Row offsets
+   keep the value and unit selector together in one cell. On **Numbering**,
    choose row-major, serpentine, column-major or custom numbering; set pattern
    rotation independently from connector orientation; choose the mounting side
    and optional layout mirror. The numbered preview keeps location 1 marked as

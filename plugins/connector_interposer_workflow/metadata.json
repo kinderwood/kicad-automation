@@ -10,5 +10,5 @@
   "license": "GPL",
   "resources": {"homepage": "https://github.com/kinderwood/kicad-automation/tree/main/plugins/connector_interposer_workflow"},
   "tags": ["connector", "interposer", "workflow", "gppo"],
-  "versions": [{"version": "0.4.6", "status": "testing", "kicad_version": "9.0", "kicad_version_max": "10.0"}]
+  "versions": [{"version": "0.4.7", "status": "testing", "kicad_version": "9.0", "kicad_version_max": "10.0"}]
 }

@@ -193,8 +193,8 @@ class WorkflowController:
             self.config['gangs'][name] = {"gang": name, "row_lengths": [max(count, 1)], "pitch_x": 2.54,
                 "pitch_y": 2.54, "row_offsets": [], "numbering": [], "traversal": "row-major",
                 "rotation": 0, "connector_rotation": 0, "mirror": False, "anchor": [0, 0],
-                "display_units": {"pitch_x": "mm", "pitch_y": "mm", "row_offsets": [],
-                                  "anchor_x": "mm", "anchor_y": "mm"},
+                "display_units": {"pitch_x": "mil", "pitch_y": "mil", "row_offsets": [],
+                                  "anchor_x": "mil", "anchor_y": "mil"},
                 "defined": False, "part_id": "", "symbol": {},
                 "anchor_accepted": False, "side": "F"}
         return deepcopy(self.config['gangs'][name])
@@ -372,8 +372,8 @@ class WorkflowController:
             copied = {key: deepcopy(values[key]) for key in copied_fields if key in values}
             source_units = deepcopy(copied.get('display_units', {}))
             target_units = self.gang(target).get('display_units', {})
-            source_units['anchor_x'] = target_units.get('anchor_x', 'mm')
-            source_units['anchor_y'] = target_units.get('anchor_y', 'mm')
+            source_units['anchor_x'] = target_units.get('anchor_x', 'mil')
+            source_units['anchor_y'] = target_units.get('anchor_y', 'mil')
             copied['display_units'] = source_units
             self.set_gang(target, copied)
 

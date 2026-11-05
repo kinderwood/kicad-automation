@@ -105,16 +105,21 @@ class StepList(wx.VListBox):
 
 class DimensionInput(wx.Panel):
     """A numeric linear-dimension input with an independent unit selector."""
-    def __init__(self, parent, value='0', unit='mm'):
+    def __init__(self, parent, value='0', unit='mil', compact=False):
         super().__init__(parent)
         layout = wx.BoxSizer(wx.HORIZONTAL)
         self.text = wx.TextCtrl(self, value=str(value), style=wx.TE_PROCESS_ENTER)
         self.units = wx.Choice(self, choices=list(DIMENSION_UNITS))
         self.units.SetStringSelection(unit)
         self.units.SetMinSize((70, -1))
-        layout.Add(self.text, 1, wx.RIGHT, 4)
+        if compact:
+            self.text.SetMinSize((86, -1))
+            self.text.SetMaxSize((110, -1))
+        layout.Add(self.text, 0 if compact else 1, wx.RIGHT, 4)
         layout.Add(self.units, 0)
         self.SetSizer(layout)
+        if compact:
+            self.SetMinSize((180, -1))
         self._change_handler = None
         self.text.Bind(wx.EVT_TEXT_ENTER, self._normalize)
         self.text.Bind(wx.EVT_KILL_FOCUS, self._normalize)
@@ -160,6 +165,103 @@ class DimensionInput(wx.Panel):
 
     def GetValue(self):
         return self.text.GetValue()
+
+
+class DimensionCellRenderer(grid.GridCellRenderer):
+    """Draw one dimension cell as a left value and right unit selector."""
+    def Draw(self, table, attr, dc, rect, row, col, selected):
+        background = (table.GetSelectionBackground() if selected
+                      else attr.GetBackgroundColour())
+        foreground = (table.GetSelectionForeground() if selected
+                      else attr.GetTextColour())
+        dc.SetPen(wx.Pen(background))
+        dc.SetBrush(wx.Brush(background))
+        dc.DrawRectangle(rect)
+        try:
+            _value_mm, unit, number_text = parse_dimension(
+                table.GetCellValue(row, col) or '0', 'mil',
+            )
+        except ValueError:
+            number_text, unit = table.GetCellValue(row, col), ''
+        dc.SetFont(attr.GetFont())
+        dc.SetTextForeground(foreground)
+        _width, height = dc.GetTextExtent(number_text)
+        y = rect.y + max(0, (rect.height - height) // 2)
+        dc.DrawText(number_text, rect.x + 6, y)
+        unit_text = unit + ' ▾' if unit else ''
+        unit_width, _height = dc.GetTextExtent(unit_text)
+        dc.DrawText(unit_text, rect.x + rect.width - unit_width - 6, y)
+
+    def GetBestSize(self, table, attr, dc, row, col):
+        dc.SetFont(attr.GetFont())
+        width, height = dc.GetTextExtent('000000 inch ▾')
+        return wx.Size(width + 16, height + 8)
+
+    def Clone(self):
+        return DimensionCellRenderer()
+
+
+class DimensionCellEditor(grid.GridCellEditor):
+    """Edit a grid dimension with a text box and unit choice in one cell."""
+    def __init__(self):
+        super().__init__()
+        self.panel = self.text = self.units = None
+        self.start = self.pending = ''
+
+    def Create(self, parent, control_id, event_handler):
+        self.panel = wx.Panel(parent, control_id)
+        layout = wx.BoxSizer(wx.HORIZONTAL)
+        self.text = wx.TextCtrl(self.panel, style=wx.TE_PROCESS_ENTER | wx.BORDER_NONE)
+        self.units = wx.Choice(self.panel, choices=list(DIMENSION_UNITS))
+        self.units.SetMinSize((68, -1))
+        layout.Add(self.text, 1, wx.RIGHT, 2)
+        layout.Add(self.units, 0)
+        self.panel.SetSizer(layout)
+        self.SetControl(self.panel)
+        self.panel.PushEventHandler(event_handler)
+
+    def SetSize(self, rect):
+        self.panel.SetSize(rect)
+        self.panel.Layout()
+
+    def BeginEdit(self, row, col, table):
+        self.start = table.GetCellValue(row, col) or '0 mil'
+        try:
+            _value_mm, unit, number_text = parse_dimension(self.start, 'mil')
+        except ValueError:
+            unit, number_text = 'mil', self.start
+        self.text.ChangeValue(number_text)
+        self.units.SetStringSelection(unit)
+        self.text.SetFocus()
+        self.text.SetSelection(-1, -1)
+
+    def EndEdit(self, row, col, table, old_value):
+        try:
+            _value_mm, unit, number_text = parse_dimension(
+                self.text.GetValue(), self.units.GetStringSelection() or 'mil',
+            )
+            self.pending = f'{number_text} {unit}'
+        except ValueError:
+            self.pending = self.text.GetValue()
+        return self.pending if self.pending != old_value else None
+
+    def ApplyEdit(self, row, col, table):
+        table.SetCellValue(row, col, self.pending)
+        self.start = self.pending
+
+    def Reset(self):
+        try:
+            _value_mm, unit, number_text = parse_dimension(self.start, 'mil')
+        except ValueError:
+            unit, number_text = 'mil', self.start
+        self.text.ChangeValue(number_text)
+        self.units.SetStringSelection(unit)
+
+    def GetValue(self):
+        return self.text.GetValue()
+
+    def Clone(self):
+        return DimensionCellEditor()
 
 
 class AssignmentRenderer(grid.GridCellStringRenderer):
@@ -298,10 +400,6 @@ class PatternPreview(wx.Panel):
             label = str(pin)
             label_width, label_height = dc.GetTextExtent(label)
             dc.DrawText(label, px-label_width//2, py-label_height//2)
-            if str(pin) == '1':
-                dc.DrawLine(px-18, py, px+18, py)
-                dc.DrawLine(px, py-18, px, py+18)
-                dc.DrawText('Anchor', px+18, py+8)
 
 
 class OutlinePreview(wx.Panel):
@@ -935,7 +1033,7 @@ class WorkflowDialog(wx.Dialog):
         parent.GetSizer().Add(row, 0, wx.EXPAND | wx.ALL, 8)
         return control
 
-    def dimension_field(self, parent, label, value='0', unit='mm', invalidate=True):
+    def dimension_field(self, parent, label, value='0', unit='mil', invalidate=True):
         row = wx.BoxSizer(wx.HORIZONTAL)
         row.Add(wx.StaticText(parent, label=label), 0,
                 wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
@@ -1972,7 +2070,7 @@ class WorkflowDialog(wx.Dialog):
         if hasattr(self, 'anchor_interposer_ref'):
             self.anchor_interposer_ref.SetLabel('Ref des: ' + (reference or '—'))
             pose = interposer.get('pose', [0, 0, 0])
-            pose_units = interposer.get('pose_units', ['mm', 'mm'])
+            pose_units = interposer.get('pose_units', ['mil', 'mil'])
             self.interposer_x.set_mm(pose[0], pose_units[0])
             self.interposer_y.set_mm(pose[1], pose_units[1])
             self.interposer_rotation.ChangeValue(str(pose[2]))
@@ -2116,24 +2214,24 @@ class WorkflowDialog(wx.Dialog):
         self.gang_filter.SetDescriptiveText('Search gangs')
         self.gang_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_gang_list())
         selector.Add(self.gang_filter, 0, wx.EXPAND | wx.ALL, 8)
-        selector_box.SetMinSize((265, -1))
-        selector_box.SetMaxSize((285, -1))
+        selector_box.SetMinSize((250, -1))
+        selector_box.SetMaxSize((270, -1))
         self.gang_list = wx.ListCtrl(
             selector_box, style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
         )
-        self.gang_list.SetMinSize((245, 160))
-        self.gang_list.SetMaxSize((265, -1))
+        self.gang_list.SetMinSize((230, 60))
+        self.gang_list.SetMaxSize((250, 60))
         for column, (heading, width) in enumerate((
-            ('Gang', 75), ('Positions', 75), ('Status', 115),
+            ('Gang', 58), ('Positions', 68), ('Status', 94),
         )):
             self.gang_list.InsertColumn(column, heading, width=width)
         self.gang_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.guard(self.select_dashboard_gang))
-        selector.Add(self.gang_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+        selector.Add(self.gang_list, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
         self.copy_gang_button = self.button(
             selector_box, 'Copy settings…', self.copy_gang,
         )
         selector.Add(self.copy_gang_button, 0, wx.ALL, 8)
-        body.Add(selector, 0, wx.EXPAND | wx.RIGHT, 8)
+        body.Add(selector, 0, wx.ALIGN_TOP | wx.RIGHT, 8)
 
         editor_box = wx.StaticBox(panel, label='Select an RF gang')
         editor = wx.StaticBoxSizer(editor_box, wx.VERTICAL)
@@ -2144,18 +2242,16 @@ class WorkflowDialog(wx.Dialog):
         pattern_sizer = wx.BoxSizer(wx.VERTICAL)
         pattern_page.SetSizer(pattern_sizer)
         self.gang_rows = grid.Grid(pattern_page)
-        self.gang_rows.CreateGrid(1, 4)
+        self.gang_rows.CreateGrid(1, 3)
         self.gang_rows.SetRowLabelSize(0)
         self.gang_rows.SetColLabelValue(0, 'Row')
         self.gang_rows.SetColLabelValue(1, 'Positions')
         self.gang_rows.SetColLabelValue(2, 'X offset')
-        self.gang_rows.SetColLabelValue(3, 'Unit')
-        self.gang_rows.SetColSize(0, 50)
-        self.gang_rows.SetColSize(1, 85)
-        self.gang_rows.SetColSize(2, 95)
-        self.gang_rows.SetColSize(3, 70)
+        self.gang_rows.SetColSize(0, 48)
+        self.gang_rows.SetColSize(1, 80)
+        self.gang_rows.SetColSize(2, 150)
         self.gang_rows.SetReadOnly(0, 0)
-        self.gang_rows.SetMinSize((315, 180))
+        self.gang_rows.SetMinSize((292, 180))
         self.gang_rows.Bind(grid.EVT_GRID_CELL_CHANGED, self.gang_draft_changed)
         pattern_sizer.Add(self.gang_rows, 0, wx.EXPAND | wx.ALL, 8)
         row_actions = wx.BoxSizer(wx.HORIZONTAL)
@@ -2166,12 +2262,11 @@ class WorkflowDialog(wx.Dialog):
         pattern_sizer.Add(row_actions, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         dimensions = wx.FlexGridSizer(cols=2, hgap=8, vgap=8)
         dimensions.Add(wx.StaticText(pattern_page, label='Position pitch'), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.gang_pitch_x = DimensionInput(pattern_page, value='2.54')
-        dimensions.Add(self.gang_pitch_x, 1, wx.EXPAND)
+        self.gang_pitch_x = DimensionInput(pattern_page, value='100', compact=True)
+        dimensions.Add(self.gang_pitch_x, 0, wx.ALIGN_LEFT)
         dimensions.Add(wx.StaticText(pattern_page, label='Row pitch'), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.gang_pitch_y = DimensionInput(pattern_page, value='2.54')
-        dimensions.Add(self.gang_pitch_y, 1, wx.EXPAND)
-        dimensions.AddGrowableCol(1, 1)
+        self.gang_pitch_y = DimensionInput(pattern_page, value='100', compact=True)
+        dimensions.Add(self.gang_pitch_y, 0, wx.ALIGN_LEFT)
         pattern_sizer.Add(dimensions, 0, wx.EXPAND | wx.ALL, 8)
         self.gang_notebook.AddPage(pattern_page, 'Pattern')
 
@@ -2201,7 +2296,7 @@ class WorkflowDialog(wx.Dialog):
         self.mirror = wx.CheckBox(placement_page, label='Mirror position layout')
         placement.Add(self.mirror, 0, wx.ALIGN_CENTER_VERTICAL)
         placement.AddGrowableCol(1, 1)
-        self.gang_notebook.AddPage(placement_page, 'Numbering & placement')
+        self.gang_notebook.AddPage(placement_page, 'Numbering')
         editor.Add(self.gang_notebook, 1, wx.EXPAND | wx.ALL, 8)
         self.gang_definition_status = self.status_label(editor_box, 'Select a gang')
         editor.Add(self.gang_definition_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -2237,11 +2332,11 @@ class WorkflowDialog(wx.Dialog):
             self.gang_rows.SetCellValue(row, 0, str(row + 1))
             self.gang_rows.SetReadOnly(row, 0)
             self.gang_rows.SetCellEditor(
-                row, 3, grid.GridCellChoiceEditor(list(DIMENSION_UNITS), False),
+                row, 2, DimensionCellEditor(),
             )
-            if not self.gang_rows.GetCellValue(row, 3):
-                self.gang_rows.SetCellValue(row, 3, 'mm')
-            self.gang_rows.SetCellRenderer(row, 3, AssignmentRenderer(True))
+            if not self.gang_rows.GetCellValue(row, 2):
+                self.gang_rows.SetCellValue(row, 2, '0 mil')
+            self.gang_rows.SetCellRenderer(row, 2, DimensionCellRenderer())
         display_index = wx.Display.GetFromWindow(self)
         area = (wx.Display(display_index).GetClientArea()
                 if display_index != wx.NOT_FOUND else wx.GetClientDisplayRect())
@@ -2263,7 +2358,7 @@ class WorkflowDialog(wx.Dialog):
                 raise ValueError(f'Row {row + 1}: enter a position count')
             row_lengths.append(int(count))
             offset_mm, offset_unit, _number_text = parse_dimension(
-                offset, self.gang_rows.GetCellValue(row, 3) or 'mm',
+                offset, 'mil',
             )
             row_offsets.append(offset_mm)
             row_offset_units.append(offset_unit)
@@ -2285,10 +2380,10 @@ class WorkflowDialog(wx.Dialog):
                 'row_offsets': row_offset_units,
                 'anchor_x': self.controller.gang(self.current_gang).get(
                     'display_units', {},
-                ).get('anchor_x', 'mm'),
+                ).get('anchor_x', 'mil'),
                 'anchor_y': self.controller.gang(self.current_gang).get(
                     'display_units', {},
-                ).get('anchor_y', 'mm'),
+                ).get('anchor_y', 'mil'),
             },
             'traversal': traversal,
             'numbering': numbering,
@@ -2305,8 +2400,6 @@ class WorkflowDialog(wx.Dialog):
                             for row in range(self.gang_rows.GetNumberRows())],
             'row_offsets': [self.gang_rows.GetCellValue(row, 2)
                             for row in range(self.gang_rows.GetNumberRows())],
-            'row_offset_units': [self.gang_rows.GetCellValue(row, 3) or 'mm'
-                                 for row in range(self.gang_rows.GetNumberRows())],
             'pitch_x': self.gang_pitch_x.GetValue(),
             'pitch_x_unit': self.gang_pitch_x.units.GetStringSelection(),
             'pitch_y': self.gang_pitch_y.GetValue(),
@@ -2324,7 +2417,6 @@ class WorkflowDialog(wx.Dialog):
         for row, count in enumerate(edit['row_lengths']):
             self.gang_rows.SetCellValue(row, 1, count)
             self.gang_rows.SetCellValue(row, 2, edit['row_offsets'][row])
-            self.gang_rows.SetCellValue(row, 3, edit['row_offset_units'][row])
         self.gang_pitch_x.ChangeValue(edit['pitch_x'])
         self.gang_pitch_x.units.SetStringSelection(edit['pitch_x_unit'])
         self.gang_pitch_y.ChangeValue(edit['pitch_y'])
@@ -2405,15 +2497,14 @@ class WorkflowDialog(wx.Dialog):
                 try:
                     _value_mm, unit, number_text = parse_dimension(
                         self.gang_rows.GetCellValue(row, 2) or '0',
-                        self.gang_rows.GetCellValue(row, 3) or 'mm',
+                        'mil',
                     )
                 except ValueError:
                     pass
                 else:
                     self._loading_gang = True
                     try:
-                        self.gang_rows.SetCellValue(row, 2, number_text)
-                        self.gang_rows.SetCellValue(row, 3, unit)
+                        self.gang_rows.SetCellValue(row, 2, f'{number_text} {unit}')
                     finally:
                         self._loading_gang = False
             values = None
@@ -2450,8 +2541,7 @@ class WorkflowDialog(wx.Dialog):
             row = self.gang_rows.GetNumberRows()
             self._resize_gang_rows(row + 1)
             self.gang_rows.SetCellValue(row, 1, '1')
-            self.gang_rows.SetCellValue(row, 2, '0')
-            self.gang_rows.SetCellValue(row, 3, 'mm')
+            self.gang_rows.SetCellValue(row, 2, '0 mil')
         finally:
             self._loading_gang = False
         self.gang_draft_changed()
@@ -2527,6 +2617,29 @@ class WorkflowDialog(wx.Dialog):
             self.gang_list.SetItem(index, 2, status)
             if name == selected:
                 self.gang_list.Select(index)
+        self._resize_gang_list()
+
+    def _resize_gang_list(self):
+        count = self.gang_list.GetItemCount()
+        dc = wx.ClientDC(self.gang_list)
+        fallback_row = dc.GetCharHeight() + 8
+        if count:
+            item_rect = self.gang_list.GetItemRect(0)
+            row_height = max(fallback_row, item_rect.height)
+            header_height = max(fallback_row + 4, item_rect.y)
+        else:
+            row_height = fallback_row
+            header_height = fallback_row + 4
+        display_index = wx.Display.GetFromWindow(self)
+        area = (wx.Display(display_index).GetClientArea()
+                if display_index != wx.NOT_FOUND else wx.GetClientDisplayRect())
+        maximum_rows = max(1, min(12, int(area.height * .34 / row_height)))
+        visible_rows = max(1, min(count, maximum_rows))
+        height = header_height + visible_rows * row_height + 4
+        self.gang_list.SetMinSize((230, height))
+        self.gang_list.SetMaxSize((250, height))
+        self.gang_list.GetParent().Layout()
+        self.pages[5].FitInside()
 
     def select_dashboard_gang(self, event):
         name = self.gang_list.GetItemText(event.GetIndex())
@@ -2548,19 +2661,20 @@ class WorkflowDialog(wx.Dialog):
                 if len(offsets) != len(rows):
                     offsets = [0] * len(rows)
                 units = applied.get('display_units', {})
-                offset_units = list(units.get('row_offsets') or ['mm'] * len(rows))
+                offset_units = list(units.get('row_offsets') or ['mil'] * len(rows))
                 if len(offset_units) != len(rows):
-                    offset_units = ['mm'] * len(rows)
+                    offset_units = ['mil'] * len(rows)
                 self._resize_gang_rows(len(rows))
                 for row, (positions, offset, unit) in enumerate(
                         zip(rows, offsets, offset_units)):
                     self.gang_rows.SetCellValue(row, 1, str(positions))
-                    self.gang_rows.SetCellValue(row, 2, dimension_text(offset, unit))
-                    self.gang_rows.SetCellValue(row, 3, unit)
+                    self.gang_rows.SetCellValue(
+                        row, 2, f'{dimension_text(offset, unit)} {unit}',
+                    )
                 self.gang_pitch_x.set_mm(applied.get('pitch_x', 2.54),
-                                         units.get('pitch_x', 'mm'))
+                                         units.get('pitch_x', 'mil'))
                 self.gang_pitch_y.set_mm(applied.get('pitch_y', 2.54),
-                                         units.get('pitch_y', 'mm'))
+                                         units.get('pitch_y', 'mil'))
                 numbering = applied.get('numbering', [])
                 traversal_index = {'row-major': 0, 'serpentine': 1, 'column-major': 2}.get(
                     applied.get('traversal', 'row-major'), 0,
@@ -2914,8 +3028,8 @@ class WorkflowDialog(wx.Dialog):
         settings = self.controller.gang(gang)
         anchor = settings.get('anchor', [0, 0])
         units = settings.get('display_units', {})
-        self.anchor_x.set_mm(anchor[0], units.get('anchor_x', 'mm'))
-        self.anchor_y.set_mm(anchor[1], units.get('anchor_y', 'mm'))
+        self.anchor_x.set_mm(anchor[0], units.get('anchor_x', 'mil'))
+        self.anchor_y.set_mm(anchor[1], units.get('anchor_y', 'mil'))
         accepted = bool(settings.get('anchor_accepted'))
         self.anchor_status.SetLabel(
             f'{gang} anchor accepted' if accepted else f'{gang} anchor required'
@@ -3361,10 +3475,9 @@ class WorkflowDialog(wx.Dialog):
         try:
             self._resize_gang_rows(1)
             self.gang_rows.SetCellValue(0, 1, '1')
-            self.gang_rows.SetCellValue(0, 2, '0')
-            self.gang_rows.SetCellValue(0, 3, 'mm')
-            self.gang_pitch_x.set_mm(2.54, 'mm')
-            self.gang_pitch_y.set_mm(2.54, 'mm')
+            self.gang_rows.SetCellValue(0, 2, '0 mil')
+            self.gang_pitch_x.set_mm(2.54, 'mil')
+            self.gang_pitch_y.set_mm(2.54, 'mil')
             self.gang_numbering_mode.SetSelection(0)
             self.gang_custom_numbering.ChangeValue('')
             self.gang_custom_numbering.Enable(False)
@@ -3393,7 +3506,7 @@ class WorkflowDialog(wx.Dialog):
             self.interposer_x, self.interposer_y, self.label_offset_x,
             self.label_offset_y, self.anchor_x, self.anchor_y,
         ):
-            control.set_mm(0, 'mm')
+            control.set_mm(0, 'mil')
         self.dc_anchor_side.SetSelection(0)
         self.hole_path.set_selection({})
         self.anchor_status.SetLabel('No anchor captured.')
@@ -3452,7 +3565,7 @@ class WorkflowDialog(wx.Dialog):
         if cfg.get('interposers'):
             ref, part = next(iter(cfg['interposers'].items()))
             pose = part.get('pose', [0, 0, 0])
-            pose_units = part.get('pose_units', ['mm', 'mm'])
+            pose_units = part.get('pose_units', ['mil', 'mil'])
             self.interposer_x.set_mm(pose[0], pose_units[0])
             self.interposer_y.set_mm(pose[1], pose_units[1])
             self.interposer_rotation.ChangeValue(str(pose[2]))
@@ -3465,7 +3578,7 @@ class WorkflowDialog(wx.Dialog):
         self.outline_view.show(cfg['outline'].get('source_preview', {}))
         self.user_layer.ChangeValue(cfg['mechanical'].get('layer', 'Dwgs.User'))
         offset = cfg['mechanical'].get('label_offset', [0, 0])
-        offset_units = cfg['mechanical'].get('label_offset_units', ['mm', 'mm'])
+        offset_units = cfg['mechanical'].get('label_offset_units', ['mil', 'mil'])
         self.label_offset_x.set_mm(offset[0], offset_units[0])
         self.label_offset_y.set_mm(offset[1], offset_units[1])
         self.refresh_layers()

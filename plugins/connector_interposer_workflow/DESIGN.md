@@ -69,9 +69,11 @@ have different electrical requirements.
 Linear geometry is stored in millimetres at the controller/backend boundary.
 Each editable linear field in Define RF gangs and Connector placement has an
 independent `mm`, `mil`, `inch` or `um` selector. A typed unit suffix updates
-that selector when the field is committed. Gang definitions update live after
-validation; their list state is Not defined, Defined or Invalid. The preview
-uses hollow connector circles and does not own apply/revert state.
+that selector when the field is committed; new fields default to `mil`. A grid
+dimension keeps its number left aligned and its unit selector right aligned in
+the same cell. Gang definitions update live after validation; their list state
+is Not defined, Defined or Invalid. The preview uses hollow connector circles,
+with pin 1 distinguished by colour only, and does not own apply/revert state.
 
 UI copy follows a control-ownership rule. The blue task box carries the page's
 short purpose and any cross-page consequence. Labels name controls; tooltips
