@@ -487,6 +487,8 @@ class NativeDialogTests(unittest.TestCase):
                 self.assertEqual(dialog.spreadsheet_feedback.GetLabel(), 'Choose a netlist worksheet.')
                 dialog.sheet.SetStringSelection('signals')
                 dialog._parse_spreadsheet('redetect')
+                dialog.Show()
+                self.app.Yield()
                 self.assertIsNotNone(dialog.controller.table)
                 self.assertEqual(dialog.sheet.GetStringSelection(), 'signals')
                 self.assertLessEqual(dialog.sheet.GetSize().width, 180)
@@ -502,6 +504,28 @@ class NativeDialogTests(unittest.TestCase):
                 self.assertFalse(any(label.startswith('H ·') for label in dialog._spreadsheet_columns))
                 self.assertEqual(dialog.columns_status.GetLabel(), '7 of 7 columns assigned')
                 self.assertEqual(dialog.nets_status.GetLabel(), '2 nets parsed')
+                self.assertTrue(dialog.mapper.IsReadOnly(0, 2))
+                self.assertFalse(dialog.mapper.IsCellEditControlShown())
+                menu_labels = []
+                checked_labels = []
+                def dismiss_menu(_window, menu, _position):
+                    menu_labels.extend(item.GetItemLabelText() for item in menu.GetMenuItems())
+                    checked_labels.extend(item.GetItemLabelText() for item in menu.GetMenuItems()
+                                          if item.IsChecked())
+                    return False
+                with mock.patch.object(dialog, '_popup_assignment_menu', side_effect=dismiss_menu):
+                    dialog._show_assignment_menu(2)
+                self.assertIn('Clear assignment', menu_labels)
+                self.assertIn('A · Signal', menu_labels)
+                self.assertEqual(checked_labels, ['A · Signal'])
+                self.assertFalse(dialog.mapper.IsCellEditControlShown())
+                expected_width = sum(
+                    dialog.mapper.GetColSize(column)
+                    for column in range(dialog.mapper.GetNumberCols())
+                ) + dialog.mapper.GetNumberCols() + 2
+                self.assertEqual(dialog.mapper.GetSize().width, expected_width)
+                self.assertLess(dialog.mapper.GetSize().width,
+                                dialog.book.GetClientSize().width * .9)
 
                 dialog.ignored.ChangeValue('2')
                 dialog._parse_spreadsheet('mapping')
@@ -509,8 +533,9 @@ class NativeDialogTests(unittest.TestCase):
                 self.assertEqual(dialog.mapper.GetCellValue(1, 2), 'DATA1')
                 self.assertEqual(dialog.nets_status.GetLabel(), '1 net parsed')
 
-                dialog.mapper.SetCellValue(0, 2, 'B · NetClass')
-                dialog.mapper.SetCellValue(0, 3, 'A · Signal')
+                dialog._set_mapping_choice(2, 'B · NetClass')
+                dialog._set_mapping_choice(3, 'A · Signal')
+                dialog._cancel_spreadsheet_timer()
                 dialog._parse_spreadsheet('mapping')
                 self.assertEqual(dialog.controller.table.mapping['Signal'], 1)
                 self.assertEqual(dialog.controller.table.mapping['NetClass'], 0)

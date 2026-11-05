@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.10**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.11**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -44,13 +44,15 @@ an already-open source board does not update the output copy.
    The workbook opens automatically, with the worksheet deliberately left blank
    and header row initially set to 1. Choose the netlist worksheet to detect its
    headers. Netlist worksheet, header row and optional excluded source rows
-   remain editable. Map each required field with
-   a dropdown containing only populated workbook columns. The selectors form
+   remain editable. Click each assignment cell to open a native menu containing
+   only populated workbook columns. Dismissing the menu makes no change and
+   leaves no grid editor active. The selectors form
    the first row of an aligned live net table, so each assignment sits directly
    above the parsed values it produces. The assignment band stays visibly
    interactive: assigned cells are blue, missing cells are amber, conflicting
    cells are red, and persistent chevrons distinguish selectors from parsed
-   read-only data. Unique exact header matches are
+   read-only data. The table ends after its defined columns instead of expanding
+   across the page. Unique exact header matches are
    assigned automatically after worksheet selection or a workbook reload.
    Changing worksheets resets and redetects the assignments; changing only the
    header row preserves assignments by physical source-column position and

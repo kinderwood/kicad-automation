@@ -41,6 +41,13 @@ assignment and Netclass type size their columns from the headers, displayed
 values and complete choice sets, with bounds for unusually long project names.
 Their tables retain all rows and do not expand horizontally across the page.
 
+Netlist source assignment cells are rendered interaction surfaces rather than
+persistent wx.Grid editors. One click or Space/Enter opens a native choice menu;
+dismissing it leaves no editor active. This avoids focus-dependent edit state and
+keeps mouse interaction single-step. The mapping grid sizes its columns from
+bounded content measurements and its outer width ends after the final defined
+column.
+
 Netclass type uses the same native assignment table, amber/blue cell states,
 persistent choice affordance, status placement and explicit Auto assign pattern.
 Auto assignment follows only the exact project conventions `J#` = DC,

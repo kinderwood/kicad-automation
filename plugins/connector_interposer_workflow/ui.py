@@ -1169,14 +1169,18 @@ class WorkflowDialog(wx.Dialog):
         self.mapper.SetColSize(1, 82)
         for column, name in enumerate(HEADERS, 2):
             self.mapper.SetColSize(column, 125 if name in ('Interposer Pin', 'Connector Pin') else 112)
+            self.mapper.SetReadOnly(0, column)
         self.mapper.SetRowSize(0, 34)
         for row_index in range(1, SPREADSHEET_PREVIEW_ROWS + 1):
             self.mapper.SetRowSize(row_index, 28)
         table_height = (self.mapper.GetColLabelSize() + self.mapper.GetRowSize(0)
                         + sum(self.mapper.GetRowSize(row) for row in range(1, SPREADSHEET_PREVIEW_ROWS + 1))
                         + 6)
-        self.mapper.SetMinSize((-1, table_height))
-        self.mapper.SetMaxSize((-1, table_height))
+        table_width = sum(
+            self.mapper.GetColSize(column) for column in range(self.mapper.GetNumberCols())
+        ) + self.mapper.GetNumberCols() + 2
+        self.mapper.SetMinSize((table_width, table_height))
+        self.mapper.SetMaxSize((table_width, table_height))
         self.mapper.SetCellSize(0, 0, 1, 2)
         self.mapper.SetCellValue(0, 0, 'Assignments')
         self.mapper.SetReadOnly(0, 0)
@@ -1205,15 +1209,15 @@ class WorkflowDialog(wx.Dialog):
         self.view_button = self.button(mapping_box, 'Open full table…', self.view_data)
         row.Add(self.view_button, 0, wx.ALIGN_CENTER_VERTICAL)
         mapping.Add(row, 0, wx.EXPAND | wx.ALL, 8)
-        panel.GetSizer().Add(mapping, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        panel.GetSizer().Add(mapping, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         self.workbook_path.Bind(wx.EVT_TEXT, self.workbook_changed)
         self.sheet.Bind(wx.EVT_CHOICE, self.worksheet_changed)
         self.header.Bind(wx.EVT_SPINCTRL, self.header_changed)
         self.header.Bind(wx.EVT_TEXT, self.header_changed)
         self.ignored.Bind(wx.EVT_TEXT, self.excluded_rows_changed)
-        self.mapper.Bind(grid.EVT_GRID_CELL_CHANGED, self.mapping_changed)
         self.mapper.Bind(grid.EVT_GRID_CELL_LEFT_CLICK, self.assignment_clicked)
+        self.mapper.Bind(wx.EVT_KEY_DOWN, self.assignment_key_down)
         self._style_assignment_row()
         self._update_workbook_display()
 
@@ -1287,24 +1291,65 @@ class WorkflowDialog(wx.Dialog):
             self._schedule_spreadsheet_parse('mapping')
         event.Skip()
 
-    def mapping_changed(self, event):
-        if not self._updating_spreadsheet and event.GetRow() == 0 and event.GetCol() >= 2:
-            if event.GetCol() == 2:
-                self._autofill_consecutive_mapping()
-            self._schedule_spreadsheet_parse('mapping', 0)
-        event.Skip()
-
     def assignment_clicked(self, event):
         if event.GetRow() == 0 and event.GetCol() >= 2:
-            wx.CallAfter(self._enable_assignment_editor, event.GetCol())
+            self._show_assignment_menu(event.GetCol())
+            return
         event.Skip()
 
-    def _enable_assignment_editor(self, column):
-        if self._closing:
+    def assignment_key_down(self, event):
+        row, column = self.mapper.GetGridCursorRow(), self.mapper.GetGridCursorCol()
+        if (event.GetKeyCode() in (
+                wx.WXK_SPACE, wx.WXK_RETURN,
+                getattr(wx, 'WXK_NUMPAD_ENTER', wx.WXK_RETURN),
+            )
+                and row == 0 and column >= 2):
+            self._show_assignment_menu(column)
+            return
+        event.Skip()
+
+    def _show_assignment_menu(self, column):
+        """Open a one-click native menu without leaving a wx.Grid editor active."""
+        if self._closing or column < 2 or column >= len(HEADERS) + 2:
             return
         self.mapper.SetGridCursor(0, column)
         self.mapper.MakeCellVisible(0, column)
-        self.mapper.EnableCellEditControl()
+        current = self.mapper.GetCellValue(0, column).strip()
+        menu = wx.Menu()
+        choices = [''] + list(self._spreadsheet_columns)
+        for choice in choices:
+            item = menu.AppendRadioItem(
+                wx.ID_ANY, choice if choice else 'Clear assignment',
+            )
+            item.Check(choice == current)
+            menu.Bind(
+                wx.EVT_MENU,
+                lambda event, value=choice: self._set_mapping_choice(column, value),
+                item,
+            )
+        rectangle = self.mapper.CellToRect(0, column)
+        x, y = self.mapper.CalcScrolledPosition(
+            rectangle.x, rectangle.y + rectangle.height,
+        )
+        try:
+            self._popup_assignment_menu(
+                self.mapper.GetGridWindow(), menu, wx.Point(x, y),
+            )
+        finally:
+            menu.Destroy()
+
+    @staticmethod
+    def _popup_assignment_menu(window, menu, position):
+        return window.PopupMenu(menu, position)
+
+    def _set_mapping_choice(self, column, value):
+        if self._closing:
+            return
+        self.mapper.SetCellValue(0, column, value)
+        if column == 2:
+            self._autofill_consecutive_mapping()
+        self._style_assignment_row()
+        self._schedule_spreadsheet_parse('mapping', 0)
 
     def _autofill_consecutive_mapping(self):
         """Fill a wholly blank mapping from a user-selected Signal column."""
@@ -1407,18 +1452,27 @@ class WorkflowDialog(wx.Dialog):
 
     def _set_mapping_columns(self, mapped, table=None):
         self._spreadsheet_columns = self._available_columns()
-        choices = [''] + list(self._spreadsheet_columns)
         by_column = {column: label for label, column in self._spreadsheet_columns.items()}
         was_updating = self._updating_spreadsheet
         self._updating_spreadsheet = True
         try:
             for field_offset, header in enumerate(HEADERS):
                 grid_column = field_offset + 2
-                self.mapper.SetCellEditor(0, grid_column, grid.GridCellChoiceEditor(choices, False))
                 source_column = mapped.get(header)
                 self.mapper.SetCellValue(0, grid_column, by_column.get(source_column, ''))
             self._render_mapping_preview(table, mapped)
             self._style_assignment_row()
+            self._fit_grid_contents(self.mapper, (
+                ([self.mapper.GetCellValue(row, 0)
+                  for row in range(1, self.mapper.GetNumberRows())], 42, 42),
+                ([self.mapper.GetCellValue(row, 1)
+                  for row in range(1, self.mapper.GetNumberRows())], 72, 96),
+                *tuple(
+                    ([self.mapper.GetCellValue(row, column)
+                      for row in range(self.mapper.GetNumberRows())], 100, 160)
+                    for column in range(2, self.mapper.GetNumberCols())
+                ),
+            ))
         finally:
             self._updating_spreadsheet = was_updating
 
