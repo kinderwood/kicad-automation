@@ -922,14 +922,24 @@ class WorkflowDialog(wx.Dialog):
         view.SetSelectionForeground(palette.highlight_text)
 
     @staticmethod
-    def _fit_grid_rows(view, row_count, maximum_visible=8):
-        """Fit short tables to their rows and give long tables an inner scroll."""
-        visible = min(row_count, maximum_visible)
+    def _fit_grid_contents(view, columns):
+        """Size a compact grid from its headers, values and bounded column roles."""
+        dc = wx.ClientDC(view)
+        for column, (values, minimum, maximum) in enumerate(columns):
+            dc.SetFont(view.GetLabelFont())
+            measured = dc.GetTextExtent(view.GetColLabelValue(column))[0]
+            dc.SetFont(view.GetDefaultCellFont())
+            measured = max(
+                [measured] + [dc.GetTextExtent(str(value))[0] for value in values],
+            )
+            view.SetColSize(column, max(minimum, min(maximum, measured + 28)))
+        width = sum(view.GetColSize(column) for column in range(view.GetNumberCols()))
+        width += view.GetNumberCols() + 2
         height = view.GetColLabelSize() + sum(
-            view.GetRowSize(row) for row in range(visible)
+            view.GetRowSize(row) for row in range(view.GetNumberRows())
         ) + 2
-        view.SetMinSize((-1, height))
-        view.SetMaxSize((-1, height))
+        view.SetMinSize((width, height))
+        view.SetMaxSize((width, height))
 
     def _style_status(self, control, state):
         palette = ui_palette()
@@ -1549,8 +1559,7 @@ class WorkflowDialog(wx.Dialog):
         box = wx.StaticBox(panel, label='Netclass classifications')
         sizer = wx.StaticBoxSizer(box, wx.VERTICAL)
         instruction = wx.BoxSizer(wx.HORIZONTAL)
-        instruction.Add(wx.StaticText(box, label='Assign an electrical type to every imported netclass.'),
-                        1, wx.ALIGN_CENTER_VERTICAL)
+        instruction.AddStretchSpacer()
         self.netclass_auto_assign = self.button(box, 'Auto assign', self.auto_assign_netclass_types)
         self.netclass_auto_assign.SetToolTip(
             'Fill blank types from exact J# / J### reference conventions and the exact DC netclass; preserve manual selections.'
@@ -1561,7 +1570,7 @@ class WorkflowDialog(wx.Dialog):
         self.netclass_type_grid.CreateGrid(0, 4)
         self.netclass_type_grid.SetRowLabelSize(0)
         for column, (label, width) in enumerate(
-            (('Netclass', 260), ('Nets', 90), ('Connectors', 220), ('Type', 180)),
+            (('Netclass', 140), ('Nets', 70), ('Connectors', 140), ('Type', 90)),
         ):
             self.netclass_type_grid.SetColLabelValue(column, label)
             self.netclass_type_grid.SetColSize(column, width)
@@ -1572,7 +1581,7 @@ class WorkflowDialog(wx.Dialog):
         sizer.Add(self.netclass_type_grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
         self.netclass_type_status = self.status_label(box, '0 of 0 assigned')
         sizer.Add(self.netclass_type_status, 0, wx.ALL, 8)
-        panel.GetSizer().Add(sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        panel.GetSizer().Add(sizer, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
     def refresh_netclass_types(self):
         view = self.netclass_type_grid
@@ -1582,18 +1591,26 @@ class WorkflowDialog(wx.Dialog):
         names = sorted({record.netclass for record in records})
         if names:
             view.AppendRows(len(names))
+        column_values = [[], [], [], ['RF', 'DC']]
         for row, name in enumerate(names):
             matching = [record for record in records if record.netclass == name]
             values = (name, str(len(matching)),
                       ', '.join(sorted({record.connector for record in matching})),
                       self.controller.config['netclass_types'].get(name, ''))
             for column, value in enumerate(values):
+                column_values[column].append(value)
+            for column, value in enumerate(values):
                 view.SetCellValue(row, column, value)
                 if column < 3:
                     view.SetReadOnly(row, column)
             view.SetCellEditor(row, 3, grid.GridCellChoiceEditor(['RF', 'DC'], False))
             self._style_netclass_type_cell(row)
-        self._fit_grid_rows(view, len(names))
+        self._fit_grid_contents(view, (
+            (column_values[0], 110, 240),
+            (column_values[1], 60, 90),
+            (column_values[2], 110, 260),
+            (column_values[3], 80, 110),
+        ))
         assigned = sum(self.controller.config['netclass_types'].get(name) in ('RF', 'DC')
                        for name in names)
         self.netclass_type_status.SetLabel(f'{assigned} of {len(names)} assigned')
@@ -1678,10 +1695,7 @@ class WorkflowDialog(wx.Dialog):
         layer_box = wx.StaticBox(panel, label='Layer mappings')
         layer_sizer = wx.StaticBoxSizer(layer_box, wx.VERTICAL)
         instruction = wx.BoxSizer(wx.HORIZONTAL)
-        instruction.Add(
-            wx.StaticText(layer_box, label='Choose one enabled board layer for each netlist layer.'),
-            1, wx.ALIGN_CENTER_VERTICAL,
-        )
+        instruction.AddStretchSpacer()
         self.layer_auto_assign = self.button(layer_box, 'Auto assign', self.auto_assign_layers)
         self.layer_auto_assign.SetToolTip(
             'Fill blank mappings with unambiguous layer-number matches; preserve manual selections.'
@@ -1694,8 +1708,8 @@ class WorkflowDialog(wx.Dialog):
         self.layer_map.SetRowLabelSize(0)
         self.layer_map.SetColLabelValue(0, 'Netlist layer')
         self.layer_map.SetColLabelValue(1, 'KiCad layer')
-        self.layer_map.SetColSize(0, 280)
-        self.layer_map.SetColSize(1, 320)
+        self.layer_map.SetColSize(0, 140)
+        self.layer_map.SetColSize(1, 140)
         self.layer_map.SetMinSize((-1, self.layer_map.GetColLabelSize() + 2))
         self.layer_map.SetMaxSize((-1, self.layer_map.GetColLabelSize() + 2))
         layer_sizer.Add(self.layer_map, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
@@ -1704,7 +1718,7 @@ class WorkflowDialog(wx.Dialog):
         status_row.Add(self.layer_mapping_status, 0, wx.ALIGN_CENTER_VERTICAL)
         status_row.AddStretchSpacer()
         layer_sizer.Add(status_row, 0, wx.EXPAND | wx.ALL, 8)
-        panel.GetSizer().Add(layer_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        panel.GetSizer().Add(layer_sizer, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         self.layer_map.Bind(grid.EVT_GRID_CELL_CHANGED, self.layer_assignment_changed)
         self.layer_map.Bind(grid.EVT_GRID_CELL_LEFT_CLICK, self.layer_assignment_clicked)
 
@@ -1735,7 +1749,10 @@ class WorkflowDialog(wx.Dialog):
                     row, 1, grid.GridCellChoiceEditor(list(self.controller.copper_layers), False),
                 )
                 self._style_layer_assignment_cell(row)
-            self._fit_grid_rows(self.layer_map, len(names))
+            self._fit_grid_contents(self.layer_map, (
+                (names, 120, 220),
+                (self.controller.copper_layers, 110, 220),
+            ))
             assigned = sum(bool(self.controller.config['layer_mapping'].get(name)) for name in names)
             self.layer_mapping_status.SetLabel(f'{assigned} of {len(names)} assigned')
             self._style_status(

@@ -37,8 +37,9 @@ missing/assigned cell states used by the Netlist source assignment row.
 Its explicit Auto assign action fills blank rows only. It extracts one numeric
 run from each name, accounts for KiCad's default `InN.Cu` offset, matches custom
 names directly, preserves manual selections and leaves ambiguity visible. Layer
-assignment and Netclass type fit short tables to their contents and cap long
-tables at eight visible rows with native inner scrolling.
+assignment and Netclass type size their columns from the headers, displayed
+values and complete choice sets, with bounds for unusually long project names.
+Their tables retain all rows and do not expand horizontally across the page.
 
 Netclass type uses the same native assignment table, amber/blue cell states,
 persistent choice affordance, status placement and explicit Auto assign pattern.

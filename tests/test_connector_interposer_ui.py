@@ -749,7 +749,7 @@ class NativeDialogTests(unittest.TestCase):
                 dialog.Destroy()
                 self.app.Yield()
 
-    def test_netclass_and_layer_tables_cap_their_visible_rows(self):
+    def test_netclass_and_layer_tables_fit_their_columns_and_all_rows(self):
         from plugins.connector_interposer_workflow.ui import WorkflowDialog
         from plugins.connector_interposer_workflow.core.model import HEADERS
         from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
@@ -765,16 +765,29 @@ class NativeDialogTests(unittest.TestCase):
             dialog.controller.table = parse_sheet(Worksheet('Signals', tuple(rows)))
             dialog.controller.set_layers(tuple(f'In{index}.Cu' for index in range(1, 13)))
             dialog.refresh_layers()
+            dialog.Show()
+            self.app.Yield()
             self.assertEqual(dialog.netclass_type_grid.GetNumberRows(), 12)
             self.assertEqual(dialog.layer_map.GetNumberRows(), 12)
             for view in (dialog.netclass_type_grid, dialog.layer_map):
-                capped_height = (
+                content_height = (
                     view.GetColLabelSize()
-                    + sum(view.GetRowSize(row) for row in range(8)) + 2
+                    + sum(view.GetRowSize(row) for row in range(12)) + 2
                 )
-                self.assertEqual(view.GetSize().height, capped_height)
-                self.assertLess(view.GetSize().height,
-                                view.GetColLabelSize() + 12 * view.GetDefaultRowSize())
+                self.assertEqual(view.GetSize().height, content_height)
+                self.assertLess(view.GetSize().width,
+                                dialog.book.GetClientSize().width * .75)
+            self.assertLessEqual(dialog.layer_map.GetColSize(0), 220)
+            self.assertLessEqual(dialog.layer_map.GetColSize(1), 220)
+            self.assertLessEqual(dialog.netclass_type_grid.GetColSize(0), 240)
+            self.assertLessEqual(dialog.netclass_type_grid.GetColSize(2), 260)
+            for view, button in (
+                (dialog.netclass_type_grid, dialog.netclass_auto_assign),
+                (dialog.layer_map, dialog.layer_auto_assign),
+            ):
+                table_right = view.GetPosition().x + view.GetSize().width
+                button_right = button.GetPosition().x + button.GetSize().width
+                self.assertLessEqual(abs(table_right - button_right), 8)
         finally:
             dialog.Destroy()
             self.app.Yield()
