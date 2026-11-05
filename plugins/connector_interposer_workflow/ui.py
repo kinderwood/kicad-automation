@@ -561,6 +561,20 @@ class WorkflowDialog(wx.Dialog):
             'Save the current workflow settings and accepted source snapshot without applying board changes.'
         )
         footer.Add(self.save_button, 0, wx.RIGHT, 8)
+        self.delete_settings_button = self.button(
+            self, 'Delete workflow settings', self.delete_workflow_settings,
+        )
+        self.delete_settings_button.SetToolTip(
+            'Delete the saved project settings sidecar. Current settings remain open until this dialog closes.'
+        )
+        footer.Add(self.delete_settings_button, 0, wx.RIGHT, 8)
+        self.reset_settings_button = self.button(
+            self, 'Reset workflow settings', self.reset_workflow_settings,
+        )
+        self.reset_settings_button.SetToolTip(
+            'Clear the current workflow to its initial state. The saved settings sidecar is unchanged.'
+        )
+        footer.Add(self.reset_settings_button, 0, wx.RIGHT, 8)
         footer.AddStretchSpacer()
         footer.Add(self.button(self, 'Previous', lambda e: self.navigate(-1)), 0, wx.RIGHT, 8)
         footer.Add(self.button(self, 'Next', lambda e: self.navigate(1)), 0, wx.RIGHT, 8)
@@ -920,6 +934,7 @@ class WorkflowDialog(wx.Dialog):
     def _set_worksheet_choices(self, names, selected=''):
         """Populate the native choice with an explicit blank selection."""
         names = list(names)
+        was_updating = self._updating_spreadsheet
         self._updating_spreadsheet = True
         try:
             self.sheet.Set([''] + names)
@@ -928,7 +943,7 @@ class WorkflowDialog(wx.Dialog):
             else:
                 self.sheet.SetSelection(0)
         finally:
-            self._updating_spreadsheet = False
+            self._updating_spreadsheet = was_updating
 
     def _source_error(self, error, path, worksheet):
         message = str(error)
@@ -980,6 +995,7 @@ class WorkflowDialog(wx.Dialog):
         self._spreadsheet_columns = self._available_columns()
         choices = [''] + list(self._spreadsheet_columns)
         by_column = {column: label for label, column in self._spreadsheet_columns.items()}
+        was_updating = self._updating_spreadsheet
         self._updating_spreadsheet = True
         try:
             for field_offset, header in enumerate(HEADERS):
@@ -990,7 +1006,7 @@ class WorkflowDialog(wx.Dialog):
             self._render_mapping_preview(table, mapped)
             self._style_assignment_row()
         finally:
-            self._updating_spreadsheet = False
+            self._updating_spreadsheet = was_updating
 
     def _style_assignment_row(self):
         values = [self.mapper.GetCellValue(0, column).strip()
@@ -2311,7 +2327,8 @@ class WorkflowDialog(wx.Dialog):
         panel.GetSizer().Add(self.abort_button, 0, wx.ALL, 8)
 
     def compare(self, event):
-        self.save(None)
+        if not self.save(None):
+            return
         self.confirm_review.SetValue(False)
         issues = self.controller.validate()
         self.render_validation(issues)
@@ -2396,8 +2413,127 @@ class WorkflowDialog(wx.Dialog):
         self.status.SetLabel('Analysis cancelled; pending results will be discarded.')
 
     def save(self, event):
+        if self.controller.config_path and self.controller.config_path.exists():
+            if not self._confirm(
+                'Saved workflow settings already exist for this project.\n\n'
+                'Are you sure you want to overwrite them with the current settings?',
+                'Overwrite workflow settings?',
+            ):
+                self.status.SetLabel('Save cancelled. Existing workflow settings were not changed.')
+                return False
         self.controller.save()
         self.status.SetLabel('Workflow settings saved. Board files were not changed.')
+        return True
+
+    def _confirm(self, message, title):
+        return wx.MessageBox(
+            message, title, wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING, self,
+        ) == wx.YES
+
+    def delete_workflow_settings(self, event):
+        if not self._confirm(
+            'This deletes the saved workflow settings for this project. The current settings '
+            'will remain in this open dialog until it closes.\n\n'
+            'Are you sure you want to delete the saved settings?',
+            'Delete workflow settings?',
+        ):
+            self.status.SetLabel('Delete cancelled. Saved workflow settings were not changed.')
+            return False
+        if self.controller.delete_saved_settings():
+            self.status.SetLabel(
+                'Saved workflow settings deleted. Current settings remain open and unsaved.'
+            )
+        else:
+            self.status.SetLabel('No saved workflow settings file exists for this project.')
+        return True
+
+    def reset_workflow_settings(self, event):
+        if not self._confirm(
+            'This clears all current workflow entries and returns the dialog to its initial state. '
+            'The saved workflow settings file is not changed unless you save afterward.\n\n'
+            'Are you sure you want to reset the current settings?',
+            'Reset workflow settings?',
+        ):
+            self.status.SetLabel('Reset cancelled. Current workflow settings were not changed.')
+            return False
+        self.controller.reset_current()
+        self._reset_view()
+        self.status.SetLabel(
+            'Current workflow settings reset. Board files and saved workflow settings were not changed.'
+        )
+        return True
+
+    def _reset_view(self):
+        """Make every control reflect a fresh workflow while retaining board context."""
+        self._cancel_spreadsheet_timer()
+        self._loaded_workbook_path = ''
+        self._spreadsheet_columns = {}
+        self._assignment_signature = None
+        self.current_gang = None
+        self._review_details = []
+        self._circle_draft = None
+        self._dc_circle_draft = None
+
+        self._updating_spreadsheet = True
+        try:
+            self.workbook_path.ChangeValue('')
+            self._update_workbook_display()
+            self._set_worksheet_choices([], '')
+            self.header.SetValue(1)
+            self.ignored.ChangeValue('')
+            self._set_mapping_columns({})
+            self._set_spreadsheet_feedback('')
+        finally:
+            self._updating_spreadsheet = False
+
+        self.assignment_filter.ChangeValue('')
+        self.gang_filter.ChangeValue('')
+        defaults = {
+            'row_lengths': '4', 'pitch_x': '2.54', 'pitch_y': '2.54',
+            'row_offsets': '', 'numbering': '', 'rotation': '0', 'rf_artifact': '',
+            'rf_clock': '0', 'rf_overrides': '',
+        }
+        self._loading_gang = True
+        try:
+            for name, value in defaults.items():
+                self.gang_fields[name].ChangeValue(value)
+            self.gang_units.SetSelection(0)
+            self.gang_side.SetSelection(0)
+            self.mirror.SetValue(False)
+        finally:
+            self._loading_gang = False
+        self.pattern_view.show('', {})
+
+        for control, value in (
+            (self.interposer_x, '0'), (self.interposer_y, '0'),
+            (self.interposer_rotation, '0'), (self.user_layer, 'Dwgs.User'),
+            (self.label_offset_x, '0'), (self.label_offset_y, '0'),
+            (self.anchor_x, '0'), (self.anchor_y, '0'),
+            (self.dc_anchor_rotation, '0'), (self.hole_ref, 'H1'),
+            (self.output_dir, ''), (self.journal, ''),
+        ):
+            control.ChangeValue(value)
+        self.dc_anchor_side.SetSelection(0)
+        self.hole_path.set_selection({})
+        self.anchor_status.SetLabel('No anchor captured.')
+        self.dc_anchor_status.SetLabel('DC pin 1 placement required')
+        self.mechanical_list.DeleteAllItems()
+
+        self.outline_enable.SetValue(False)
+        self.outline_status.SetLabel('Managed outline disabled. No Edge.Cuts changes requested.')
+        self.outline_view.show({})
+        self.outline_preview.ChangeValue('')
+        self.validation.DeleteAllItems()
+        self.diff_list.DeleteAllItems()
+        self.review_view.ChangeValue('')
+        self.confirm_review.SetValue(False)
+        self.results.ChangeValue('')
+
+        self.refresh_layers()
+        self.refresh_gangs()
+        self.refresh_connector_assignments(True)
+        self.select_page(0)
+        self.refresh()
 
     def restore(self):
         cfg = self.controller.config
@@ -2470,6 +2606,12 @@ class WorkflowDialog(wx.Dialog):
         self.review_button.Enable(not self.controller.busy)
         self.apply_button.Enable(not self.controller.busy and self.controller.preview is not None and not self.controller.preview.get('conflicts') and self.confirm_review.GetValue())
         self.abort_button.Enable(self.controller.busy and not self._applying)
+        self.save_button.Enable(not self.controller.busy and not self._applying)
+        self.delete_settings_button.Enable(
+            not self.controller.busy and not self._applying
+            and bool(self.controller.config_path and self.controller.config_path.exists())
+        )
+        self.reset_settings_button.Enable(not self.controller.busy and not self._applying)
         self.book.Enable(not self._applying)
         self.step_list.Enable(not self._applying)
 

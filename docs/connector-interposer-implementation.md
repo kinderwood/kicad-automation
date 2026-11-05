@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.0 and the
+are authorized. Connector to Interposer Workflow is version 0.4.1 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -215,6 +215,12 @@ front/back pad-1 placement, netless NC pad round trips, complete mixed RF/DC
 apply, and generated-schematic ERC. Full DC pad geometry currently uses a
 one-nanometre internal circle-center tolerance; an adjustable tolerance remains
 future work.
+
+Version 0.4.1 adds explicit saved-settings lifecycle controls. Save asks before
+replacing an existing project sidecar. Delete asks before removing that sidecar
+and leaves the current dialog state open. Reset asks before clearing the current
+dialog and preserves the stable project identity, detected board stackup and
+saved sidecar. None of these controls changes PCB or schematic files.
 
 Additional actual PCB Editor checks use the selected 9.0.9.1 AppImage and
 10.0.8: normal startup discovers both actions and Workflow opens from the

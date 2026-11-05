@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.0**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.1**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -22,7 +22,11 @@ native wx dialog. Python core modules also run without KiCad or wx dependencies.
 
 The dialog keeps edits in a current in-memory workflow. **Save workflow settings**
 writes those settings, accepted inputs and source snapshot to the project
-sidecar; it does not update the PCB or schematic. Layer assignments take effect
+sidecar and asks before replacing an existing sidecar. **Delete workflow settings**
+removes that saved sidecar while leaving the current dialog entries open.
+**Reset workflow settings** returns the current dialog to its initial state while
+preserving the project identity, detected stackup and any saved sidecar. None of
+these settings actions updates the PCB or schematic. Layer assignments take effect
 in the current workflow as soon as they are selected. **Apply** is the separate,
 review-gated operation that creates the output project copy.
 

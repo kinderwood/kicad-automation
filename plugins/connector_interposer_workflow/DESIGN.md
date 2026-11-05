@@ -17,7 +17,11 @@ flow.
 Layer assignment and Routing permissions update the current workflow directly
 from their native grid editors. They do not add page-level acceptance buttons;
 the global status area reports the change, and **Save workflow settings**
-persists it separately from the reviewed project-copy Apply operation.
+persists it separately from the reviewed project-copy Apply operation. Saving
+asks before overwriting an existing sidecar. **Delete workflow settings** removes
+only that sidecar and keeps the current dialog entries open. **Reset workflow
+settings** clears the current entries while preserving the stable project UUID,
+active copper stackup and saved sidecar.
 Layer assignment applies the same persistent dropdown chevron and amber/blue
 missing/assigned cell states used by the Netlist Source assignment row.
 Its explicit Auto assign action fills blank rows only. It extracts one numeric

@@ -63,6 +63,30 @@ class WorkflowController:
         self.preview = self.preview_token = None
         self.issues = ()
 
+    def reset_current(self):
+        """Return the current workflow to defaults without changing project identity or disk."""
+        if self.busy:
+            raise RuntimeError('Cancel or wait for the current operation before resetting Workflow settings')
+        from .core.config import ProjectConfig
+        project_id = self.config['project_id']
+        self.config = ProjectConfig(project_id=project_id).to_dict()
+        self.config['outline'] = {"enabled": False}
+        self.workbook = None
+        self.workbook_sha256 = None
+        self.table = None
+        self.new_rules = ()
+        self.cancelled.clear()
+        self.changed()
+
+    def delete_saved_settings(self):
+        """Delete only the persisted project sidecar; keep the current workflow in memory."""
+        if self.config_path is None:
+            raise ValueError('Save the PCB to a project before deleting Workflow settings')
+        if not self.config_path.exists():
+            return False
+        self.config_path.unlink()
+        return True
+
     def save(self):
         if self.config_path is None:
             raise ValueError('Save the PCB to a project before saving Workflow settings')

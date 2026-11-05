@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from plugins.connector_interposer_workflow.controller import WorkflowController, row_ranges, PAGES
@@ -46,6 +47,31 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.controller.view_data_enabled)
         self.controller.parse('signals', 2, '99')
         self.assertFalse(self.controller.view_data_enabled)
+
+    def test_reset_and_delete_settings_keep_their_scopes_separate(self):
+        self.controller.set_layers(('F.Cu', 'In1.Cu', 'B.Cu'))
+        self.controller.set_layer_mapping('L1', 'In1.Cu')
+        self.controller.save()
+        project_id = self.controller.config['project_id']
+        settings_path = self.controller.config_path
+        snapshot_directory = self.root / '.connector-interposer-inputs'
+        self.assertTrue(settings_path.is_file())
+        self.assertTrue(snapshot_directory.is_dir())
+
+        self.controller.reset_current()
+        self.assertEqual(self.controller.config['project_id'], project_id)
+        self.assertEqual(self.controller.copper_layers, ('F.Cu', 'In1.Cu', 'B.Cu'))
+        self.assertEqual(self.controller.config['workbook'], {})
+        self.assertEqual(self.controller.config['layer_mapping'], {})
+        self.assertEqual(self.controller.config['outline'], {'enabled': False})
+        self.assertIsNone(self.controller.workbook)
+        self.assertIsNone(self.controller.table)
+        self.assertTrue(settings_path.is_file(), 'Reset must not delete saved settings')
+
+        self.assertTrue(self.controller.delete_saved_settings())
+        self.assertFalse(settings_path.exists())
+        self.assertTrue(snapshot_directory.is_dir(), 'Delete targets the settings sidecar only')
+        self.assertFalse(self.controller.delete_saved_settings())
 
     def test_layer_policy_survives_stackup_and_class_growth(self):
         self.controller.set_rule('RF', 'F.Cu', False)
@@ -150,6 +176,8 @@ class NativeDialogTests(unittest.TestCase):
         self.assertGreater(dialog.step_list.GetSize().width, step_extent)
         self.assertLess(dialog.step_list.GetSize().height, dialog.GetClientSize().height // 2)
         self.assertIsNotNone(self.wx.FindWindowByLabel('Save workflow settings', dialog))
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Delete workflow settings', dialog))
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Reset workflow settings', dialog))
         self.assertIn('without applying board changes', dialog.save_button.GetToolTipText())
         self.assertEqual(dialog.layer_map.GetRowLabelSize(), 0)
         self.assertEqual(dialog.layer_map.GetColLabelValue(0), 'Netlist layer')
@@ -262,6 +290,43 @@ class NativeDialogTests(unittest.TestCase):
         self.assertFalse(native_grid.IsEditable())
         popup.Destroy()
         dialog.Destroy()
+
+    def test_settings_actions_require_confirmation_and_keep_distinct_scopes(self):
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            board = root / 'source.kicad_pcb'
+            board.write_text('(kicad_pcb)')
+            workbook = root / 'signals.csv'
+            workbook.write_text(
+                'Signal,NetClass,Interposer,Interposer Pin,Connector,Connector Pin,Layer\n'
+                'CLOCK,RF,U1,A1,J101,1,L1\n'
+            )
+            controller = WorkflowController(board)
+            controller.load_workbook(workbook)
+            controller.save()
+            dialog = WorkflowDialog(controller=controller)
+            saved = controller.config_path.read_text()
+
+            controller.config['output_dir'] = 'changed'
+            with mock.patch.object(dialog, '_confirm', return_value=False):
+                self.assertFalse(dialog.save(None))
+                self.assertFalse(dialog.reset_workflow_settings(None))
+                self.assertFalse(dialog.delete_workflow_settings(None))
+            self.assertEqual(controller.config_path.read_text(), saved)
+            self.assertIsNotNone(controller.table)
+
+            with mock.patch.object(dialog, '_confirm', return_value=True):
+                self.assertTrue(dialog.reset_workflow_settings(None))
+            self.assertEqual(dialog.workbook_path.GetValue(), '')
+            self.assertEqual(dialog.header.GetValue(), 1)
+            self.assertIsNone(controller.table)
+            self.assertTrue(controller.config_path.is_file())
+
+            with mock.patch.object(dialog, '_confirm', return_value=True):
+                self.assertTrue(dialog.delete_workflow_settings(None))
+            self.assertFalse(controller.config_path.exists())
+            dialog.Destroy()
         self.app.Yield()
 
     def test_spreadsheet_auto_mapping_uses_populated_columns_and_live_examples(self):
