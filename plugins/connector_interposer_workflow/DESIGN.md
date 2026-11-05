@@ -36,7 +36,9 @@ Layer assignment applies the same persistent dropdown chevron and amber/blue
 missing/assigned cell states used by the Netlist source assignment row.
 Its explicit Auto assign action fills blank rows only. It extracts one numeric
 run from each name, accounts for KiCad's default `InN.Cu` offset, matches custom
-names directly, preserves manual selections and leaves ambiguity visible.
+names directly, preserves manual selections and leaves ambiguity visible. Layer
+assignment and Netclass type fit short tables to their contents and cap long
+tables at eight visible rows with native inner scrolling.
 
 Netclass type uses the same native assignment table, amber/blue cell states,
 persistent choice affordance, status placement and explicit Auto assign pattern.
@@ -49,7 +51,10 @@ library symbol and footprint. The workbook supplies the interposer and connector
 references. Separate RF gang and DC connector sections use the same assignment
 cells. Symbol cells launch the native loaded-library browser;
 footprint cells offer only parts allowed by the symbol filters and exact pin/pad
-compatibility. Gang geometry, placement and BOM overrides do not belong on this
+compatibility. Each connector section starts with a separated **All** action row.
+Its choices apply to the complete RF or DC connector set, regardless of the
+current filter. An individual edit clears the action row while retaining the
+resulting per-connector assignments. Gang geometry, placement and BOM overrides do not belong on this
 page. DC selections are single-unit multi-pin librarian parts; the workflow does
 not author them. Interposer and DC pin-1 placement are accepted on Connector placement,
 and library MPN metadata

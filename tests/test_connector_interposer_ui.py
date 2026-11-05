@@ -663,6 +663,122 @@ class NativeDialogTests(unittest.TestCase):
                 dialog.Destroy()
                 self.app.Yield()
 
+    def test_all_connector_assignment_rows_apply_and_individual_edits_clear_them(self):
+        from types import SimpleNamespace
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog, ui_palette
+        from plugins.connector_interposer_workflow.core.model import HEADERS
+        from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            footprint = root / 'Connector.kicad_mod'
+            footprint.write_text(
+                '(footprint "Connector" (layer "F.Cu") '
+                '(pad "1" thru_hole circle (at 0 0) (size 1 1) (drill .5) '
+                '(layers "*.Cu" "*.Mask")))'
+            )
+            symbol_path = root / 'Connector.kicad_sym'
+            symbol_path.write_text('(kicad_symbol_lib (version 20241209) (generator test))')
+            table = parse_sheet(Worksheet('Signals', (
+                HEADERS,
+                ('RF1', 'RF', 'E1', 'A1', 'J101', '1', 'L1'),
+                ('RF2', 'RF', 'E1', 'A2', 'J102', '1', 'L1'),
+                ('DC1', 'DC', 'E1', 'A3', 'J1', '1', 'L1'),
+                ('DC2', 'DC', 'E1', 'A4', 'J2', '1', 'L1'),
+            )))
+            dialog = WorkflowDialog()
+            try:
+                dialog.controller.table = table
+                dialog.controller.set_netclass_type('RF', 'RF')
+                dialog.controller.set_netclass_type('DC', 'DC')
+                option = {
+                    'path': str(footprint), 'library_id': 'Example:Connector',
+                    'sha256': '',
+                }
+                symbol_spec = {
+                    'path': str(symbol_path), 'library_id': 'Example:Connector',
+                    'sha256': '',
+                }
+                symbol = SimpleNamespace(
+                    library_id='Example:Connector', value='Connector', mpn='',
+                    unit_count=1, footprint_filters=('Connector',),
+                )
+                dialog._allowed_footprint_specs = lambda _symbol: (option,)
+                dialog.assignment_filter.ChangeValue('J101')
+                dialog.refresh_connector_assignments(True)
+                self.assertEqual(set(dialog.gang_assignment_controls), {'J101'})
+                self.assertEqual(dialog.dc_assignment_controls, {})
+
+                dialog.assign_all_gang_symbols(symbol_spec, symbol)
+                dialog.assign_all_gang_footprints(option)
+                for name in ('J101', 'J102'):
+                    self.assertEqual(
+                        dialog.controller.gang(name)['symbol']['library_id'],
+                        'Example:Connector',
+                    )
+                    self.assertEqual(
+                        dialog.controller.gang(name)['library_id'], 'Example:Connector',
+                    )
+                self.assertEqual(
+                    dialog.gang_assignment_all_controls['symbol'].selection['library_id'],
+                    'Example:Connector',
+                )
+                dialog.assign_gang_symbol('J101', symbol_spec, symbol)
+                self.assertEqual(dialog.gang_assignment_all_controls['symbol'].selection, {})
+                self.assertFalse(dialog.gang_assignment_all_controls['footprint'].IsEnabled())
+                self.assertEqual(
+                    dialog.gang_assignment_all_controls['symbol'].GetBackgroundColour().Get()[:3],
+                    ui_palette().warning.Get()[:3],
+                )
+
+                dialog.assign_all_dc_symbols(symbol_spec, symbol)
+                dialog.assign_all_dc_footprints(option)
+                for name in ('J1', 'J2'):
+                    self.assertEqual(
+                        dialog.controller.dc_connector(name)['symbol']['library_id'],
+                        'Example:Connector',
+                    )
+                    self.assertEqual(
+                        dialog.controller.dc_connector(name)['library_id'],
+                        'Example:Connector',
+                    )
+                dialog.assign_dc_footprint('J1', option)
+                self.assertEqual(dialog.dc_assignment_all_controls['symbol'].selection, {})
+                self.assertFalse(dialog.dc_assignment_all_controls['footprint'].IsEnabled())
+            finally:
+                dialog.Destroy()
+                self.app.Yield()
+
+    def test_netclass_and_layer_tables_cap_their_visible_rows(self):
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+        from plugins.connector_interposer_workflow.core.model import HEADERS
+        from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
+
+        rows = [HEADERS]
+        rows.extend(
+            (f'S{index}', f'CLASS{index}', 'E1', f'A{index}', f'J{100 + index}',
+             '1', f'L{index}')
+            for index in range(1, 13)
+        )
+        dialog = WorkflowDialog()
+        try:
+            dialog.controller.table = parse_sheet(Worksheet('Signals', tuple(rows)))
+            dialog.controller.set_layers(tuple(f'In{index}.Cu' for index in range(1, 13)))
+            dialog.refresh_layers()
+            self.assertEqual(dialog.netclass_type_grid.GetNumberRows(), 12)
+            self.assertEqual(dialog.layer_map.GetNumberRows(), 12)
+            for view in (dialog.netclass_type_grid, dialog.layer_map):
+                capped_height = (
+                    view.GetColLabelSize()
+                    + sum(view.GetRowSize(row) for row in range(8)) + 2
+                )
+                self.assertEqual(view.GetSize().height, capped_height)
+                self.assertLess(view.GetSize().height,
+                                view.GetColLabelSize() + 12 * view.GetDefaultRowSize())
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
     def test_live_gang_definitions_units_and_requirement_transition_assignment(self):
         from plugins.connector_interposer_workflow.core.model import HEADERS
         from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
@@ -698,6 +814,17 @@ class NativeDialogTests(unittest.TestCase):
                 'library_id': 'Approved:GPPO', 'part_sha256': part.sha256,
             })
             dialog.refresh_gangs()
+            dialog.select_page(5)
+            dialog.Show()
+            self.app.Yield()
+            dialog.gang_notebook.SetSelection(1)
+            self.app.Yield()
+            self.assertEqual(dialog.book.GetSelection(), 5)
+            self.assertEqual(dialog.step_list.GetSelection(), 5)
+            dialog.gang_notebook.SetSelection(0)
+            self.app.Yield()
+            self.assertEqual(dialog.book.GetSelection(), 5)
+            self.assertEqual(dialog.step_list.GetSelection(), 5)
             self.assertEqual(dialog.current_gang, 'J101')
             self.assertEqual(dialog.gang_list.GetItemText(0, 2), 'Not defined')
             self.assertIsNone(self.wx.FindWindowByLabel('Apply definition', dialog.pages[5]))

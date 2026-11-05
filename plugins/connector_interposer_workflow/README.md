@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.8**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.9**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -97,7 +97,10 @@ an already-open source board does not update the output copy.
    Each symbol must contain footprint filters; its
    footprint cell lists only filtered library parts whose electrical pad
    numbers exactly match the symbol pins. Selections update the workflow
-   immediately. The workflow instantiates these librarian-authored parts; it
+   immediately. The visually separated **All** row in either connector table
+   applies its symbol or footprint choice to every connector of that type,
+   including filtered rows. Editing an individual row clears the **All** action
+   controls without reverting assignments already made. The workflow instantiates these librarian-authored parts; it
    does not generate library symbols or footprints. Placement and BOM overrides
    are not entered on this page.
 6. **Define RF gangs:** select an RF gang from the searchable netlist-derived list.

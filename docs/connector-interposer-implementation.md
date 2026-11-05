@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.8 and the
+are authorized. Connector to Interposer Workflow is version 0.4.9 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -125,7 +125,7 @@ The 0.3.6 Workflow replaces the overflowing Listbook navigation with a compact
 native step list whose width follows the rendered labels and whose height ends
 after the final step. A tool heading, purpose line, bordered current-step area
 and explicit status region clarify the dialog hierarchy and the scope of the
-workflow-settings save action. **Layer assignment** uses a content-sized mapping table
+workflow-settings save action. **Layer assignment** uses a content-sized, eight-row-capped mapping table
 with no row-number gutter, labels its columns **Netlist layer** and **KiCad
 layer**, and updates the current workflow as soon as a layer is selected. It no
 longer requires a separate Apply button; board files remain unchanged until the
@@ -234,7 +234,7 @@ system-color change. Native GUI regression checks execute the same dialog tests
 under Adwaita light and dark themes. The complete light/dark dialog set passes
 in the selected KiCad 9.0.9.1 and 10.0.8 AppImage runtimes.
 
-Version 0.4.8 uses **Define RF gangs** and a
+Version 0.4.9 uses **Define RF gangs** and a
 separate **RF transitions** step. Gang geometry uses live validated updates,
 editable pattern rows, per-field linear units, a PCB-style preview and local definition status,
 numbering presets and independent pattern and connector rotations. Transition
