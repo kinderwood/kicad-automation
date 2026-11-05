@@ -154,36 +154,42 @@ class DataDialog(wx.Dialog):
 
 class PatternPreview(wx.Panel):
     def __init__(self, parent):
-        super().__init__(parent, size=(280, 260))
-        self.name, self.points, self.error = '', {}, ''
+        super().__init__(parent, size=(320, 300))
+        self.name, self.points = '', {}
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.Bind(wx.EVT_PAINT, self.paint)
-    def show(self, name, points=None, error=''):
-        self.name, self.points, self.error = name, points or {}, error
+    def show(self, name, points=None):
+        self.name = name
+        if points is not None:
+            self.points = points
         self.Refresh()
     def paint(self, event):
-        palette = ui_palette()
         dc = wx.AutoBufferedPaintDC(self)
-        dc.SetBackground(wx.Brush(palette.window))
+        background = wx.Colour(18, 18, 20)
+        foreground = wx.Colour(238, 238, 238)
+        geometry = wx.Colour(30, 205, 255)
+        anchor = wx.Colour(255, 215, 55)
+        dc.SetBackground(wx.Brush(background))
         dc.Clear()
-        dc.SetTextForeground(palette.text)
+        dc.SetTextForeground(foreground)
         dc.DrawText(self.name + ' — location preview', 10, 10)
-        if self.error:
-            dc.DrawText(self.error, 10, 40)
-            return
         if not self.points:
             return
         width, height = self.GetClientSize()
         xs, ys = zip(*self.points.values())
         spanx, spany = max(max(xs)-min(xs), 1), max(max(ys)-min(ys), 1)
-        scale = max(.01, min((width-90)/spanx, (height-110)/spany))
+        scale = max(.01, min(max(20, width-100)/spanx, max(20, height-110)/spany))
         for pin, (x, y) in self.points.items():
             px = int((x-min(xs))*scale+45)
             py = int((y-min(ys))*scale+60)
-            dc.SetPen(wx.Pen(palette.accent, 2))
+            colour = anchor if str(pin) == '1' else geometry
+            dc.SetPen(wx.Pen(colour, 2))
             dc.SetBrush(wx.TRANSPARENT_BRUSH)
             dc.DrawCircle(px, py, 12)
-            dc.DrawText(str(pin), px-4, py-8)
+            dc.SetTextForeground(colour)
+            label = str(pin)
+            label_width, label_height = dc.GetTextExtent(label)
+            dc.DrawText(label, px-label_width//2, py-label_height//2)
             if str(pin) == '1':
                 dc.DrawLine(px-18, py, px+18, py)
                 dc.DrawLine(px, py-18, px, py+18)
@@ -606,8 +612,7 @@ class WorkflowDialog(wx.Dialog):
         status_sizer.Add(status_heading, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
         self.status = wx.StaticText(
             status_panel,
-            label=('Ready. Start with Netlist Source. Save workflow settings persists the current '
-                   'setup without changing board files.'),
+            label='Ready',
         )
         self.status.Wrap(860)
         status_sizer.Add(self.status, 1, wx.ALIGN_CENTER_VERTICAL)
@@ -640,13 +645,15 @@ class WorkflowDialog(wx.Dialog):
         footer.Add(self.button(self, 'Close', self.close), 0)
         outer.Add(footer, 0, wx.EXPAND | wx.ALL, 10)
         self.SetSizer(outer)
-        self.SetMinSize((960, 680))
         display_index = wx.Display.GetFromPoint(wx.GetMousePosition())
         if display_index == wx.NOT_FOUND:
             display_index = 0
         display_area = wx.Display(display_index).GetClientArea()
-        self.SetSize((min(1320, max(960, int(display_area.width * .94))),
-                      min(840, max(680, int(display_area.height * .90)))))
+        minimum_width = min(960, max(720, int(display_area.width * .82)))
+        minimum_height = min(680, max(560, int(display_area.height * .74)))
+        self.SetMinSize((minimum_width, minimum_height))
+        self.SetSize((min(1600, max(minimum_width, int(display_area.width * .94))),
+                      min(920, max(minimum_height, int(display_area.height * .90)))))
         self.Bind(wx.EVT_CLOSE, self.close)
         self.Bind(wx.EVT_SYS_COLOUR_CHANGED, self.system_colours_changed)
         self.apply_theme()
@@ -1997,12 +2004,6 @@ class WorkflowDialog(wx.Dialog):
             selector_box, 'Copy settings…', self.copy_gang,
         )
         selector.Add(self.copy_gang_button, 0, wx.ALL, 8)
-        help_text = wx.StaticText(
-            selector_box,
-            label='Gangs come from the netlist. Pattern rows can be added or removed; gangs cannot.',
-        )
-        help_text.Wrap(220)
-        selector.Add(help_text, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         body.Add(selector, 0, wx.EXPAND | wx.RIGHT, 8)
 
         editor_box = wx.StaticBox(panel, label='Select an RF gang')
@@ -2014,13 +2015,16 @@ class WorkflowDialog(wx.Dialog):
         pattern_sizer = wx.BoxSizer(wx.VERTICAL)
         pattern_page.SetSizer(pattern_sizer)
         self.gang_rows = grid.Grid(pattern_page)
-        self.gang_rows.CreateGrid(1, 2)
-        self.gang_rows.SetRowLabelSize(45)
-        self.gang_rows.SetColLabelValue(0, 'Positions')
-        self.gang_rows.SetColLabelValue(1, 'X offset')
-        self.gang_rows.SetColSize(0, 120)
-        self.gang_rows.SetColSize(1, 150)
-        self.gang_rows.SetMinSize((330, 150))
+        self.gang_rows.CreateGrid(1, 3)
+        self.gang_rows.SetRowLabelSize(0)
+        self.gang_rows.SetColLabelValue(0, 'Row')
+        self.gang_rows.SetColLabelValue(1, 'Positions')
+        self.gang_rows.SetColLabelValue(2, 'X offset')
+        self.gang_rows.SetColSize(0, 65)
+        self.gang_rows.SetColSize(1, 120)
+        self.gang_rows.SetColSize(2, 150)
+        self.gang_rows.SetReadOnly(0, 0)
+        self.gang_rows.SetMinSize((350, 180))
         self.gang_rows.Bind(grid.EVT_GRID_CELL_CHANGED, self.gang_draft_changed)
         pattern_sizer.Add(self.gang_rows, 0, wx.EXPAND | wx.ALL, 8)
         row_actions = wx.BoxSizer(wx.HORIZONTAL)
@@ -2071,6 +2075,8 @@ class WorkflowDialog(wx.Dialog):
         placement.AddGrowableCol(1, 1)
         self.gang_notebook.AddPage(placement_page, 'Numbering & placement')
         editor.Add(self.gang_notebook, 1, wx.EXPAND | wx.ALL, 8)
+        self.gang_definition_status = self.status_label(editor_box, 'Select a gang')
+        editor.Add(self.gang_definition_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         body.Add(editor, 1, wx.EXPAND | wx.RIGHT, 8)
 
         preview_box = wx.StaticBox(panel, label='Position preview')
@@ -2082,7 +2088,8 @@ class WorkflowDialog(wx.Dialog):
         actions = wx.BoxSizer(wx.HORIZONTAL)
         actions.AddStretchSpacer()
         actions.Add(self.button(preview_box, 'Revert', self.revert_gang), 0, wx.RIGHT, 8)
-        actions.Add(self.button(preview_box, 'Apply definition', self.accept_gang), 0)
+        self.apply_gang_button = self.button(preview_box, 'Apply definition', self.accept_gang)
+        actions.Add(self.apply_gang_button, 0)
         preview.Add(actions, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         body.Add(preview, 1, wx.EXPAND)
         panel.GetSizer().Add(body, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -2104,18 +2111,25 @@ class WorkflowDialog(wx.Dialog):
         elif current > count:
             self.gang_rows.DeleteRows(count, current - count)
         for row in range(count):
-            self.gang_rows.SetRowLabelValue(row, str(row + 1))
-        height = self.gang_rows.GetColLabelSize() + sum(
-            self.gang_rows.GetRowSize(row) for row in range(count)
-        ) + 2
-        self.gang_rows.SetMinSize((-1, max(82, min(height, 230))))
-        self.gang_rows.SetMaxSize((-1, max(82, min(height, 230))))
+            self.gang_rows.SetCellValue(row, 0, str(row + 1))
+            self.gang_rows.SetReadOnly(row, 0)
+        display_index = wx.Display.GetFromWindow(self)
+        area = (wx.Display(display_index).GetClientArea()
+                if display_index != wx.NOT_FOUND else wx.GetClientDisplayRect())
+        row_height = max(1, self.gang_rows.GetDefaultRowSize())
+        maximum_visible = max(5, min(12, int(area.height * .32 / row_height)))
+        visible_rows = max(5, min(count, maximum_visible))
+        height = self.gang_rows.GetColLabelSize() + visible_rows * row_height + 2
+        self.gang_rows.SetMinSize((-1, height))
+        self.gang_rows.SetMaxSize((-1, height))
+        if hasattr(self, 'pages') and len(self.pages) > 5:
+            self.pages[5].FitInside()
 
     def _gang_editor_values(self):
         row_lengths, row_offsets = [], []
         for row in range(self.gang_rows.GetNumberRows()):
-            count = self.gang_rows.GetCellValue(row, 0).strip()
-            offset = self.gang_rows.GetCellValue(row, 1).strip() or '0'
+            count = self.gang_rows.GetCellValue(row, 1).strip()
+            offset = self.gang_rows.GetCellValue(row, 2).strip() or '0'
             if not count:
                 raise ValueError(f'Row {row + 1}: enter a position count')
             row_lengths.append(int(count))
@@ -2150,14 +2164,50 @@ class WorkflowDialog(wx.Dialog):
         combined['gang'] = self.current_gang
         definition = GangDefinition(**{key: value for key, value in combined.items()
                                        if key in fields})
-        points = definition.positions()
+        return definition.positions()
+
+    def _validate_gang_population(self, points):
         expected = {record.connector_pin for record in self.controller.table.records
                     if record.connector == self.current_gang}
         if set(points) != expected:
             raise ValueError(
                 f'Numbering must match {len(expected)} netlist positions exactly'
             )
-        return points
+
+    def _show_gang_definition(self, values, modified, clear_preview=False):
+        if clear_preview:
+            self.pattern_view.show(self.current_gang, {})
+        self.gang_draft_status.SetLabel('Draft not applied' if modified else 'Applied')
+        self._style_status(self.gang_draft_status, 'warning' if modified else 'success')
+        points = None
+        try:
+            points = self._preview_gang_values(values)
+            self.pattern_view.show(self.current_gang, points)
+            self.gang_position_total.SetLabel(f'{len(points)} positions total')
+            self._validate_gang_population(points)
+        except (TypeError, ValueError) as error:
+            if points is None and values.get('numbering'):
+                try:
+                    fallback = dict(values)
+                    fallback['numbering'] = []
+                    fallback_points = self._preview_gang_values(fallback)
+                    self.pattern_view.show(self.current_gang, fallback_points)
+                    self.gang_position_total.SetLabel(
+                        f'{len(fallback_points)} positions total'
+                    )
+                except (TypeError, ValueError):
+                    pass
+            self.gang_definition_status.SetLabel('Needs input — ' + str(error))
+            self._style_status(self.gang_definition_status, 'error')
+            self.apply_gang_button.Enable(False)
+            return False
+        self.gang_definition_status.SetLabel(
+            f'Definition matches {len(points)} netlist position'
+            f'{"" if len(points) == 1 else "s"}'
+        )
+        self._style_status(self.gang_definition_status, 'success')
+        self.apply_gang_button.Enable(True)
+        return True
 
     def gang_draft_changed(self, event=None):
         if not self._loading_gang and self.current_gang:
@@ -2165,15 +2215,14 @@ class WorkflowDialog(wx.Dialog):
                 values = self._gang_editor_values()
                 self.controller.config['drafts'][self.current_gang] = values
                 self.controller.changed()
-                points = self._preview_gang_values(values)
-                self.pattern_view.show(self.current_gang, points)
-                self.gang_draft_status.SetLabel('Modified — apply or revert this gang definition.')
-                self._style_status(self.gang_draft_status, 'warning')
-                self.gang_position_total.SetLabel(f'{len(points)} positions total')
             except (TypeError, ValueError) as error:
-                self.pattern_view.show(self.current_gang, error=str(error))
-                self.gang_draft_status.SetLabel('Needs input — ' + str(error))
-                self._style_status(self.gang_draft_status, 'error')
+                self.gang_definition_status.SetLabel('Needs input — ' + str(error))
+                self._style_status(self.gang_definition_status, 'error')
+                self.gang_draft_status.SetLabel('Draft not applied')
+                self._style_status(self.gang_draft_status, 'warning')
+                self.apply_gang_button.Enable(False)
+            else:
+                self._show_gang_definition(values, True)
             self.refresh_gang_list()
             self.refresh()
         if event is not None:
@@ -2188,8 +2237,8 @@ class WorkflowDialog(wx.Dialog):
         try:
             row = self.gang_rows.GetNumberRows()
             self._resize_gang_rows(row + 1)
-            self.gang_rows.SetCellValue(row, 0, '1')
-            self.gang_rows.SetCellValue(row, 1, '0')
+            self.gang_rows.SetCellValue(row, 1, '1')
+            self.gang_rows.SetCellValue(row, 2, '0')
         finally:
             self._loading_gang = False
         self.gang_draft_changed()
@@ -2220,8 +2269,11 @@ class WorkflowDialog(wx.Dialog):
             self.current_gang = None
             self.gang_editor_title.SetLabel('No RF gangs in the netlist')
             self.pattern_view.show('', {})
+            self.gang_definition_status.SetLabel('No RF gangs')
+            self._style_status(self.gang_definition_status, 'neutral')
             self.gang_draft_status.SetLabel('No RF gangs')
             self._style_status(self.gang_draft_status, 'neutral')
+            self.apply_gang_button.Enable(False)
         if hasattr(self, 'anchor_gang'):
             current = self.anchor_gang.GetStringSelection()
             self.anchor_gang.Set(list(names))
@@ -2278,8 +2330,8 @@ class WorkflowDialog(wx.Dialog):
         try:
             self._resize_gang_rows(len(rows))
             for row, (positions, offset) in enumerate(zip(rows, offsets)):
-                self.gang_rows.SetCellValue(row, 0, str(positions))
-                self.gang_rows.SetCellValue(row, 1, str(offset))
+                self.gang_rows.SetCellValue(row, 1, str(positions))
+                self.gang_rows.SetCellValue(row, 2, str(offset))
             self.gang_units.SetStringSelection(values.get('units', 'mm'))
             self.gang_pitch_x.ChangeValue(str(values.get('pitch_x', 2.54)))
             self.gang_pitch_y.ChangeValue(str(values.get('pitch_y', 2.54)))
@@ -2300,26 +2352,15 @@ class WorkflowDialog(wx.Dialog):
         self.gang_editor_title.SetLabel(f'{self.current_gang} · {count} positions from netlist')
         if hasattr(self, 'anchor_gang'):
             self.anchor_gang.SetStringSelection(self.current_gang)
-        try:
-            points = self._preview_gang_values(values)
-            self.pattern_view.show(self.current_gang, points)
-            self.gang_position_total.SetLabel(f'{len(points)} positions total')
-            modified = self.current_gang in self.controller.config.get('drafts', {})
-            self.gang_draft_status.SetLabel(
-                'Modified — apply or revert this gang definition.' if modified
-                else 'Ready — this gang definition is applied.'
-            )
-            self._style_status(self.gang_draft_status, 'warning' if modified else 'success')
-        except (TypeError, ValueError) as error:
-            self.pattern_view.show(self.current_gang, error=str(error))
-            self.gang_draft_status.SetLabel('Needs input — ' + str(error))
-            self._style_status(self.gang_draft_status, 'error')
+        modified = self.current_gang in self.controller.config.get('drafts', {})
+        self._show_gang_definition(values, modified, clear_preview=True)
 
     def accept_gang(self, event):
         if not self.current_gang:
             raise ValueError('Select a gang')
         values = self._gang_editor_values()
-        self._preview_gang_values(values)
+        points = self._preview_gang_values(values)
+        self._validate_gang_population(points)
         self.controller.set_gang(self.current_gang, values)
         self.controller.config.get('drafts', {}).pop(self.current_gang, None)
         self.controller.changed()
@@ -2357,9 +2398,9 @@ class WorkflowDialog(wx.Dialog):
 
     def build_rf_transitions(self, panel):
         self.task_box(
-            panel, 'RF transitions', 'Assign one approved transition to each unique RF requirement',
+            panel, 'RF transitions', 'Optionally assign approved RF transitions',
             'Requirements are derived from netclass, mapped KiCad layer and connector footprint. '
-            'Published transition artifacts remain read-only and are compatibility-checked before review.',
+            'Unassigned requirements do not block Review Changes or board generation.',
         )
         controls = wx.BoxSizer(wx.HORIZONTAL)
         self.transition_filter = wx.SearchCtrl(panel, style=wx.TE_PROCESS_ENTER)
@@ -2367,7 +2408,7 @@ class WorkflowDialog(wx.Dialog):
         self.transition_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_rf_transitions())
         controls.Add(self.transition_filter, 1, wx.RIGHT, 8)
         self.transition_status_filter = wx.Choice(
-            panel, choices=['All statuses', 'Ready', 'Needs input', 'Blocked'],
+            panel, choices=['All statuses', 'Ready', 'Not assigned', 'Blocked'],
         )
         self.transition_status_filter.SetSelection(0)
         self.transition_status_filter.Bind(wx.EVT_CHOICE, lambda event: self.refresh_rf_transitions())
@@ -2404,7 +2445,7 @@ class WorkflowDialog(wx.Dialog):
         assignment.Add(self.button(detail_box, 'Clear assignment', self.clear_rf_transition), 0)
         detail.Add(assignment, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         panel.GetSizer().Add(detail, 0, wx.EXPAND | wx.ALL, 8)
-        self.transition_page_status = self.status_label(panel, '0 of 0 transition requirements assigned')
+        self.transition_page_status = self.status_label(panel, '0 optional transitions assigned')
         self.transition_page_status.SetMinSize((360, -1))
         panel.GetSizer().Add(self.transition_page_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         self.transition_catalog = {}
@@ -2412,11 +2453,11 @@ class WorkflowDialog(wx.Dialog):
         self.current_transition_requirement = None
 
     def _transition_state(self, requirement):
+        if not requirement.get('assignment', {}).get('path'):
+            return 'Not assigned', 'Optional'
         if (not requirement['layer'] or not requirement['footprint'] or
                 len(requirement['part_sha256s']) != 1 or len(requirement['sides']) != 1):
             return 'Blocked', 'Requirement inputs are incomplete or inconsistent'
-        if not requirement.get('assignment', {}).get('path'):
-            return 'Needs input', 'Choose an approved transition'
         try:
             artifact = self.controller.validate_rf_transition(requirement)
             return 'Ready', f'{artifact["artifact_id"]} r{artifact["revision"]}'
@@ -2432,11 +2473,14 @@ class WorkflowDialog(wx.Dialog):
         self.transition_list.DeleteAllItems()
         visible = []
         ready = 0
+        blocked = 0
         locations = sum(len(item['locations']) for item in requirements)
         for requirement in requirements:
             state, detail = self._transition_state(requirement)
             if state == 'Ready':
                 ready += 1
+            elif state == 'Blocked':
+                blocked += 1
             haystack = ' '.join((requirement['netclass'], requirement['layer'],
                                  requirement['footprint'], ' '.join(requirement['locations']))).casefold()
             if query and query not in haystack:
@@ -2454,7 +2498,7 @@ class WorkflowDialog(wx.Dialog):
                 self.transition_list.SetItem(row, column, str(value))
             palette = ui_palette()
             self.transition_list.SetItemBackgroundColour(
-                row, {'Ready': palette.success, 'Needs input': palette.warning,
+                row, {'Ready': palette.success, 'Not assigned': palette.window,
                       'Blocked': palette.error}[state],
             )
             self.transition_list.SetItemTextColour(row, palette.text)
@@ -2464,12 +2508,14 @@ class WorkflowDialog(wx.Dialog):
             f'{len(requirements)} unique requirement{("" if len(requirements) == 1 else "s")} · '
             f'{locations} RF location{("" if locations == 1 else "s")}'
         )
-        self.transition_page_status.SetLabel(
-            f'{ready} of {len(requirements)} transition requirements assigned'
-        )
+        unassigned = len(requirements) - ready - blocked
+        status = f'{ready} assigned · {unassigned} unassigned (optional)'
+        if blocked:
+            status += f' · {blocked} blocked'
+        self.transition_page_status.SetLabel(status)
         self._style_status(
             self.transition_page_status,
-            'success' if requirements and ready == len(requirements) else 'warning',
+            'error' if blocked else 'success',
         )
         self.transition_page_status.GetParent().Layout()
         if self.current_transition_requirement:
@@ -3057,8 +3103,8 @@ class WorkflowDialog(wx.Dialog):
         self._loading_gang = True
         try:
             self._resize_gang_rows(1)
-            self.gang_rows.SetCellValue(0, 0, '1')
-            self.gang_rows.SetCellValue(0, 1, '0')
+            self.gang_rows.SetCellValue(0, 1, '1')
+            self.gang_rows.SetCellValue(0, 2, '0')
             self.gang_pitch_x.ChangeValue('2.54')
             self.gang_pitch_y.ChangeValue('2.54')
             self.gang_units.SetSelection(0)

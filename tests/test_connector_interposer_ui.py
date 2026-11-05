@@ -151,6 +151,8 @@ class ControllerTests(unittest.TestCase):
             ('RF', 'F.Cu', 'Approved:GPPO'),
         )
         self.assertEqual(requirement['locations'], ('J101-1', 'J101-2'))
+        self.assertFalse(any(issue.code == 'rf_transition'
+                             for issue in self.controller.validate()))
         artifact = write_transition(
             self.root / 'transition.gppo-rf.json', 'Approved:GPPO', part_sha,
         )
@@ -675,11 +677,22 @@ class NativeDialogTests(unittest.TestCase):
             })
             dialog.refresh_gangs()
             self.assertEqual(dialog.current_gang, 'J101')
+            dialog.gang_rows.SetCellValue(0, 1, '3')
+            dialog.gang_draft_changed()
+            self.assertEqual(len(dialog.pattern_view.points), 3)
+            self.assertIn('Needs input', dialog.gang_definition_status.GetLabel())
+            self.assertEqual(dialog.gang_draft_status.GetLabel(), 'Draft not applied')
+            dialog.gang_rows.SetCellValue(0, 1, '2')
+            dialog.gang_draft_changed()
             dialog.gang_pitch_x.ChangeValue('4')
             dialog.gang_draft_changed()
             self.assertEqual(dialog.controller.gang('J101')['pitch_x'], 2.54)
             self.assertEqual(dialog.controller.config['drafts']['J101']['pitch_x'], 4)
-            self.assertIn('Modified', dialog.gang_draft_status.GetLabel())
+            self.assertEqual(dialog.gang_draft_status.GetLabel(), 'Draft not applied')
+            self.assertEqual(dialog.gang_rows.GetColLabelValue(0), 'Row')
+            visible_grid_height = (dialog.gang_rows.GetColLabelSize() +
+                                   5 * dialog.gang_rows.GetDefaultRowSize())
+            self.assertGreaterEqual(dialog.gang_rows.GetMinSize().height, visible_grid_height)
             dialog.accept_gang(None)
             self.assertEqual(dialog.controller.gang('J101')['pitch_x'], 4)
             self.assertNotIn('J101', dialog.controller.config['drafts'])
@@ -687,7 +700,9 @@ class NativeDialogTests(unittest.TestCase):
             requirements = dialog.controller.rf_transition_requirements()
             self.assertEqual(len(requirements), 1)
             dialog.refresh_rf_transitions()
-            self.assertEqual(dialog.transition_list.GetItemText(0), 'Needs input')
+            self.assertEqual(dialog.transition_list.GetItemText(0), 'Not assigned')
+            self.assertEqual(dialog.transition_page_status.GetLabel(),
+                             '0 assigned · 1 unassigned (optional)')
             self.assertFalse(dialog.open_transition_designer.IsEnabled())
             artifact = write_transition(
                 Path(temporary.name) / 'test.gppo-rf.json', 'Approved:GPPO',
@@ -697,7 +712,7 @@ class NativeDialogTests(unittest.TestCase):
             dialog.refresh_rf_transitions()
             self.assertEqual(dialog.transition_list.GetItemText(0), 'Ready')
             self.assertEqual(dialog.transition_page_status.GetLabel(),
-                             '1 of 1 transition requirements assigned')
+                             '1 assigned · 0 unassigned (optional)')
         finally:
             dialog.Destroy()
             self.app.Yield()
@@ -759,12 +774,6 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                                        'part_sha256': gang_parts['J101'].footprint.sha256,
                                        'symbol': {'path': str(symbol), 'library_id': 'Approved:GPPO', 'sha256': symbol_sha},
                                        'row_lengths': [3], 'pitch_x': 4, 'anchor': [20, 30], 'anchor_accepted': True})
-            transition = write_transition(
-                root / 'rf.gppo-rf.json', 'Approved:GPPO',
-                gang_parts['J101'].footprint.sha256,
-            )
-            for requirement in controller.rf_transition_requirements():
-                controller.set_rf_transition(requirement['key'], transition)
             part = interposer_parts['E1'].footprint
             controller.config['interposers']['E1'] = dict(
                 part.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True,
@@ -778,6 +787,7 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             controller.set_gang('J101', {'anchor': [20, 30]})
             preview = controller.review()
             self.assertEqual(preview['conflicts'], [])
+            self.assertNotIn('rf', preview['desired']['instances']['J101-1'])
             import io
             bom_rows = {row['Reference']: row for row in csv.DictReader(io.StringIO(preview['desired']['project_files']['demo-connector-bom.csv']))}
             for reference, instance in preview['desired']['instances'].items():

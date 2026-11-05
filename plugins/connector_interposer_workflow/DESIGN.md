@@ -64,10 +64,22 @@ preview operate on one netlist-derived gang at a time. RF transition selection
 does not belong to a gang definition because locations in the same gang can
 have different electrical requirements.
 
-RF transitions is a separate project-wide reconciliation step. It derives one
+UI copy follows a control-ownership rule. The blue task box carries the page's
+short purpose and any cross-page consequence. Labels name controls; tooltips
+hold uncommon details that do not need to stay visible. Do not add nearby prose
+that repeats the task box, labels, table headings or current state. Complex
+entry groups receive one compact status indicator directly below the controls
+they validate. That indicator reports only those controls' state. Cross-group
+status is reserved for a result that cannot be assigned to one group. Preview
+status reports preview or acceptance state; input errors remain with the input
+group. Error text states the failed condition and the corrective action.
+
+RF transitions is an optional, separate project-wide reconciliation step. It derives one
 requirement for every unique `(netclass, mapped KiCad layer, connector
 footprint)` tuple used by an RF location and assigns one compatible, published
-transition artifact to that requirement. Artifact side, stackup, revision and
+transition artifact to that requirement when one is available. An unassigned
+requirement does not block review or board generation. An explicitly selected
+but incompatible artifact remains a blocking error. Artifact side, stackup, revision and
 footprint hash remain compatibility checks rather than parts of the requirement
 identity. Existing artifacts are immutable library inputs. An optional **Open
 RF Transition Designer…** action may launch the separately installed authoring

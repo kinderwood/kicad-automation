@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.3**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.4**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -109,9 +109,10 @@ an already-open source board does not update the output copy.
    the DXF anchor. Changes remain a draft until **Apply definition**; Review
    Changes blocks while any gang has an unapplied draft. Copying settings never
    changes gang anchors or selected library parts.
-7. **RF transitions:** assign one immutable published transition to each unique
+7. **RF transitions:** optionally assign one immutable published transition to each unique
    `(netclass, mapped KiCad layer, connector footprint)` requirement. One row can
-   cover locations in several gangs. The workflow validates the exact footprint
+   cover locations in several gangs. Unassigned requirements do not block Review
+   Changes or board generation. Once assigned, the workflow validates the exact footprint
    revision and mount type, board side, ordered copper stack, allowed netclass,
    signal layer and artifact hash before Review Changes. **Refresh transition
    library** discovers published `.gppo-rf.json` files beneath the project;

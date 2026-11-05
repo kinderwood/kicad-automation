@@ -465,6 +465,8 @@ class WorkflowController:
                 except (ValueError, TypeError) as error:
                     issues.append(Issue('gang_pattern', f'{name}: {error}'))
             for requirement in self.rf_transition_requirements():
+                if not requirement.get('assignment', {}).get('path'):
+                    continue
                 label = ' / '.join((
                     requirement['netclass'], requirement['layer'] or 'unmapped layer',
                     requirement['footprint'] or 'unassigned footprint',
@@ -920,15 +922,14 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
                 'symbol_path': bundle.paths[record.key], 'symbol_fields': symbol_fields(record.key), 'netclass': record.netclass,
                 'signal_layer': cfg['layer_mapping'][record.layer], 'side': settings.get('side', 'F')}
             requirement = controller.rf_transition_requirement(record)
-            if requirement is None:
-                raise ValueError(f'{record.key}: RF transition requirement is missing')
-            artifact = controller.validate_rf_transition(requirement)
-            instance['rf'] = {
-                'artifact': artifact,
-                'nets': {'signal': record.signal, 'ground': 'GND'},
-                'layers': {},
-                'clock': settings.get('connector_rotation', 0),
-            }
+            if requirement and requirement.get('assignment', {}).get('path'):
+                artifact = controller.validate_rf_transition(requirement)
+                instance['rf'] = {
+                    'artifact': artifact,
+                    'nets': {'signal': record.signal, 'ground': 'GND'},
+                    'layers': {},
+                    'clock': settings.get('connector_rotation', 0),
+                }
             instances[record.key] = instance
         for reference, part in dc_parts.items():
             selection = controller.dc_connector(reference)

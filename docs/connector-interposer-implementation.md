@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.3 and the
+are authorized. Connector to Interposer Workflow is version 0.4.4 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -149,8 +149,9 @@ footprint from an in-cell dropdown. Footprint choices satisfy both the symbol's
 per gang, the interposer has its own symbol/footprint assignment, and both are
 pinned for deterministic reopening. **Define gangs** owns only geometry,
 numbering, connector orientation and mounting side. **RF transitions**
-reconciles unique `(netclass, mapped KiCad layer, connector footprint)`
-requirements across the project. The project BOM MPN
+optionally reconciles unique `(netclass, mapped KiCad layer, connector footprint)`
+requirements across the project; an unassigned transition does not block review
+or board generation. The project BOM MPN
 override is removed, and interposer placement moves to
 DXF Anchors. Review Changes remains the consolidated validation and comparison
 gate.
@@ -233,12 +234,14 @@ system-color change. Native GUI regression checks execute the same dialog tests
 under Adwaita light and dark themes. The complete light/dark dialog set passes
 in the selected KiCad 9.0.9.1 and 10.0.8 AppImage runtimes.
 
-Version 0.4.3 replaces the combined Gangs page with **Define gangs** and a
+Version 0.4.4 replaces the combined Gangs page with **Define gangs** and a
 separate **RF transitions** step. Gang geometry uses real draft/apply/revert
-state, editable pattern rows, numbering presets and independent pattern and
-connector rotations. Transition assignments are project-wide and keyed by
+state, editable pattern rows, live PCB-style preview, local definition status,
+numbering presets and independent pattern and connector rotations. Transition
+assignments are optional, project-wide and keyed by
 netclass, mapped KiCad layer and connector footprint; compatibility validation
-retains exact artifact, footprint, side, mount and stackup checks. The RF
+retains exact artifact, footprint, side, mount and stackup checks when an
+artifact is assigned. The RF
 Transition Designer launcher is present but disabled pending a later integration
 prototype.
 
