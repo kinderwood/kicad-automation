@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.19**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.20**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -101,7 +101,13 @@ an already-open source board does not update the output copy.
    symbol for each DC connector from KiCad's loaded project or global libraries.
    Each symbol must contain footprint filters; its
    footprint cell lists only filtered library parts whose electrical pad
-   numbers exactly match the symbol pins. Selections update the workflow
+   numbers exactly match the symbol pins. The interposer and DC tables show
+   **Pins used** beside **Symbol pins**. An interposer symbol must contain every
+   used interposer pin, an RF connector symbol must expose exactly two distinct
+   pins, and a DC symbol must be single-unit and contain every used connector
+   pin; unused DC symbol pins remain allowed. Invalid selected symbols stay
+   visible in amber, keep their footprint cell disabled and do not count as
+   assigned. RF gangs and DC connectors have independent filters. Selections update the workflow
    immediately. Footprints use a one-click table-integrated menu; long symbol
    and footprint names are ellipsized inside bounded columns. Hovering a clipped
    assignment cell shows its complete value; fully visible values have no

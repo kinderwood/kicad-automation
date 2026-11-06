@@ -85,7 +85,13 @@ library symbol and footprint. The workbook supplies the interposer and connector
 references. Separate RF gang and DC connector sections use the same assignment
 cells. Symbol cells launch the native loaded-library browser;
 footprint cells offer only parts allowed by the symbol filters and exact pin/pad
-compatibility. Each composed table has one bordered semantic window-colour
+compatibility. Interposer and DC rows place **Pins used** and **Symbol pins**
+between the reference and adjacent symbol/footprint assignment cells. The symbol
+must contain every workbook pin; extra DC pins are allowed, while RF connector
+symbols require exactly two distinct pins. A selected symbol that fails these
+checks remains visible in the amber assignment state, disables its footprint
+cell and is excluded from the assigned count. RF and DC sections have independent
+filters. Each composed table has one bordered semantic window-colour
 surface and a small inset around its header and cells, matching the visual
 containment of native grids. Header, read-only and assignment cells have equal
 row height and visible cell borders so their contents share one baseline and

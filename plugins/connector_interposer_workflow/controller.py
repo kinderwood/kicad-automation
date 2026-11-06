@@ -381,6 +381,9 @@ class WorkflowController:
         issues = list(self.table.issues) if self.table else [Issue('workbook', 'Parse a workbook first')]
         from .core.libraries import read_footprint, read_symbol, footprint_matches_filters
 
+        def pin_count_text(count):
+            return f'{count} pin' + ('' if count == 1 else 's')
+
         def assignment_issue(owner, symbol_spec, footprint_spec, require_two_pin):
             if not symbol_spec.get('path') or not footprint_spec.get('path'):
                 return None
@@ -510,7 +513,13 @@ class WorkflowController:
                     used = {record.connector_pin for record in self.table.records
                             if record.connector == name}
                     available = {pin[0] for pin in symbol.pin_numbers}
-                    if not used <= available:
+                    if len(available) < len(used):
+                        issues.append(Issue(
+                            'dc_pin_count',
+                            f'{name}: symbol has {pin_count_text(len(available))}; '
+                            f'{pin_count_text(len(used))} are used',
+                        ))
+                    elif not used <= available:
                         issues.append(Issue('dc_pin_missing',
                                             f'{name}: symbol is missing workbook pins {sorted(used-available)}'))
                 except (KeyError, OSError, ValueError):
@@ -538,6 +547,31 @@ class WorkflowController:
                 detail = assignment_issue(reference, selection.get('symbol', {}), selection, False)
                 if detail:
                     issues.append(Issue('interposer_incompatible', detail))
+                try:
+                    symbol_spec = selection.get('symbol', {})
+                    symbol = read_symbol(
+                        self.resolve_path(symbol_spec.get('path', ''),
+                                          symbol_spec.get('sha256'),
+                                          'symbols', '.kicad_sym'),
+                        symbol_spec.get('library_id', ''),
+                        symbol_spec.get('sha256'), require_two_pin=False,
+                    )
+                    used = {record.interposer_pin for record in self.table.records
+                            if record.interposer == reference}
+                    available = {pin[0] for pin in symbol.pin_numbers}
+                    if len(available) < len(used):
+                        issues.append(Issue(
+                            'interposer_pin_count',
+                            f'{reference}: symbol has {pin_count_text(len(available))}; '
+                            f'{pin_count_text(len(used))} are used',
+                        ))
+                    elif not used <= available:
+                        issues.append(Issue(
+                            'interposer_pin_missing',
+                            f'{reference}: symbol is missing workbook pins {sorted(used-available)}',
+                        ))
+                except (KeyError, OSError, ValueError):
+                    pass
                 if not selection.get('pose_accepted'):
                     issues.append(Issue(
                         'interposer_pose_missing',

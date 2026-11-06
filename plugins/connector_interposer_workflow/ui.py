@@ -801,6 +801,7 @@ class SymbolAssignmentCtrl(wx.Panel):
         self.owner, self.title = owner, title
         self.require_two_pin, self.on_change = require_two_pin, on_change
         self.selection = {}
+        self.valid = False
         row = wx.BoxSizer(wx.HORIZONTAL)
         self.display = wx.StaticText(self, label='Choose a symbol', style=wx.ST_ELLIPSIZE_END)
         row.Add(self.display, 1, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 7)
@@ -845,16 +846,24 @@ class SymbolAssignmentCtrl(wx.Panel):
                 self.set_selection(dialog.selection)
                 self.on_change(dict(dialog.selection), dialog.approved)
 
-    def set_selection(self, selection):
+    def set_selection(self, selection, valid=None):
         self.selection = dict(selection or {})
         self.display.SetLabel(self.selection.get('library_id', 'Choose a symbol'))
-        assigned = bool(self.selection.get('library_id'))
+        self.valid = bool(self.selection.get('library_id')) if valid is None else bool(valid)
+        self._style()
+        self._refresh_overflow_tooltip()
+
+    def set_valid(self, valid):
+        self.valid = bool(valid)
+        self._style()
+
+    def _style(self):
+        assigned = bool(self.selection.get('library_id')) and self.valid
         palette = ui_palette()
         self.SetBackgroundColour(palette.assigned if assigned else palette.warning)
         self.SetForegroundColour(palette.text)
         self.display.SetForegroundColour(palette.text)
         self.Refresh()
-        self._refresh_overflow_tooltip()
 
 
 class FootprintAssignmentCtrl(wx.Panel):
@@ -863,6 +872,7 @@ class FootprintAssignmentCtrl(wx.Panel):
         super().__init__(parent, style=wx.BORDER_SIMPLE | wx.WANTS_CHARS)
         self.on_change, self.options = on_change, []
         self.selected = {}
+        self.valid = False
         row = wx.BoxSizer(wx.HORIZONTAL)
         self.display = wx.StaticText(
             self, label='Choose an allowed footprint', style=wx.ST_ELLIPSIZE_END,
@@ -897,9 +907,10 @@ class FootprintAssignmentCtrl(wx.Panel):
             # Dynamic connector rows can be rebuilt before a queued size event.
             return
 
-    def set_options(self, options, selected):
+    def set_options(self, options, selected, valid=None):
         self.options = [dict(option) for option in options]
         selected = dict(selected or {})
+        allowed_ids = {option.get('library_id') for option in self.options}
         if (selected.get('library_id') and selected.get('path') and
                 not any(option.get('library_id') == selected['library_id'] for option in self.options)):
             self.options.append(selected)
@@ -913,8 +924,14 @@ class FootprintAssignmentCtrl(wx.Panel):
         self.display.SetLabel(
             self.selected.get('library_id', 'Choose an allowed footprint'),
         )
-        self._style(bool(self.selected))
+        inferred_valid = bool(self.selected) and selected_id in allowed_ids
+        self.valid = inferred_valid if valid is None else bool(valid and self.selected)
+        self._style()
         self._refresh_overflow_tooltip()
+
+    def set_valid(self, valid):
+        self.valid = bool(valid and self.selected)
+        self._style()
 
     def selection(self):
         return dict(self.selected)
@@ -971,7 +988,8 @@ class FootprintAssignmentCtrl(wx.Panel):
         self.set_options(self.options, selection)
         self.on_change(self.selection())
 
-    def _style(self, assigned):
+    def _style(self):
+        assigned = bool(self.selected) and self.valid
         palette = ui_palette()
         colour = palette.assigned if assigned else palette.warning
         self.SetBackgroundColour(colour)
@@ -1257,26 +1275,25 @@ class WorkflowDialog(wx.Dialog):
         view.MakeCellVisible(row, column)
         current = view.GetCellValue(row, column).strip()
         menu = wx.Menu()
+        values = {}
         for choice in ('', *tuple(choices)):
             item = menu.AppendRadioItem(
                 wx.ID_ANY, choice if choice else 'Clear assignment',
             )
             item.Check(choice == current)
-            menu.Bind(
-                wx.EVT_MENU,
-                lambda event, value=choice: on_choice(value),
-                item,
-            )
+            values[item.GetId()] = choice
         rectangle = view.CellToRect(row, column)
         x, y = view.CalcScrolledPosition(
             rectangle.x, rectangle.y + rectangle.height,
         )
         try:
-            self._popup_assignment_menu(
+            chosen = self._popup_assignment_menu(
                 view.GetGridWindow(), menu, wx.Point(x, y),
             )
         finally:
             menu.Destroy()
+        if chosen in values:
+            on_choice(values[chosen])
 
     @staticmethod
     def _grid_choice_key(event, view, editable_column, show):
@@ -2361,8 +2378,10 @@ class WorkflowDialog(wx.Dialog):
         interposer = wx.StaticBoxSizer(interposer_box, wx.VERTICAL)
         (self.interposer_assignment_surface,
          self.interposer_assignment_table,
-         self.interposer_assignment_grid) = self._assignment_table(interposer_box, 3)
-        for label, width in (('Ref des', 100), ('Symbol', 300), ('Footprint', 320)):
+         self.interposer_assignment_grid) = self._assignment_table(interposer_box, 5)
+        for label, width in (
+                ('Ref des', 100), ('Pins used', 85), ('Symbol pins', 90),
+                ('Symbol', 280), ('Footprint', 300)):
             heading = wx.StaticText(
                 self.interposer_assignment_table, label=label, style=wx.BORDER_SIMPLE,
             )
@@ -2377,16 +2396,28 @@ class WorkflowDialog(wx.Dialog):
         self._fix_table_cell_width(self.interposer_ref_display, 100, 38)
         self._style_table_data_cell(self.interposer_ref_display)
         self.interposer_assignment_grid.Add(self.interposer_ref_display, 0, wx.EXPAND)
+        self.interposer_pins_used_display = TableTextCell(
+            self.interposer_assignment_table, label='—',
+        )
+        self._fix_table_cell_width(self.interposer_pins_used_display, 85, 38)
+        self._style_table_data_cell(self.interposer_pins_used_display)
+        self.interposer_assignment_grid.Add(self.interposer_pins_used_display, 0, wx.EXPAND)
+        self.interposer_symbol_pins_display = TableTextCell(
+            self.interposer_assignment_table, label='—',
+        )
+        self._fix_table_cell_width(self.interposer_symbol_pins_display, 90, 38)
+        self._style_table_data_cell(self.interposer_symbol_pins_display)
+        self.interposer_assignment_grid.Add(self.interposer_symbol_pins_display, 0, wx.EXPAND)
         self.interposer_symbol_assignment = SymbolAssignmentCtrl(
             self.interposer_assignment_table, self, 'Choose interposer symbol', False,
             lambda selection, symbol: self.assign_interposer_symbol(selection, symbol),
         )
-        self._fix_table_cell_width(self.interposer_symbol_assignment, 300, 38)
+        self._fix_table_cell_width(self.interposer_symbol_assignment, 280, 38)
         self.interposer_assignment_grid.Add(self.interposer_symbol_assignment, 0, wx.EXPAND)
         self.interposer_footprint_assignment = FootprintAssignmentCtrl(
             self.interposer_assignment_table, self.assign_interposer_footprint,
         )
-        self._fix_table_cell_width(self.interposer_footprint_assignment, 320, 38)
+        self._fix_table_cell_width(self.interposer_footprint_assignment, 300, 38)
         self.interposer_assignment_grid.Add(self.interposer_footprint_assignment, 0, wx.EXPAND)
         interposer.Add(self.interposer_assignment_surface, 0, wx.ALL, 8)
         self.interposer_assignment_status = self.status_label(interposer_box, '0 of 0 interposers assigned')
@@ -2413,9 +2444,17 @@ class WorkflowDialog(wx.Dialog):
 
         dc_box = wx.StaticBox(panel, label='DC connector assignments')
         dc = wx.StaticBoxSizer(dc_box, wx.VERTICAL)
+        self.dc_assignment_filter = wx.SearchCtrl(dc_box, style=wx.TE_PROCESS_ENTER)
+        self.dc_assignment_filter.SetDescriptiveText('Filter DC connectors')
+        self.dc_assignment_filter.SetMinSize((330, -1))
+        self.dc_assignment_filter.SetMaxSize((330, -1))
+        self.dc_assignment_filter.Bind(
+            wx.EVT_TEXT, lambda event: self.refresh_connector_assignments(True),
+        )
+        dc.Add(self.dc_assignment_filter, 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
         (self.dc_assignment_rows,
          self.dc_assignment_table,
-         _dc_grid) = self._assignment_table(dc_box, 4)
+         _dc_grid) = self._assignment_table(dc_box, 5)
         dc.Add(self.dc_assignment_rows, 0, wx.ALL, 8)
         self.dc_assignment_status = self.status_label(dc_box, '0 of 0 DC connectors assigned')
         dc.Add(self.dc_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -2455,6 +2494,62 @@ class WorkflowDialog(wx.Dialog):
             if self.controller.table else []
         return references[0] if len(references) == 1 else ''
 
+    def _interposer_used_pins(self, reference):
+        if not self.controller.table or not reference:
+            return set()
+        return {
+            str(record.interposer_pin) for record in self.controller.table.records
+            if record.interposer == reference
+        }
+
+    def _connector_used_pins(self, reference):
+        if not self.controller.table or not reference:
+            return set()
+        return {
+            str(record.connector_pin) for record in self.controller.table.records
+            if record.connector == reference
+        }
+
+    @staticmethod
+    def _symbol_pins(symbol):
+        return {str(pin[0]) for pin in symbol.pin_numbers} if symbol else set()
+
+    @staticmethod
+    def _pin_count_text(count):
+        return f'{count} pin' + ('' if count == 1 else 's')
+
+    def _symbol_assignment_issue(self, kind, symbol, used_pins=()):
+        if symbol is None:
+            return 'Choose a symbol.'
+        available = self._symbol_pins(symbol)
+        if kind == 'rf':
+            if len(available) != 2:
+                return (f'Symbol has {self._pin_count_text(len(available))}; '
+                        'an RF connector symbol requires exactly 2 pins.')
+            return ''
+        used = {str(pin) for pin in used_pins}
+        if kind == 'dc' and symbol.unit_count != 1:
+            return 'Choose a single-unit DC connector symbol.'
+        if len(available) < len(used):
+            return (f'Symbol has {self._pin_count_text(len(available))}; '
+                    f'{self._pin_count_text(len(used))} are used.')
+        missing = sorted(used - available)
+        if missing:
+            return f'Symbol is missing used pins {", ".join(missing)}.'
+        return ''
+
+    def _set_symbol_assignment_state(self, symbol_control, footprint_control,
+                                     kind, symbol, used_pins, selected_footprint,
+                                     symbol_pins_display=None):
+        issue = self._symbol_assignment_issue(kind, symbol, used_pins)
+        symbol_control.set_valid(not issue)
+        if symbol_pins_display is not None:
+            symbol_pins_display.SetLabel(str(len(self._symbol_pins(symbol))) if symbol else '—')
+        options = self._allowed_footprint_specs(symbol) if not issue else ()
+        footprint_control.set_options(options, selected_footprint, valid=not issue)
+        footprint_control.Enable(bool(symbol and not issue))
+        return issue, options
+
     def assign_interposer_symbol(self, selection, symbol):
         reference = self._interposer_reference()
         if not reference:
@@ -2467,12 +2562,14 @@ class WorkflowDialog(wx.Dialog):
                 'value': symbol.value, 'symbol_mpn': symbol.mpn,
             },
         }
-        options = self._allowed_footprint_specs(symbol)
-        self.interposer_footprint_assignment.set_options(
-            options, {},
+        issue, options = self._set_symbol_assignment_state(
+            self.interposer_symbol_assignment, self.interposer_footprint_assignment,
+            'interposer', symbol, self._interposer_used_pins(reference), {},
+            self.interposer_symbol_pins_display,
         )
-        self.interposer_footprint_assignment.Enable(True)
-        if not symbol.footprint_filters:
+        if issue:
+            self.status.SetLabel(f'{reference}: {issue}')
+        elif not symbol.footprint_filters:
             self.status.SetLabel(f'{symbol.library_id} has no footprint filters; ask the librarian to add them.')
         elif not options:
             self.status.SetLabel(f'No loaded footprint matches {symbol.library_id} and its electrical pins.')
@@ -2509,6 +2606,8 @@ class WorkflowDialog(wx.Dialog):
             controls['symbol'].set_selection({})
             controls['footprint'].set_options((), {})
             controls['footprint'].Enable(False)
+            if controls.get('symbol_pins') is not None:
+                controls['symbol_pins'].SetLabel('—')
 
     def _set_gang_symbol(self, gang, selection, symbol, options):
         self.controller.set_gang(gang, {
@@ -2519,14 +2618,19 @@ class WorkflowDialog(wx.Dialog):
         controls = self.gang_assignment_controls.get(gang)
         if controls:
             controls['symbol'].set_selection(selection)
-            controls['footprint'].set_options(options, {})
-            controls['footprint'].Enable(True)
+            issue = self._symbol_assignment_issue('rf', symbol)
+            controls['symbol'].set_valid(not issue)
+            controls['footprint'].set_options(options if not issue else (), {}, valid=not issue)
+            controls['footprint'].Enable(not issue)
 
     def assign_gang_symbol(self, gang, selection, symbol):
         self._clear_bulk_assignment('rf')
-        options = self._allowed_footprint_specs(symbol)
+        issue = self._symbol_assignment_issue('rf', symbol)
+        options = self._allowed_footprint_specs(symbol) if not issue else ()
         self._set_gang_symbol(gang, selection, symbol, options)
-        if not symbol.footprint_filters:
+        if issue:
+            self.status.SetLabel(f'{gang}: {issue}')
+        elif not symbol.footprint_filters:
             self.status.SetLabel(f'{symbol.library_id} has no footprint filters; ask the librarian to add them.')
         elif not options:
             self.status.SetLabel(f'No loaded footprint matches {symbol.library_id} and its electrical pins.')
@@ -2534,7 +2638,8 @@ class WorkflowDialog(wx.Dialog):
 
     def assign_all_gang_symbols(self, selection, symbol):
         names = self.controller.gang_names()
-        options = self._allowed_footprint_specs(symbol)
+        issue = self._symbol_assignment_issue('rf', symbol)
+        options = self._allowed_footprint_specs(symbol) if not issue else ()
         self._bulk_assignments['rf'] = {
             'names': names, 'symbol': dict(selection), 'footprint': {},
         }
@@ -2542,9 +2647,12 @@ class WorkflowDialog(wx.Dialog):
             self._set_gang_symbol(gang, selection, symbol, options)
         controls = self.gang_assignment_all_controls
         controls['symbol'].set_selection(selection)
-        controls['footprint'].set_options(options, {})
-        controls['footprint'].Enable(True)
-        if not symbol.footprint_filters:
+        controls['symbol'].set_valid(not issue)
+        controls['footprint'].set_options(options, {}, valid=not issue)
+        controls['footprint'].Enable(not issue)
+        if issue:
+            self.status.SetLabel(issue)
+        elif not symbol.footprint_filters:
             self.status.SetLabel(f'{symbol.library_id} has no footprint filters; ask the librarian to add them.')
         elif not options:
             self.status.SetLabel(f'No loaded footprint matches {symbol.library_id} and its electrical pins.')
@@ -2599,15 +2707,23 @@ class WorkflowDialog(wx.Dialog):
         controls = self.dc_assignment_controls.get(reference)
         if controls:
             controls['symbol'].set_selection(selection)
-            controls['footprint'].set_options(options, {})
-            controls['footprint'].Enable(True)
+            issue = self._symbol_assignment_issue(
+                'dc', symbol, self._connector_used_pins(reference),
+            )
+            controls['symbol'].set_valid(not issue)
+            controls['symbol_pins'].SetLabel(str(len(self._symbol_pins(symbol))))
+            controls['footprint'].set_options(options if not issue else (), {}, valid=not issue)
+            controls['footprint'].Enable(not issue)
 
     def assign_dc_symbol(self, reference, selection, symbol):
         self._clear_bulk_assignment('dc')
-        options = self._allowed_footprint_specs(symbol)
+        issue = self._symbol_assignment_issue(
+            'dc', symbol, self._connector_used_pins(reference),
+        )
+        options = self._allowed_footprint_specs(symbol) if not issue else ()
         self._set_dc_symbol(reference, selection, symbol, options)
-        if symbol.unit_count != 1:
-            self.status.SetLabel(f'{symbol.library_id} is multi-unit; choose a single-unit DC connector symbol.')
+        if issue:
+            self.status.SetLabel(f'{reference}: {issue}')
         elif not symbol.footprint_filters:
             self.status.SetLabel(f'{symbol.library_id} has no footprint filters; ask the librarian to add them.')
         elif not options:
@@ -2616,7 +2732,14 @@ class WorkflowDialog(wx.Dialog):
 
     def assign_all_dc_symbols(self, selection, symbol):
         names = self.controller.dc_connector_names()
-        options = self._allowed_footprint_specs(symbol)
+        issues = {
+            reference: self._symbol_assignment_issue(
+                'dc', symbol, self._connector_used_pins(reference),
+            )
+            for reference in names
+        }
+        valid_for_all = not any(issues.values())
+        options = self._allowed_footprint_specs(symbol) if symbol.unit_count == 1 else ()
         self._bulk_assignments['dc'] = {
             'names': names, 'symbol': dict(selection), 'footprint': {},
         }
@@ -2624,10 +2747,13 @@ class WorkflowDialog(wx.Dialog):
             self._set_dc_symbol(reference, selection, symbol, options)
         controls = self.dc_assignment_all_controls
         controls['symbol'].set_selection(selection)
-        controls['footprint'].set_options(options, {})
-        controls['footprint'].Enable(True)
-        if symbol.unit_count != 1:
-            self.status.SetLabel(f'{symbol.library_id} is multi-unit; choose a single-unit DC connector symbol.')
+        controls['symbol'].set_valid(valid_for_all)
+        controls['symbol_pins'].SetLabel(str(len(self._symbol_pins(symbol))))
+        controls['footprint'].set_options(options if valid_for_all else (), {}, valid=valid_for_all)
+        controls['footprint'].Enable(valid_for_all)
+        if not valid_for_all:
+            first = next(reference for reference in names if issues[reference])
+            self.status.SetLabel(f'{first}: {issues[first]}')
         elif not symbol.footprint_filters:
             self.status.SetLabel(f'{symbol.library_id} has no footprint filters; ask the librarian to add them.')
         elif not options:
@@ -2705,7 +2831,14 @@ class WorkflowDialog(wx.Dialog):
         quantity = TableTextCell(
             parent, label='—', bold=True, background=ui_palette().info,
         )
-        for control, width in ((label, 100), (quantity, 80)):
+        leading = [(label, 100), (quantity, 80 if kind == 'rf' else 85)]
+        symbol_pins = None
+        if kind == 'dc':
+            symbol_pins = TableTextCell(
+                parent, label='—', bold=True, background=ui_palette().info,
+            )
+            leading.append((symbol_pins, 90))
+        for control, width in leading:
             self._fix_table_cell_width(control, width, 38)
             control.set_colours(ui_palette().info, ui_palette().text)
         if kind == 'rf':
@@ -2727,20 +2860,31 @@ class WorkflowDialog(wx.Dialog):
         symbol_spec = state.get('symbol', {})
         symbol_control.set_selection(symbol_spec)
         symbol = self._configured_symbol(symbol_spec, kind == 'rf')
-        footprint_control.set_options(
-            self._allowed_footprint_specs(symbol), state.get('footprint', {}),
+        used_sets = (
+            [self._connector_used_pins(name) for name in names]
+            if kind == 'dc' else [set()]
         )
-        footprint_control.Enable(bool(symbol))
-        self._fix_table_cell_width(symbol_control, 300, 38)
-        self._fix_table_cell_width(footprint_control, 320, 38)
-        for control in (label, quantity, symbol_control, footprint_control):
+        issues = [self._symbol_assignment_issue(kind, symbol, used) for used in used_sets]
+        symbol_valid = bool(symbol) and not any(issues)
+        symbol_control.set_valid(symbol_valid)
+        if symbol_pins is not None:
+            symbol_pins.SetLabel(str(len(self._symbol_pins(symbol))) if symbol else '—')
+        footprint_control.set_options(
+            self._allowed_footprint_specs(symbol) if symbol_valid else (),
+            state.get('footprint', {}), valid=symbol_valid,
+        )
+        footprint_control.Enable(symbol_valid)
+        self._fix_table_cell_width(symbol_control, 300 if kind == 'rf' else 280, 38)
+        self._fix_table_cell_width(footprint_control, 320 if kind == 'rf' else 300, 38)
+        for control in [item[0] for item in leading] + [symbol_control, footprint_control]:
             sizer.Add(
                 control, 0, wx.EXPAND,
             )
         setattr(self, controls_attribute, {
             'symbol': symbol_control, 'footprint': footprint_control,
+            'symbol_pins': symbol_pins,
         })
-        for _column in range(4):
+        for _column in range(4 if kind == 'rf' else 5):
             sizer.Add(TableDividerCell(parent), 0, wx.EXPAND)
 
     def refresh_connector_assignments(self, force=False):
@@ -2748,12 +2892,18 @@ class WorkflowDialog(wx.Dialog):
         names = self.controller.gang_names()
         dc_names = self.controller.dc_connector_names()
         query = self.assignment_filter.GetValue().casefold() if hasattr(self, 'assignment_filter') else ''
-        signature = (reference, names, dc_names, query)
+        dc_query = self.dc_assignment_filter.GetValue().casefold() \
+            if hasattr(self, 'dc_assignment_filter') else ''
+        signature = (reference, names, dc_names, query, dc_query)
         if not force and signature == self._assignment_signature:
             self._refresh_assignment_status()
             return
         self._assignment_signature = signature
         self.interposer_ref_display.SetLabel(reference or '—')
+        interposer_used = self._interposer_used_pins(reference)
+        self.interposer_pins_used_display.SetLabel(
+            str(len(interposer_used)) if reference else '—',
+        )
         interposer = self.controller.config['interposers'].get(reference, {}) if reference else {}
         if hasattr(self, 'anchor_interposer_ref'):
             self.anchor_interposer_ref.SetLabel('Ref des: ' + (reference or '—'))
@@ -2773,11 +2923,12 @@ class WorkflowDialog(wx.Dialog):
         symbol_spec = interposer.get('symbol', {})
         self.interposer_symbol_assignment.set_selection(symbol_spec)
         symbol = self._configured_symbol(symbol_spec, False)
-        self.interposer_footprint_assignment.set_options(
-            self._allowed_footprint_specs(symbol), interposer,
+        self._set_symbol_assignment_state(
+            self.interposer_symbol_assignment, self.interposer_footprint_assignment,
+            'interposer', symbol, interposer_used, interposer,
+            self.interposer_symbol_pins_display,
         )
         self.interposer_symbol_assignment.Enable(bool(reference))
-        self.interposer_footprint_assignment.Enable(bool(reference and symbol))
 
         sizer = self.gang_assignment_table.GetSizer()
         sizer.Clear(True)
@@ -2814,11 +2965,13 @@ class WorkflowDialog(wx.Dialog):
             selected_symbol = settings.get('symbol', {})
             symbol_control.set_selection(selected_symbol)
             symbol = self._configured_symbol(selected_symbol, True)
-            footprint_control.set_options(self._allowed_footprint_specs(symbol), {
+            issue = self._symbol_assignment_issue('rf', symbol)
+            symbol_control.set_valid(not issue)
+            footprint_control.set_options(self._allowed_footprint_specs(symbol) if not issue else (), {
                 'path': settings.get('part_id', ''), 'library_id': settings.get('library_id', ''),
                 'sha256': settings.get('part_sha256', ''),
-            })
-            footprint_control.Enable(bool(symbol))
+            }, valid=not issue)
+            footprint_control.Enable(bool(symbol and not issue))
             self._fix_table_cell_width(symbol_control, 300, 38)
             self._fix_table_cell_width(footprint_control, 320, 38)
             for control in (gang_label, positions, symbol_control, footprint_control):
@@ -2834,7 +2987,9 @@ class WorkflowDialog(wx.Dialog):
         self.dc_assignment_controls = {}
         self.dc_assignment_rows.SetBackgroundColour(ui_palette().window)
         self.dc_assignment_table.SetBackgroundColour(ui_palette().window)
-        for label, width in (('Ref des', 100), ('Pins used', 80), ('Symbol', 300), ('Footprint', 320)):
+        for label, width in (
+                ('Ref des', 100), ('Pins used', 85), ('Symbol pins', 90),
+                ('Symbol', 280), ('Footprint', 300)):
             heading = wx.StaticText(self.dc_assignment_table, label=label, style=wx.BORDER_SIMPLE)
             font = heading.GetFont(); font.SetWeight(wx.FONTWEIGHT_BOLD); heading.SetFont(font)
             self._style_heading(heading); self._fix_table_cell_width(heading, width, 34)
@@ -2843,16 +2998,19 @@ class WorkflowDialog(wx.Dialog):
             self.dc_assignment_table, dc_sizer, 'dc', dc_names,
         )
         for name in dc_names:
-            if query and query not in name.casefold():
+            if dc_query and dc_query not in name.casefold():
                 continue
             selection = self.controller.dc_connector(name)
-            used = sum(record.connector == name for record in self.controller.table.records)
+            used_pins = self._connector_used_pins(name)
             reference_label = TableTextCell(self.dc_assignment_table, label=name)
             self._fix_table_cell_width(reference_label, 100, 38)
             self._style_table_data_cell(reference_label)
-            pins = TableTextCell(self.dc_assignment_table, label=str(used))
-            self._fix_table_cell_width(pins, 80, 38)
+            pins = TableTextCell(self.dc_assignment_table, label=str(len(used_pins)))
+            self._fix_table_cell_width(pins, 85, 38)
             self._style_table_data_cell(pins)
+            symbol_pins = TableTextCell(self.dc_assignment_table, label='—')
+            self._fix_table_cell_width(symbol_pins, 90, 38)
+            self._style_table_data_cell(symbol_pins)
             symbol_control = SymbolAssignmentCtrl(
                 self.dc_assignment_table, self, 'Choose DC connector symbol', False,
                 lambda spec, symbol, connector=name: self.assign_dc_symbol(connector, spec, symbol),
@@ -2864,14 +3022,17 @@ class WorkflowDialog(wx.Dialog):
             symbol_spec = selection.get('symbol', {})
             symbol_control.set_selection(symbol_spec)
             symbol = self._configured_symbol(symbol_spec, False)
-            footprint_control.set_options(self._allowed_footprint_specs(symbol), selection)
-            footprint_control.Enable(bool(symbol))
-            self._fix_table_cell_width(symbol_control, 300, 38)
-            self._fix_table_cell_width(footprint_control, 320, 38)
-            for control in (reference_label, pins, symbol_control, footprint_control):
+            self._set_symbol_assignment_state(
+                symbol_control, footprint_control, 'dc', symbol, used_pins,
+                selection, symbol_pins,
+            )
+            self._fix_table_cell_width(symbol_control, 280, 38)
+            self._fix_table_cell_width(footprint_control, 300, 38)
+            for control in (reference_label, pins, symbol_pins, symbol_control, footprint_control):
                 dc_sizer.Add(control, 0, wx.EXPAND)
             self.dc_assignment_controls[name] = {
                 'symbol': symbol_control, 'footprint': footprint_control,
+                'symbol_pins': symbol_pins,
             }
         self.dc_assignment_table.Layout()
         self.dc_assignment_rows.Layout()
@@ -2881,20 +3042,34 @@ class WorkflowDialog(wx.Dialog):
     def _refresh_assignment_status(self):
         reference = self._interposer_reference()
         interposer = self.controller.config['interposers'].get(reference, {}) if reference else {}
-        assigned_interposer = int(bool(interposer.get('symbol', {}).get('library_id') and
-                                       interposer.get('library_id')))
+        interposer_symbol = self._configured_symbol(interposer.get('symbol', {}), False)
+        interposer_valid = not self._symbol_assignment_issue(
+            'interposer', interposer_symbol, self._interposer_used_pins(reference),
+        )
+        assigned_interposer = int(bool(interposer_valid and interposer.get('library_id')))
         interposer_total = int(bool(reference))
         self.interposer_assignment_status.SetLabel(
             f'{assigned_interposer} of {interposer_total} interposers assigned',
         )
         names = self.controller.gang_names()
-        assigned_gangs = sum(bool(self.controller.gang(name).get('symbol', {}).get('library_id') and
-                                  self.controller.gang(name).get('library_id')) for name in names)
+        assigned_gangs = 0
+        for name in names:
+            selection = self.controller.gang(name)
+            symbol = self._configured_symbol(selection.get('symbol', {}), True)
+            assigned_gangs += bool(
+                not self._symbol_assignment_issue('rf', symbol) and selection.get('library_id')
+            )
         self.gang_assignment_status.SetLabel(f'{assigned_gangs} of {len(names)} gangs assigned')
         dc_names = self.controller.dc_connector_names()
-        assigned_dc = sum(bool(self.controller.dc_connector(name).get('symbol', {}).get('library_id') and
-                               self.controller.dc_connector(name).get('library_id'))
-                          for name in dc_names)
+        assigned_dc = 0
+        for name in dc_names:
+            selection = self.controller.dc_connector(name)
+            symbol = self._configured_symbol(selection.get('symbol', {}), False)
+            assigned_dc += bool(
+                not self._symbol_assignment_issue(
+                    'dc', symbol, self._connector_used_pins(name),
+                ) and selection.get('library_id')
+            )
         self.dc_assignment_status.SetLabel(
             f'{assigned_dc} of {len(dc_names)} DC connectors assigned'
         )

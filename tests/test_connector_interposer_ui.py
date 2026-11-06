@@ -116,6 +116,58 @@ class ControllerTests(unittest.TestCase):
         issues = self.controller.validate()
         self.assertEqual([issue.source_row for issue in issues if issue.code == 'layer_disallowed'], [3, 4])
 
+    def test_interposer_symbol_must_contain_every_used_workbook_pin(self):
+        import hashlib
+        symbol_path = self.root / 'Interposer.kicad_sym'
+        symbol_path.write_text('''(kicad_symbol_lib (version 20241209) (generator "test")
+          (symbol "Small" (in_bom yes) (on_board yes)
+            (property "Reference" "U" (at 0 5 0) (effects (font (size 1 1))))
+            (property "Value" "Small" (at 0 7 0) (effects (font (size 1 1))))
+            (property "ki_fp_filters" "Small" (at 0 0 0) (effects (font (size 1 1)) hide))
+            (symbol "Small_1_1"
+              (pin passive line (at 0 0 180) (length 2.54) (name "A1" (effects (font (size .8 .8)))) (number "A1" (effects (font (size .8 .8)))))
+              (pin passive line (at 0 -2.54 180) (length 2.54) (name "A2" (effects (font (size .8 .8)))) (number "A2" (effects (font (size .8 .8))))))))''')
+        digest = hashlib.sha256(symbol_path.read_bytes()).hexdigest()
+        self.controller.config['interposers']['U1'] = {
+            'symbol': {
+                'path': str(symbol_path), 'library_id': 'Approved:Small',
+                'sha256': digest,
+            },
+        }
+        issues = self.controller.validate()
+        count_issues = [issue for issue in issues if issue.code == 'interposer_pin_count']
+        self.assertEqual(len(count_issues), 1)
+        self.assertIn('symbol has 2 pins; 3 pins are used', count_issues[0].message)
+
+    def test_dc_symbol_must_contain_every_used_connector_pin(self):
+        import hashlib
+        self.workbook.write_text(
+            'Signal,NetClass,Interposer,Interposer Pin,Connector,Connector Pin,Layer\n'
+            'PWR,DC,E1,A1,J1,1,L1\n'
+            'CTRL,DC,E1,A2,J1,2,L1\n'
+        )
+        self.controller.load_workbook(self.workbook)
+        self.controller.set_netclass_type('DC', 'DC')
+        symbol_path = self.root / 'DC.kicad_sym'
+        symbol_path.write_text('''(kicad_symbol_lib (version 20241209) (generator "test")
+          (symbol "OnePin" (in_bom yes) (on_board yes)
+            (property "Reference" "J" (at 0 5 0) (effects (font (size 1 1))))
+            (property "Value" "OnePin" (at 0 7 0) (effects (font (size 1 1))))
+            (property "ki_fp_filters" "OnePin" (at 0 0 0) (effects (font (size 1 1)) hide))
+            (symbol "OnePin_1_1"
+              (pin passive line (at 0 0 180) (length 2.54) (name "1" (effects (font (size .8 .8)))) (number "1" (effects (font (size .8 .8))))))))''')
+        digest = hashlib.sha256(symbol_path.read_bytes()).hexdigest()
+        self.controller.set_dc_connector('J1', {
+            'symbol': {
+                'path': str(symbol_path), 'library_id': 'Approved:OnePin',
+                'sha256': digest,
+            },
+        })
+        issues = self.controller.validate()
+        count_issues = [issue for issue in issues if issue.code == 'dc_pin_count']
+        self.assertEqual(len(count_issues), 1)
+        self.assertIn('symbol has 1 pin; 2 pins are used', count_issues[0].message)
+
     def test_independent_gangs_and_explicit_copy_preserve_anchors(self):
         self.controller.set_gang('J101', {
             'pitch_x': 4, 'anchor': [30, 20], 'anchor_accepted': True,
@@ -388,6 +440,14 @@ class NativeDialogTests(unittest.TestCase):
             dialog._show_layer_assignment_menu(0)
         self.assertEqual(menu_labels[0], ('Clear assignment', 'RF', 'DC'))
         self.assertEqual(menu_labels[1], ('Clear assignment', 'F.Cu', 'In1.Cu', 'B.Cu'))
+        def choose_rf(_window, menu, _position):
+            return next(
+                item.GetId() for item in menu.GetMenuItems()
+                if item.GetItemLabelText() == 'RF'
+            )
+        with mock.patch.object(dialog, '_popup_assignment_menu', side_effect=choose_rf):
+            dialog._show_netclass_type_menu(0)
+        self.assertEqual(dialog.controller.config['netclass_types']['RF'], 'RF')
         self.assertFalse(dialog.netclass_type_grid.IsCellEditControlShown())
         self.assertFalse(dialog.layer_map.IsCellEditControlShown())
         dialog.auto_assign_netclass_types(None)
@@ -911,12 +971,16 @@ class NativeDialogTests(unittest.TestCase):
                 symbol = SimpleNamespace(
                     library_id='Example:Connector', value='Connector', mpn='',
                     unit_count=1, footprint_filters=('Connector',),
+                    pin_numbers=(('1', 0, 0, 0), ('2', 0, 0, 0)),
                 )
                 dialog._allowed_footprint_specs = lambda _symbol: (option,)
                 dialog.assignment_filter.ChangeValue('J101')
                 dialog.refresh_connector_assignments(True)
                 self.assertEqual(set(dialog.gang_assignment_controls), {'J101'})
-                self.assertEqual(dialog.dc_assignment_controls, {})
+                self.assertEqual(set(dialog.dc_assignment_controls), {'J1', 'J2'})
+                dialog.dc_assignment_filter.ChangeValue('J1')
+                dialog.refresh_connector_assignments(True)
+                self.assertEqual(set(dialog.dc_assignment_controls), {'J1'})
 
                 dialog.assign_all_gang_symbols(symbol_spec, symbol)
                 dialog.assign_all_gang_footprints(option)
@@ -957,9 +1021,87 @@ class NativeDialogTests(unittest.TestCase):
                     )
                 dialog.assign_dc_footprint('J1', option)
                 self.assertEqual(dialog.dc_assignment_all_controls['symbol'].selection, {})
+                self.assertEqual(
+                    dialog.dc_assignment_all_controls['symbol_pins'].GetLabel(), '—',
+                )
                 self.assertFalse(dialog.dc_assignment_all_controls['footprint'].IsEnabled())
                 dialog.assign_dc_footprint('J1', {})
                 self.assertEqual(dialog.controller.dc_connector('J1')['library_id'], '')
+            finally:
+                dialog.Destroy()
+                self.app.Yield()
+
+    def test_connector_assignment_pin_counts_gate_dc_completion(self):
+        import hashlib
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog, ui_palette
+        from plugins.connector_interposer_workflow.core.libraries import read_symbol
+        from plugins.connector_interposer_workflow.core.model import HEADERS
+        from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            symbols = root / 'Connectors.kicad_sym'
+            symbols.write_text('''(kicad_symbol_lib (version 20241209) (generator "test")
+              (symbol "OnePin" (in_bom yes) (on_board yes)
+                (property "Reference" "J" (at 0 5 0) (effects (font (size 1 1))))
+                (property "Value" "OnePin" (at 0 7 0) (effects (font (size 1 1))))
+                (property "ki_fp_filters" "DC3" (at 0 0 0) (effects (font (size 1 1)) hide))
+                (symbol "OnePin_1_1"
+                  (pin passive line (at 0 0 180) (length 2.54)
+                    (name "1" (effects (font (size .8 .8))))
+                    (number "1" (effects (font (size .8 .8)))))))
+              (symbol "ThreePin" (in_bom yes) (on_board yes)
+                (property "Reference" "J" (at 0 5 0) (effects (font (size 1 1))))
+                (property "Value" "ThreePin" (at 0 7 0) (effects (font (size 1 1))))
+                (property "ki_fp_filters" "DC3" (at 0 0 0) (effects (font (size 1 1)) hide))
+                (symbol "ThreePin_1_1"
+                  (pin passive line (at 0 0 180) (length 2.54) (name "1" (effects (font (size .8 .8)))) (number "1" (effects (font (size .8 .8)))))
+                  (pin passive line (at 0 -2.54 180) (length 2.54) (name "2" (effects (font (size .8 .8)))) (number "2" (effects (font (size .8 .8)))))
+                  (pin passive line (at 0 -5.08 180) (length 2.54) (name "3" (effects (font (size .8 .8)))) (number "3" (effects (font (size .8 .8))))))))''')
+            footprint = root / 'DC3.kicad_mod'
+            footprint.write_text(
+                '(footprint "DC3" (layer "F.Cu") '
+                '(pad "1" thru_hole circle (at 0 0) (size 1 1) (drill .5) (layers "*.Cu" "*.Mask")) '
+                '(pad "2" thru_hole circle (at 2 0) (size 1 1) (drill .5) (layers "*.Cu" "*.Mask")) '
+                '(pad "3" thru_hole circle (at 4 0) (size 1 1) (drill .5) (layers "*.Cu" "*.Mask")))'
+            )
+            table = parse_sheet(Worksheet('Signals', (
+                HEADERS,
+                ('PWR', 'DC', 'E1', 'A1', 'J1', '1', 'L1'),
+                ('CTRL', 'DC', 'E1', 'A2', 'J1', '2', 'L1'),
+            )))
+            dialog = WorkflowDialog()
+            try:
+                dialog.controller.table = table
+                dialog.controller.set_netclass_type('DC', 'DC')
+                option = {
+                    'path': str(footprint), 'library_id': 'Example:DC3', 'sha256': '',
+                }
+                dialog._allowed_footprint_specs = lambda _symbol: (option,)
+                dialog.refresh_connector_assignments(True)
+                digest = hashlib.sha256(symbols.read_bytes()).hexdigest()
+
+                one = read_symbol(symbols, 'Example:OnePin', require_two_pin=False)
+                one_spec = {'path': str(symbols), 'library_id': one.library_id, 'sha256': digest}
+                dialog.assign_dc_symbol('J1', one_spec, one)
+                controls = dialog.dc_assignment_controls['J1']
+                self.assertEqual(controls['symbol_pins'].GetLabel(), '1')
+                self.assertFalse(controls['footprint'].IsEnabled())
+                self.assertEqual(
+                    controls['symbol'].GetBackgroundColour().Get()[:3],
+                    ui_palette().warning.Get()[:3],
+                )
+                self.assertEqual(dialog.dc_assignment_status.GetLabel(),
+                                 '0 of 1 DC connectors assigned')
+
+                three = read_symbol(symbols, 'Example:ThreePin', require_two_pin=False)
+                three_spec = {'path': str(symbols), 'library_id': three.library_id, 'sha256': digest}
+                dialog.assign_dc_symbol('J1', three_spec, three)
+                self.assertEqual(controls['symbol_pins'].GetLabel(), '3')
+                self.assertTrue(controls['footprint'].IsEnabled())
+                controls['footprint'].select_index(0)
+                self.assertEqual(dialog.dc_assignment_status.GetLabel(),
+                                 '1 of 1 DC connectors assigned')
             finally:
                 dialog.Destroy()
                 self.app.Yield()
