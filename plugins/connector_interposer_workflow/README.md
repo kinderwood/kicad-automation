@@ -1,8 +1,14 @@
 # Connector to Interposer Workflow
 
-Version **0.4.17**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.18**, Windows footprint-selection diagnostic build. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
+
+This branch records privacy-conscious footprint-selector traces in the system
+temporary directory. See `DEBUG_WINDOWS_FOOTPRINT_SELECTION.md` for the exact
+reproduction and retrieval procedure. Library identities and paths are hashed;
+exception text can still contain local paths and should be reviewed before it
+is shared.
 
 This independent PCB Action Plugin consumes librarian-approved connector
 footprints and symbols, interposer footprints, and optional immutable RF artifact

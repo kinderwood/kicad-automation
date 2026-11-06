@@ -861,8 +861,14 @@ class FootprintAssignmentCtrl(wx.Panel):
     """Filtered footprint assignment rendered as a one-click table cell."""
     def __init__(self, parent, on_change):
         super().__init__(parent, style=wx.BORDER_SIMPLE | wx.WANTS_CHARS)
+        from .diagnostics import trace
         self.on_change, self.options = on_change, []
         self.selected = {}
+        self._trace_id = format(id(self), 'x')
+        trace(
+            'footprint_control_created', control=self._trace_id,
+            parent_type=type(parent).__name__, callback=getattr(on_change, '__name__', type(on_change).__name__),
+        )
         row = wx.BoxSizer(wx.HORIZONTAL)
         self.display = wx.StaticText(
             self, label='Choose an allowed footprint', style=wx.ST_ELLIPSIZE_END,
@@ -898,6 +904,7 @@ class FootprintAssignmentCtrl(wx.Panel):
             return
 
     def set_options(self, options, selected):
+        from .diagnostics import selection_facts, token, trace
         self.options = [dict(option) for option in options]
         selected = dict(selected or {})
         if (selected.get('library_id') and selected.get('path') and
@@ -915,6 +922,13 @@ class FootprintAssignmentCtrl(wx.Panel):
         )
         self._style(bool(self.selected))
         self._refresh_overflow_tooltip()
+        trace(
+            'footprint_options_set', control=self._trace_id,
+            option_count=len(self.options),
+            option_ids=[token(option.get('library_id', '')) for option in self.options],
+            requested=selection_facts(selected), resolved=selection_facts(self.selected),
+            enabled=self.IsEnabled(), shown=self.IsShown(),
+        )
 
     def selection(self):
         return dict(self.selected)
@@ -926,21 +940,43 @@ class FootprintAssignmentCtrl(wx.Panel):
         self._select(self.options[index])
 
     def _clicked(self, event):
+        from .diagnostics import trace, trace_exception
+        trace(
+            'footprint_mouse_down', control=self._trace_id,
+            source_type=type(event.GetEventObject()).__name__, enabled=self.IsEnabled(),
+            shown=self.IsShown(), option_count=len(self.options), has_focus=self.HasFocus(),
+        )
         if self.IsEnabled():
-            self.SetFocus()
-            self._show_menu()
+            try:
+                self.SetFocus()
+                trace('footprint_focus_requested', control=self._trace_id, has_focus=self.HasFocus())
+                self._show_menu()
+            except Exception as error:
+                trace_exception('footprint_mouse_selection_failed', error, control=self._trace_id)
+                raise
 
     def _key_down(self, event):
+        from .diagnostics import trace, trace_exception
         if event.GetKeyCode() in (
                 wx.WXK_SPACE, wx.WXK_RETURN,
                 getattr(wx, 'WXK_NUMPAD_ENTER', wx.WXK_RETURN),
             ):
-            self._show_menu()
+            trace('footprint_keyboard_open', control=self._trace_id, key_code=event.GetKeyCode())
+            try:
+                self._show_menu()
+            except Exception as error:
+                trace_exception('footprint_keyboard_selection_failed', error, control=self._trace_id)
+                raise
             return
         event.Skip()
 
     def _show_menu(self):
+        from .diagnostics import selection_facts, token, trace, trace_exception
         if not self.IsEnabled() or not self.options:
+            trace(
+                'footprint_menu_not_opened', control=self._trace_id,
+                enabled=self.IsEnabled(), option_count=len(self.options),
+            )
             return
         menu = wx.Menu()
         selected_id = self.selected.get('library_id', '')
@@ -951,19 +987,59 @@ class FootprintAssignmentCtrl(wx.Panel):
             choices[item.GetId()] = dict(option)
         owner = wx.GetTopLevelParent(self)
         position = wx.Point(0, self.GetClientSize().height)
+        trace(
+            'footprint_menu_opening', control=self._trace_id,
+            owner_type=type(owner).__name__, option_count=len(choices),
+            menu_ids=sorted(choices), selected=selection_facts(self.selected),
+            position=[position.x, position.y],
+        )
         try:
-            if hasattr(owner, '_popup_assignment_menu'):
-                chosen = owner._popup_assignment_menu(self, menu, position)
-            else:
-                chosen = self.GetPopupMenuSelectionFromUser(menu, position)
+            try:
+                if hasattr(owner, '_popup_assignment_menu'):
+                    chosen = owner._popup_assignment_menu(self, menu, position)
+                    popup_path = 'owner_helper'
+                else:
+                    chosen = self.GetPopupMenuSelectionFromUser(menu, position)
+                    popup_path = 'control_direct'
+            except Exception as error:
+                trace_exception('footprint_menu_popup_failed', error, control=self._trace_id)
+                raise
         finally:
             menu.Destroy()
+        trace(
+            'footprint_menu_returned', control=self._trace_id,
+            popup_path=popup_path, chosen=chosen, chosen_type=type(chosen).__name__,
+            matched=chosen in choices, menu_ids=sorted(choices),
+        )
         if chosen in choices:
             self._select(choices[chosen])
+        else:
+            trace('footprint_menu_no_match', control=self._trace_id, chosen=chosen)
 
     def _select(self, selection):
-        self.set_options(self.options, selection)
-        self.on_change(self.selection())
+        from .diagnostics import selection_facts, token, trace, trace_exception
+        trace(
+            'footprint_select_begin', control=self._trace_id,
+            before=selection_facts(self.selected), requested=selection_facts(selection),
+        )
+        try:
+            self.set_options(self.options, selection)
+            resolved = self.selection()
+            trace(
+                'footprint_select_callback_begin', control=self._trace_id,
+                resolved=selection_facts(resolved),
+            )
+            self.on_change(resolved)
+            trace(
+                'footprint_select_callback_complete', control=self._trace_id,
+                selected=selection_facts(self.selected), label=token(self.display.GetLabel()),
+            )
+        except Exception as error:
+            trace_exception(
+                'footprint_select_failed', error, control=self._trace_id,
+                selected=selection_facts(self.selected),
+            )
+            raise
 
     def _style(self, assigned):
         palette = ui_palette()
@@ -2474,17 +2550,35 @@ class WorkflowDialog(wx.Dialog):
         self._refresh_assignment_status()
 
     def assign_interposer_footprint(self, selection):
+        from .diagnostics import selection_facts, trace, trace_exception
         reference = self._interposer_reference()
+        trace(
+            'assign_interposer_footprint_enter', has_reference=bool(reference),
+            selection=selection_facts(selection),
+        )
         if not reference or not selection:
+            trace('assign_interposer_footprint_ignored', has_reference=bool(reference))
             return
         from .core.libraries import read_footprint
-        approved = read_footprint(selection['path'], selection['library_id'], selection.get('sha256'))
-        current = self.controller.config['interposers'].setdefault(reference, {})
-        current.update(dict(approved.pin(), approved=True))
-        current['footprint_mpn'] = approved.mpn
-        current.setdefault('pose', [0, 0, 0])
-        self.controller.changed()
-        self._refresh_assignment_status()
+        try:
+            approved = read_footprint(selection['path'], selection['library_id'], selection.get('sha256'))
+            trace(
+                'assign_interposer_footprint_read', pad_count=len(approved.pad_numbers),
+                selection=selection_facts(approved.pin()),
+            )
+            current = self.controller.config['interposers'].setdefault(reference, {})
+            current.update(dict(approved.pin(), approved=True))
+            current['footprint_mpn'] = approved.mpn
+            current.setdefault('pose', [0, 0, 0])
+            self.controller.changed()
+            self._refresh_assignment_status()
+            trace(
+                'assign_interposer_footprint_complete',
+                stored=selection_facts(current), status=self.interposer_assignment_status.GetLabel(),
+            )
+        except Exception as error:
+            trace_exception('assign_interposer_footprint_failed', error, selection=selection_facts(selection))
+            raise
 
     def _clear_bulk_assignment(self, kind):
         self._bulk_assignments[kind] = {'names': (), 'symbol': {}, 'footprint': {}}
@@ -2539,34 +2633,70 @@ class WorkflowDialog(wx.Dialog):
         self._refresh_assignment_status()
 
     def assign_gang_footprint(self, gang, selection):
+        from .diagnostics import selection_facts, token, trace, trace_exception
+        trace(
+            'assign_gang_footprint_enter', gang=token(gang),
+            selection=selection_facts(selection),
+        )
         if not selection:
+            trace('assign_gang_footprint_ignored', gang=token(gang))
             return
-        self._clear_bulk_assignment('rf')
-        self.controller.set_gang(gang, {
-            'part_id': selection['path'], 'library_id': selection['library_id'],
-            'part_sha256': selection.get('sha256', ''),
-        })
-        self._refresh_assignment_status()
-
-    def assign_all_gang_footprints(self, selection):
-        if not selection:
-            return
-        names = self.controller.gang_names()
-        state = self._bulk_assignments['rf']
-        state['names'] = names
-        state['footprint'] = dict(selection)
-        for gang in names:
+        try:
+            self._clear_bulk_assignment('rf')
             self.controller.set_gang(gang, {
                 'part_id': selection['path'], 'library_id': selection['library_id'],
                 'part_sha256': selection.get('sha256', ''),
             })
-            controls = self.gang_assignment_controls.get(gang)
-            if controls:
-                controls['footprint'].set_options(controls['footprint'].options, selection)
-        self.gang_assignment_all_controls['footprint'].set_options(
-            self.gang_assignment_all_controls['footprint'].options, selection,
-        )
-        self._refresh_assignment_status()
+            self._refresh_assignment_status()
+            stored = self.controller.gang(gang)
+            trace(
+                'assign_gang_footprint_complete', gang=token(gang),
+                stored=selection_facts({
+                    'path': stored.get('part_id', ''),
+                    'library_id': stored.get('library_id', ''),
+                    'sha256': stored.get('part_sha256', ''),
+                }), status=self.gang_assignment_status.GetLabel(),
+            )
+        except Exception as error:
+            trace_exception(
+                'assign_gang_footprint_failed', error, gang=token(gang),
+                selection=selection_facts(selection),
+            )
+            raise
+
+    def assign_all_gang_footprints(self, selection):
+        from .diagnostics import selection_facts, trace, trace_exception
+        trace('assign_all_gang_footprints_enter', selection=selection_facts(selection))
+        if not selection:
+            trace('assign_all_gang_footprints_ignored')
+            return
+        try:
+            names = self.controller.gang_names()
+            state = self._bulk_assignments['rf']
+            state['names'] = names
+            state['footprint'] = dict(selection)
+            for gang in names:
+                self.controller.set_gang(gang, {
+                    'part_id': selection['path'], 'library_id': selection['library_id'],
+                    'part_sha256': selection.get('sha256', ''),
+                })
+                controls = self.gang_assignment_controls.get(gang)
+                if controls:
+                    controls['footprint'].set_options(controls['footprint'].options, selection)
+            self.gang_assignment_all_controls['footprint'].set_options(
+                self.gang_assignment_all_controls['footprint'].options, selection,
+            )
+            self._refresh_assignment_status()
+            trace(
+                'assign_all_gang_footprints_complete', connector_count=len(names),
+                status=self.gang_assignment_status.GetLabel(),
+            )
+        except Exception as error:
+            trace_exception(
+                'assign_all_gang_footprints_failed', error,
+                selection=selection_facts(selection),
+            )
+            raise
 
     def _set_dc_symbol(self, reference, selection, symbol, options):
         prior = self.controller.dc_connector(reference)
@@ -2616,40 +2746,76 @@ class WorkflowDialog(wx.Dialog):
         self._refresh_assignment_status()
 
     def assign_dc_footprint(self, reference, selection):
+        from .diagnostics import selection_facts, token, trace, trace_exception
+        trace(
+            'assign_dc_footprint_enter', reference=token(reference),
+            selection=selection_facts(selection),
+        )
         if not selection:
+            trace('assign_dc_footprint_ignored', reference=token(reference))
             return
-        self._clear_bulk_assignment('dc')
-        from .core.libraries import read_footprint
-        approved = read_footprint(selection['path'], selection['library_id'],
-                                  selection.get('sha256'))
-        self.controller.set_dc_connector(reference, {
-            'path': approved.path, 'library_id': approved.library_id,
-            'sha256': approved.sha256, 'footprint_mpn': approved.mpn,
-        })
-        self._refresh_assignment_status()
-
-    def assign_all_dc_footprints(self, selection):
-        if not selection:
-            return
-        from .core.libraries import read_footprint
-        approved = read_footprint(selection['path'], selection['library_id'],
-                                  selection.get('sha256'))
-        names = self.controller.dc_connector_names()
-        state = self._bulk_assignments['dc']
-        state['names'] = names
-        state['footprint'] = dict(selection)
-        for reference in names:
+        try:
+            self._clear_bulk_assignment('dc')
+            from .core.libraries import read_footprint
+            approved = read_footprint(selection['path'], selection['library_id'],
+                                      selection.get('sha256'))
+            trace(
+                'assign_dc_footprint_read', reference=token(reference),
+                pad_count=len(approved.pad_numbers), selection=selection_facts(approved.pin()),
+            )
             self.controller.set_dc_connector(reference, {
                 'path': approved.path, 'library_id': approved.library_id,
                 'sha256': approved.sha256, 'footprint_mpn': approved.mpn,
             })
-            controls = self.dc_assignment_controls.get(reference)
-            if controls:
-                controls['footprint'].set_options(controls['footprint'].options, selection)
-        self.dc_assignment_all_controls['footprint'].set_options(
-            self.dc_assignment_all_controls['footprint'].options, selection,
-        )
-        self._refresh_assignment_status()
+            self._refresh_assignment_status()
+            trace(
+                'assign_dc_footprint_complete', reference=token(reference),
+                stored=selection_facts(self.controller.dc_connector(reference)),
+                status=self.dc_assignment_status.GetLabel(),
+            )
+        except Exception as error:
+            trace_exception(
+                'assign_dc_footprint_failed', error, reference=token(reference),
+                selection=selection_facts(selection),
+            )
+            raise
+
+    def assign_all_dc_footprints(self, selection):
+        from .diagnostics import selection_facts, trace, trace_exception
+        trace('assign_all_dc_footprints_enter', selection=selection_facts(selection))
+        if not selection:
+            trace('assign_all_dc_footprints_ignored')
+            return
+        try:
+            from .core.libraries import read_footprint
+            approved = read_footprint(selection['path'], selection['library_id'],
+                                      selection.get('sha256'))
+            names = self.controller.dc_connector_names()
+            state = self._bulk_assignments['dc']
+            state['names'] = names
+            state['footprint'] = dict(selection)
+            for reference in names:
+                self.controller.set_dc_connector(reference, {
+                    'path': approved.path, 'library_id': approved.library_id,
+                    'sha256': approved.sha256, 'footprint_mpn': approved.mpn,
+                })
+                controls = self.dc_assignment_controls.get(reference)
+                if controls:
+                    controls['footprint'].set_options(controls['footprint'].options, selection)
+            self.dc_assignment_all_controls['footprint'].set_options(
+                self.dc_assignment_all_controls['footprint'].options, selection,
+            )
+            self._refresh_assignment_status()
+            trace(
+                'assign_all_dc_footprints_complete', connector_count=len(names),
+                pad_count=len(approved.pad_numbers), status=self.dc_assignment_status.GetLabel(),
+            )
+        except Exception as error:
+            trace_exception(
+                'assign_all_dc_footprints_failed', error,
+                selection=selection_facts(selection),
+            )
+            raise
 
     def _configured_symbol(self, selection, require_two_pin):
         if not selection.get('path') or not selection.get('library_id'):
@@ -2718,13 +2884,21 @@ class WorkflowDialog(wx.Dialog):
             sizer.Add(TableDividerCell(parent), 0, wx.EXPAND)
 
     def refresh_connector_assignments(self, force=False):
+        from .diagnostics import token, trace
         reference = self._interposer_reference()
         names = self.controller.gang_names()
         dc_names = self.controller.dc_connector_names()
         query = self.assignment_filter.GetValue().casefold() if hasattr(self, 'assignment_filter') else ''
         signature = (reference, names, dc_names, query)
+        trace(
+            'connector_assignments_refresh_requested', force=bool(force),
+            signature_matches=signature == self._assignment_signature,
+            interposer=token(reference), rf_count=len(names), dc_count=len(dc_names),
+            query=token(query),
+        )
         if not force and signature == self._assignment_signature:
             self._refresh_assignment_status()
+            trace('connector_assignments_refresh_status_only')
             return
         self._assignment_signature = signature
         self.interposer_ref_display.SetLabel(reference or '—')
@@ -2851,8 +3025,13 @@ class WorkflowDialog(wx.Dialog):
         self.dc_assignment_rows.Layout()
         self.pages[4].FitInside()
         self._refresh_assignment_status()
+        trace(
+            'connector_assignments_rebuilt', rf_control_count=len(self.gang_assignment_controls),
+            dc_control_count=len(self.dc_assignment_controls),
+        )
 
     def _refresh_assignment_status(self):
+        from .diagnostics import trace
         reference = self._interposer_reference()
         interposer = self.controller.config['interposers'].get(reference, {}) if reference else {}
         assigned_interposer = int(bool(interposer.get('symbol', {}).get('library_id') and
@@ -2880,6 +3059,11 @@ class WorkflowDialog(wx.Dialog):
             self._style_status(control, 'success' if complete else 'warning')
         if hasattr(self, 'transition_list'):
             self.refresh_rf_transitions()
+        trace(
+            'connector_assignment_status_refreshed',
+            interposer=self.interposer_assignment_status.GetLabel(),
+            rf=self.gang_assignment_status.GetLabel(), dc=self.dc_assignment_status.GetLabel(),
+        )
 
     def build_gangs(self, panel):
         self.task_box(

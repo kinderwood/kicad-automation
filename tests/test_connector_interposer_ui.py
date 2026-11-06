@@ -817,35 +817,47 @@ class NativeDialogTests(unittest.TestCase):
             self.app.Yield()
 
     def test_footprint_popup_routes_selection_through_its_assignment_cell(self):
+        import json
+        from plugins.connector_interposer_workflow import diagnostics
         from plugins.connector_interposer_workflow.ui import (
             FootprintAssignmentCtrl, WorkflowDialog,
         )
 
-        dialog = WorkflowDialog()
-        selected = []
-        control = FootprintAssignmentCtrl(dialog, selected.append)
-        option = {
-            'path': '/tmp/Connector_25.kicad_mod',
-            'library_id': 'Project:Connector_25',
-            'sha256': 'test-revision',
-        }
-        control.set_options((option,), {})
-        control.Enable(True)
+        with tempfile.TemporaryDirectory() as temporary:
+            log_path = Path(temporary) / 'debug.log'
+            with mock.patch.object(diagnostics, 'LOG_PATH', log_path):
+                diagnostics.reset(test='popup')
+                dialog = WorkflowDialog()
+                selected = []
+                control = FootprintAssignmentCtrl(dialog, selected.append)
+                option = {
+                    'path': '/tmp/Connector_25.kicad_mod',
+                    'library_id': 'Project:Connector_25',
+                    'sha256': 'test-revision',
+                }
+                control.set_options((option,), {})
+                control.Enable(True)
 
-        def choose_first(window, menu, _position):
-            self.assertIs(window, control)
-            return menu.GetMenuItems()[0].GetId()
+                def choose_first(window, menu, _position):
+                    self.assertIs(window, control)
+                    return menu.GetMenuItems()[0].GetId()
 
-        try:
-            with mock.patch.object(
-                    dialog, '_popup_assignment_menu', side_effect=choose_first):
-                control._show_menu()
-            self.assertEqual(control.selection(), option)
-            self.assertEqual(selected, [option])
-        finally:
-            control.Destroy()
-            dialog.Destroy()
-            self.app.Yield()
+                try:
+                    with mock.patch.object(
+                            dialog, '_popup_assignment_menu', side_effect=choose_first):
+                        control._show_menu()
+                    self.assertEqual(control.selection(), option)
+                    self.assertEqual(selected, [option])
+                    records = [json.loads(line) for line in log_path.read_text().splitlines()]
+                    events = [record['event'] for record in records]
+                    self.assertIn('footprint_menu_opening', events)
+                    self.assertIn('footprint_menu_returned', events)
+                    self.assertIn('footprint_select_callback_complete', events)
+                    self.assertNotIn(option['library_id'], log_path.read_text())
+                finally:
+                    control.Destroy()
+                    dialog.Destroy()
+                    self.app.Yield()
 
     def test_all_connector_assignment_rows_apply_and_individual_edits_clear_them(self):
         from types import SimpleNamespace
