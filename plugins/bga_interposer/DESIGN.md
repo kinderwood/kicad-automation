@@ -5,6 +5,11 @@ Only decisions not apparent from the user guide, code, or tests belong here.
 - Geometry is constructed about package center, then the complete footprint is
   translated when the guide pin hole is selected as origin. Building directly
   in either coordinate system risks shifting only some layers or features.
+- KiCad 10 receives a native footprint point at package center when the guide
+  pin hole is the origin. KiCad 10's legacy Python API cannot directly construct
+  `PCB_POINT`, so the wizard seeds its otherwise-empty module by parsing a
+  minimal in-memory footprint before drawing any geometry. KiCad 9 lacks point
+  objects and follows the normal module-construction path.
 - Perimeter designations enumerate only retained pads in physical row-major
   order, so their sequence has no gaps after corner depopulation. Interior BGA
   designations remain coordinate-derived from the reduced grid and therefore

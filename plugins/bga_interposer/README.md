@@ -94,7 +94,12 @@ and guide features cannot overlap each other or a retained BGA pad. Every guide
 feature must remain inside the package. Choosing the guide pin hole center as
 the origin translates the entire footprint without changing the relative
 package, pad, outline, or courtyard geometry. Slots cannot be selected as the
-footprint origin.
+footprint origin. In KiCad 10, selecting the guide pin hole as origin also adds
+a native 1 mm point at package center on `F.Cu`. Hover near that point before
+starting a move to pick up the footprint by its package center while retaining
+the guide pin hole as the authoritative footprint origin. KiCad 9 does not
+support footprint point objects, so this secondary pickup point is unavailable
+there.
 
 The guide pin hole and slots are non-electrical NPTH features using KiCad's
 standard `*.Cu` and `*.Mask` layer set. Pad size exactly equals drill size, so

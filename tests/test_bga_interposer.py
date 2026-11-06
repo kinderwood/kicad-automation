@@ -749,6 +749,27 @@ class BGAInterposerWizardTests(unittest.TestCase):
             self.pads_by_name(wizard)["A1"].GetPosition(),
         )
 
+        if hasattr(wizard.module, "Points"):
+            self.assertEqual(1, wizard.module.Points().size())
+
+            with tempfile.TemporaryDirectory(suffix=".pretty") as library:
+                plugin = pcbnew.PCB_IO_KICAD_SEXPR()
+                plugin.FootprintSave(library, wizard.module)
+                footprint_path = Path(library) / (wizard.GetValue() + ".kicad_mod")
+                footprint_text = footprint_path.read_text()
+                self.assertIn("(point", footprint_text)
+                self.assertIn("(at 11.5 11.5)", footprint_text)
+                self.assertIn('(layer "F.Cu")', footprint_text)
+
+                loaded = plugin.FootprintLoad(library, wizard.GetValue())
+                self.assertEqual(1, loaded.Points().size())
+
+    def test_package_center_point_is_only_added_for_guide_pin_origin(self):
+        wizard = self.make_wizard()
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        if hasattr(wizard.module, "Points"):
+            self.assertEqual(0, wizard.module.Points().size())
+
     def test_guide_pin_hole_can_be_disabled(self):
         wizard = self.make_wizard(
             Guide_pin_hole__enabled=False,

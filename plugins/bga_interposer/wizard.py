@@ -885,6 +885,53 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             return self._guide_pin_hole_position()
         return 0, 0
 
+    def _initialize_module_with_package_center_point(self):
+        """Seed a KiCad 10 footprint with a package-center pickup point.
+
+        KiCad 10 supports native PCB_POINT objects in footprints, but does not
+        expose their constructor through its legacy Python bindings. Parsing a
+        minimal in-memory footprint provides a binding path to the same native
+        object. KiCad 9 has neither the object nor its file syntax, so
+        the wizard retains the ordinary module created by FootprintWizardBase.
+        """
+        origin_x, origin_y = self._origin_offset()
+        if not (origin_x or origin_y):
+            return
+
+        if not (
+            hasattr(pcbnew, "PCB_POINT_T")
+            and hasattr(pcbnew, "Cast_to_FOOTPRINT")
+            and hasattr(pcbnew.FOOTPRINT, "Points")
+        ):
+            return
+
+        center_x = pcbnew.ToMM(-origin_x)
+        center_y = pcbnew.ToMM(-origin_y)
+        source = (
+            '(footprint "BGAInterposerPointSeed" '
+            '(version 20240108) '
+            '(generator "bga_interposer_wizard") '
+            '(layer "F.Cu") '
+            '(point (at {:.9g} {:.9g}) (size 1) (layer "F.Cu")))'
+        ).format(center_x, center_y)
+
+        parsed_item = pcbnew.PCB_IO_KICAD_SEXPR().Parse(source)
+        module = pcbnew.Cast_to_FOOTPRINT(parsed_item)
+        if module is None or module.Points().size() != 1:
+            raise RuntimeError("KiCad failed to create the package-center point")
+
+        # BuildFootprint initialized these fields on its original empty module
+        # before calling us. Reapply them to the parsed module and point the
+        # drawing helper at it before any footprint geometry is constructed.
+        self.module = module
+        self.draw = FootprintWizardBase.FootprintWizardDrawingAids(self.module)
+        self.module.SetValue(self.GetValue())
+        self.module.SetReference("{}**".format(self.GetReferencePrefix()))
+        self.module.SetFPID(pcbnew.LIB_ID("", self.module.GetValue()))
+        text_thickness = self.GetTextThickness()
+        self.module.Reference().SetTextThickness(text_thickness)
+        self.module.Value().SetTextThickness(text_thickness)
+
     def _add_pads(self):
         pads = self.parameters["Pads"]
         columns = pads["columns"]
@@ -1202,6 +1249,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         return anchor_x - offset_component, anchor_y - offset_component
 
     def BuildThisFootprint(self):
+        self._initialize_module_with_package_center_point()
         self._add_pads()
         self._add_guide_pin_hole()
         self._add_guide_pin_slots()
