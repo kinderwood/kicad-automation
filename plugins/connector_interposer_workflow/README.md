@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.14**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.15**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -103,7 +103,9 @@ an already-open source board does not update the output copy.
    footprint cell lists only filtered library parts whose electrical pad
    numbers exactly match the symbol pins. Selections update the workflow
    immediately. Footprints use a one-click table-integrated menu; long symbol
-   and footprint names are ellipsized inside bounded columns. Each composed
+   and footprint names are ellipsized inside bounded columns. Hovering a clipped
+   assignment cell shows its complete value; fully visible values have no
+   tooltip. Each composed
    connector table sits inside one bordered window-colour surface with a small
    inset. Equal-height bordered cells align displayed connector data with its
    assignment controls, and one clean divider separates the **All** action row
@@ -121,7 +123,8 @@ an already-open source board does not update the output copy.
    `10mm` or `10 mm` selects that unit when the field is committed. Row offsets
    keep the value and unit selector together in one cell. These value-entry
    cells activate on one click and commit a complete value on Enter, focus
-   departure, unit selection or cell navigation. On **Numbering**,
+   departure, unit selection or cell navigation. A clipped value-entry cell
+   exposes its complete typed value on hover. On **Numbering**,
    choose row-major, serpentine, column-major or custom numbering; set pattern
    rotation independently from connector orientation; choose the mounting side
    and optional layout mirror. The numbered preview keeps location 1 marked as

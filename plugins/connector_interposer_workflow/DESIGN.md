@@ -56,6 +56,8 @@ opens the native menu or picker, Space or Enter provides keyboard access, and
 dismissal leaves no editor active. Netlist source, Netclass type, Layer
 assignment and Connector assignments use this pattern. It avoids
 focus-dependent edit state and makes the control distinct from displayed data.
+When its displayed value is clipped, hovering anywhere on the assignment cell
+shows the complete value; fully visible values do not add a tooltip.
 
 A **value-entry cell** accepts typed numeric or geometric content in a dense
 editable form. It retains a neutral native surface, activates its real editor
@@ -63,7 +65,9 @@ on one click and commits on Enter, focus departure, unit selection or cell
 navigation. Dimension value-entry cells keep the number left aligned and the
 unit selector right aligned in one bordered cell. The active editor must be tall
 enough for the native Windows and GTK text and choice controls; typed unit
-suffixes are parsed only when the complete value is committed. Mapping grids
+suffixes are parsed only when the complete value is committed. A clipped
+value-entry cell shows its complete typed value on hover and otherwise has no
+tooltip. Mapping grids
 size columns from bounded content measurements and end after the final defined
 column.
 

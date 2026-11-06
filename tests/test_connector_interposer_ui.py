@@ -760,6 +760,62 @@ class NativeDialogTests(unittest.TestCase):
                 dialog.Destroy()
                 self.app.Yield()
 
+    def test_overflow_tooltips_cover_assignment_and_value_entry_cells(self):
+        from plugins.connector_interposer_workflow.ui import (
+            DimensionCellRenderer, WorkflowDialog,
+        )
+
+        dialog = WorkflowDialog()
+        try:
+            dialog.select_page(4)
+            dialog.Show()
+            self.app.Yield()
+            long_symbol = 'Project:' + 'Very_Long_Connector_Symbol_' * 8
+            dialog.interposer_symbol_assignment.set_selection({
+                'library_id': long_symbol,
+            })
+            dialog.interposer_symbol_assignment.Layout()
+            dialog.interposer_symbol_assignment._refresh_overflow_tooltip()
+            self.assertEqual(
+                dialog.interposer_symbol_assignment.display.GetToolTipText(),
+                long_symbol,
+            )
+            dialog.interposer_symbol_assignment.set_selection({'library_id': 'J1'})
+            dialog.interposer_symbol_assignment._refresh_overflow_tooltip()
+            self.assertEqual(
+                dialog.interposer_symbol_assignment.display.GetToolTipText(), '',
+            )
+
+            long_footprint = 'Project:' + 'Very_Long_Connector_Footprint_' * 8
+            selection = {'library_id': long_footprint, 'path': '/tmp/example.kicad_mod'}
+            dialog.interposer_footprint_assignment.set_options([selection], selection)
+            dialog.interposer_footprint_assignment.Layout()
+            dialog.interposer_footprint_assignment._refresh_overflow_tooltip()
+            self.assertEqual(
+                dialog.interposer_footprint_assignment.chevron.GetToolTipText(),
+                long_footprint,
+            )
+
+            long_assignment = 'Workbook column with a deliberately long heading'
+            dialog.mapper.SetCellValue(0, 2, long_assignment)
+            dialog.mapper.SetColSize(2, 90)
+            self.assertEqual(
+                dialog._grid_overflow_text(dialog.mapper, 0, 2), long_assignment,
+            )
+            dialog.mapper.SetColSize(2, 600)
+            self.assertEqual(dialog._grid_overflow_text(dialog.mapper, 0, 2), '')
+
+            long_dimension = '123456789.123456 inch'
+            dialog.gang_rows.SetCellRenderer(0, 2, DimensionCellRenderer())
+            dialog.gang_rows.SetCellValue(0, 2, long_dimension)
+            dialog.gang_rows.SetColSize(2, 90)
+            self.assertEqual(
+                dialog._grid_overflow_text(dialog.gang_rows, 0, 2), long_dimension,
+            )
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
     def test_all_connector_assignment_rows_apply_and_individual_edits_clear_them(self):
         from types import SimpleNamespace
         from plugins.connector_interposer_workflow.ui import WorkflowDialog, ui_palette

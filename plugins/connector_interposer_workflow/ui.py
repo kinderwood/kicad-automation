@@ -60,6 +60,20 @@ def ui_palette():
     return UiPalette()
 
 
+def _overflow_tooltip(control, text, padding=2, available_width=None):
+    """Return the full text only when the control cannot display it."""
+    text = str(text or '')
+    width = (control.GetClientSize().width if available_width is None
+             else available_width)
+    available = width - padding
+    if not text or available <= 0:
+        return ''
+    dc = wx.ClientDC(control)
+    dc.SetFont(control.GetFont())
+    clipped = wx.Control.Ellipsize(text, dc, wx.ELLIPSIZE_END, available)
+    return text if clipped != text else ''
+
+
 class StepList(wx.VListBox):
     """Compact native navigation with one border and a bold active step."""
     def __init__(self, parent, choices):
@@ -794,7 +808,28 @@ class SymbolAssignmentCtrl(wx.Panel):
         self.select.Bind(wx.EVT_BUTTON, owner.guard(self.choose))
         row.Add(self.select, 0, wx.ALL, 4)
         self.SetSizer(row)
+        self.Bind(wx.EVT_SIZE, self._resized)
         self.set_selection({})
+
+    def _resized(self, event):
+        event.Skip()
+        wx.CallAfter(self._refresh_overflow_tooltip)
+
+    def _refresh_overflow_tooltip(self):
+        try:
+            text = self.display.GetLabel()
+            available = max(
+                self.display.GetClientSize().width,
+                self.GetClientSize().width - self.select.GetSize().width - 16,
+            )
+            tooltip = _overflow_tooltip(
+                self.display, text, available_width=available,
+            )
+            for control in (self, self.display, self.select):
+                control.SetToolTip(tooltip)
+        except RuntimeError:
+            # Dynamic connector rows can be rebuilt before a queued size event.
+            return
 
     def choose(self, event):
         if self.owner.pcbnew is None or self.owner.controller.board_path is None:
@@ -819,6 +854,7 @@ class SymbolAssignmentCtrl(wx.Panel):
         self.SetForegroundColour(palette.text)
         self.display.SetForegroundColour(palette.text)
         self.Refresh()
+        self._refresh_overflow_tooltip()
 
 
 class FootprintAssignmentCtrl(wx.Panel):
@@ -838,7 +874,28 @@ class FootprintAssignmentCtrl(wx.Panel):
         for control in (self, self.display, self.chevron):
             control.Bind(wx.EVT_LEFT_DOWN, self._clicked)
         self.Bind(wx.EVT_KEY_DOWN, self._key_down)
+        self.Bind(wx.EVT_SIZE, self._resized)
         self.set_options((), {})
+
+    def _resized(self, event):
+        event.Skip()
+        wx.CallAfter(self._refresh_overflow_tooltip)
+
+    def _refresh_overflow_tooltip(self):
+        try:
+            text = self.display.GetLabel()
+            available = max(
+                self.display.GetClientSize().width,
+                self.GetClientSize().width - self.chevron.GetSize().width - 24,
+            )
+            tooltip = _overflow_tooltip(
+                self.display, text, available_width=available,
+            )
+            for control in (self, self.display, self.chevron):
+                control.SetToolTip(tooltip)
+        except RuntimeError:
+            # Dynamic connector rows can be rebuilt before a queued size event.
+            return
 
     def set_options(self, options, selected):
         self.options = [dict(option) for option in options]
@@ -857,6 +914,7 @@ class FootprintAssignmentCtrl(wx.Panel):
             self.selected.get('library_id', 'Choose an allowed footprint'),
         )
         self._style(bool(self.selected))
+        self._refresh_overflow_tooltip()
 
     def selection(self):
         return dict(self.selected)
@@ -1105,6 +1163,66 @@ class WorkflowDialog(wx.Dialog):
         view.SetLabelTextColour(palette.panel_text)
         view.SetSelectionBackground(palette.highlight)
         view.SetSelectionForeground(palette.highlight_text)
+        self._enable_grid_overflow_tooltips(view)
+
+    def _enable_grid_overflow_tooltips(self, view):
+        if getattr(view, '_workflow_overflow_tooltips', False):
+            return
+        view._workflow_overflow_tooltips = True
+        window = view.GetGridWindow()
+        window.Bind(
+            wx.EVT_MOTION,
+            lambda event, target=view: self._grid_tooltip_motion(event, target),
+        )
+        window.Bind(wx.EVT_LEAVE_WINDOW, self._grid_tooltip_leave)
+
+    @staticmethod
+    def _grid_overflow_text(view, row, column):
+        if not (0 <= row < view.GetNumberRows()
+                and 0 <= column < view.GetNumberCols()):
+            return ''
+        renderer = view.GetCellRenderer(row, column)
+        try:
+            if not isinstance(renderer, (AssignmentRenderer, DimensionCellRenderer)):
+                return ''
+            value = view.GetCellValue(row, column).strip()
+            if not value:
+                return ''
+            dc = wx.ClientDC(view.GetGridWindow())
+            dc.SetFont(view.GetCellFont(row, column))
+            width = view.CellToRect(row, column).width
+            if isinstance(renderer, AssignmentRenderer):
+                available = max(0, width - (28 if renderer.arrow else 12))
+                clipped = wx.Control.Ellipsize(
+                    value, dc, wx.ELLIPSIZE_END, available,
+                )
+                return value if clipped != value else ''
+            try:
+                _value_mm, unit, number_text = parse_dimension(value, 'mil')
+                display = f'{number_text} {unit}'
+            except ValueError:
+                display = value
+                unit = ''
+                number_text = value
+            number_width = dc.GetTextExtent(number_text)[0]
+            unit_width = dc.GetTextExtent(unit + ' ▾')[0] if unit else 0
+            return display if number_width + unit_width + 24 > width else ''
+        finally:
+            renderer.DecRef()
+
+    def _grid_tooltip_motion(self, event, view):
+        x, y = view.CalcUnscrolledPosition(event.GetX(), event.GetY())
+        row, column = view.YToRow(y), view.XToCol(x)
+        tooltip = self._grid_overflow_text(view, row, column)
+        window = view.GetGridWindow()
+        if window.GetToolTipText() != tooltip:
+            window.SetToolTip(tooltip)
+        event.Skip()
+
+    @staticmethod
+    def _grid_tooltip_leave(event):
+        event.GetEventObject().SetToolTip('')
+        event.Skip()
 
     @staticmethod
     def _fit_grid_contents(view, columns):
