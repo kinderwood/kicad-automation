@@ -833,10 +833,8 @@ class NativeDialogTests(unittest.TestCase):
         control.Enable(True)
 
         def choose_first(window, menu, _position):
-            item = menu.GetMenuItems()[0]
-            event = self.wx.CommandEvent(self.wx.EVT_MENU.typeId, item.GetId())
-            self.assertTrue(window.GetEventHandler().ProcessEvent(event))
-            return True
+            self.assertIs(window, control)
+            return menu.GetMenuItems()[0].GetId()
 
         try:
             with mock.patch.object(

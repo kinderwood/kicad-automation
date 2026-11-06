@@ -944,31 +944,22 @@ class FootprintAssignmentCtrl(wx.Panel):
             return
         menu = wx.Menu()
         selected_id = self.selected.get('library_id', '')
-        bindings = []
+        choices = {}
         for option in self.options:
             item = menu.AppendRadioItem(wx.ID_ANY, option['library_id'])
             item.Check(option['library_id'] == selected_id)
-            handler = lambda event, value=dict(option): self._select(value)
-            # PopupMenu sends its command events to the window that opened it.
-            # Binding the temporary wx.Menu happens to work on GTK, but Windows
-            # does not consistently route the command through that object.
-            self.Bind(
-                wx.EVT_MENU,
-                handler,
-                id=item.GetId(),
-            )
-            bindings.append((item.GetId(), handler))
+            choices[item.GetId()] = dict(option)
         owner = wx.GetTopLevelParent(self)
         position = wx.Point(0, self.GetClientSize().height)
         try:
             if hasattr(owner, '_popup_assignment_menu'):
-                owner._popup_assignment_menu(self, menu, position)
+                chosen = owner._popup_assignment_menu(self, menu, position)
             else:
-                self.PopupMenu(menu, position)
+                chosen = self.GetPopupMenuSelectionFromUser(menu, position)
         finally:
-            for item_id, handler in bindings:
-                self.Unbind(wx.EVT_MENU, handler=handler, id=item_id)
             menu.Destroy()
+        if chosen in choices:
+            self._select(choices[chosen])
 
     def _select(self, selection):
         self.set_options(self.options, selection)
@@ -1711,7 +1702,9 @@ class WorkflowDialog(wx.Dialog):
 
     @staticmethod
     def _popup_assignment_menu(window, menu, position):
-        return window.PopupMenu(menu, position)
+        # Return the selected ID directly instead of depending on platform-
+        # specific wx.EVT_MENU delivery from a temporary popup menu.
+        return window.GetPopupMenuSelectionFromUser(menu, position)
 
     def _set_mapping_choice(self, column, value):
         if self._closing:
