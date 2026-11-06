@@ -1,23 +1,30 @@
 {
   "purpose": "Demonstration inputs retained from Stage 0; experimental geometry, not production library approval or manufacturing qualification. Workflow treats these as selected immutable librarian inputs.",
-  "source": "User-provided B012-L13-01 geometry, BGA wizard settings and A/B workbook/DXF examples; existing Stage 0 exports copied without regenerating source footprints.",
+  "source": "User-provided B012-L13-01 geometry, BGA wizard settings and A/B workbook/DXF examples, extended with the self-contained demonstration DE-9 connector and DC mappings; existing GPPO and interposer source footprints were not regenerated.",
   "sha256": {
-    "inputs/dxf-A-mils.dxf": "a6528dba3a5aaab66c00cdcd01f39f91933dd22854e292a5f97c67737db356b2",
-    "inputs/dxf-B-mils.dxf": "dd27e859ec8747547b4552a19d440e6a414c22c91a6ebe01746f12e913f5e7e5",
+    "inputs/dxf-A-mils.dxf": "0511c23d362a060e678619ebabcab1547cea69c1505e78db27fd493f7b098ac6",
+    "inputs/dxf-B-mils.dxf": "b6b65359a395dd39fcf42f39de6327f02de33c3d6581865af5bd2e2521144d7a",
     "inputs/netlist-A-with-notes.xlsx": "b2ce4c766299a38e91839e4ef57ce5dadbd8dc5013cd85ce6ec0e827e3b17a9a",
     "inputs/netlist-A.csv": "6233e0bedbde2a59cabdbb8ea43e4b77cf3b3ad47fd70648e6d19f318ffc1b00",
     "inputs/netlist-A.xlsx": "8c91ebeda52fe99c6de45c2b5fb98b5d3e9d46f2943a0c3d58ad9250edfb691a",
     "inputs/netlist-B.csv": "df32a85c878a1948b57694715ff10721f004937e79d369944a155c3ef2baed0c",
     "inputs/netlist-B.xlsx": "6061b83d7bc59a9a7974f8485b3cc1ae533045ed8946dccde5d23ab97267572c",
-    "inputs/positions-A.json": "5cc53a55e0fb8718f7857400cd815004d34f9a7158b5ff1ede4e6b844d398b4f",
-    "inputs/positions-B.json": "15bb9acf5a1e8d39d34635b2372f2e36a02b803509c195d9c1e39547a2073e3e",
-    "library/Example.kicad_sym": "db0ccfa9abf2cc49f11af9159c5f4cf4b48822fb9217c768596f26c488072d45",
+    "inputs/netlist-A-mixed-with-notes.xlsx": "1bf7375e4b8932b9fa46cd62ce02c4dcd122c8c47deabadcf26033c22ae86309",
+    "inputs/netlist-A-mixed.csv": "921bd736d3e2d4254e4338c86fe48a413a76ea664da0acba5f4b3b70c370ff34",
+    "inputs/netlist-A-mixed.xlsx": "c1e81f92f85b8403fcc048a691ccb56eb4fa2a91c897c053b7eb59ecf8946e99",
+    "inputs/netlist-B-mixed.csv": "d233895edae26e68102dec179746d36f0dcc3b495f81767761e33cc9c191b0c9",
+    "inputs/netlist-B-mixed.xlsx": "defd0edf15f003275072165f456dd72589de72bcc603928d8762b41bba112d6a",
+    "inputs/positions-A.json": "c45702ac6c0511a5d09b44b09603bb300db48da6a9016f0677ea448775bbd86b",
+    "inputs/positions-B.json": "2b51740c6f71f1440e8c3414c43564cf285fcbd73a268d17c70920ff195e3b3e",
+    "library/Example.kicad_sym": "14a19d0b0422a0aa4c41109eb3126183ae37620df5c253f0ae8aee404009cd2e",
+    "library/Example-DC.kicad_sym": "3f45e68c2c0295488a94d33720faa46679b3f1fc27503ebafe29c5c7dfe63278",
+    "library/Example.pretty/DSub_9_Pins_Vertical.kicad_mod": "ca913ce99476d6338b59d6a0ead1004960361f3afdef76d78174f82519dcc251",
     "library/Example.pretty/GPPO_B012_L13_01_EXPERIMENTAL.kicad_mod": "9b8481961b3a17bb8d30576cc15990744b3921cc24b672e50fcb1529027e1194",
     "library/Example.pretty/Interposer_800.kicad_mod": "23da7ac832024979b6e8b8af0944caa538df241344c0685c9df78909264645e4",
     "library/rf/README.md": "70fb47a25423e3a62853db953b7f04eb219ba26ff18d2af112301b60b5d83d8e",
     "library/rf/RF-L2.r1.gppo-rf.json": "71aea60e458968a9467c158d0451a4bc2ea0e81e9483bcf7886147448a021cfc",
     "library/rf/RF-L3.r1.gppo-rf.json": "4b4c772ea734f7e56426edd89bdb3a950b53af7c42fe563ce14a8d34e460105d",
     "library/rf/manifest.json": "c699cbbc98617234504aeabeb104e8978d00c97e6dcb58872e6cd86df79502d6",
-    "mechanical-B.kicad_pcb": "a782a3d2767e1209f84d19cc3ceb8b46cfb235cfcbb1addb889c54554b06821e"
+    "mechanical-B.kicad_pcb": "67e02254cb7f191b2267704f6170d8ebe17bd49f8ebc05ea3a2434ed981a682a"
   }
 }

@@ -28,11 +28,12 @@ def prepare(destination):
     shutil.copy2(fixture / 'mechanical-B.kicad_pcb', board)
     controller = WorkflowController(board, backend=NativeProcessBackend())
     controller.set_layers(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'])
-    controller.load_workbook(fixture / 'inputs/netlist-A.xlsx')
+    controller.load_workbook(fixture / 'inputs/netlist-A-mixed.xlsx')
     controller.config['project_id'] = 'af0ef9ad-e80c-5a97-adf5-ef89acf8d8b9'
     controller.config['layer_mapping'] = {'L2': 'In1.Cu', 'L3': 'In2.Cu'}
     controller.set_netclass_type('CLOCK', 'RF')
     controller.set_netclass_type('DATA', 'RF')
+    controller.set_netclass_type('DC', 'DC')
     controller.config['mechanical'] = {
         'layer': 'User.Drawings', 'accepted': True, 'label_offset': [-2.54, -2.54],
     }
@@ -51,6 +52,20 @@ def prepare(destination):
         pose=[94.95, 94.95, 0], pose_accepted=True,
     )}
     positions = json.loads((fixture / 'inputs/positions-B.json').read_text())
+    dc_path = footprint.with_name('DSub_9_Pins_Vertical.kicad_mod')
+    dc_footprint = read_footprint(dc_path, 'Example:DSub_9_Pins_Vertical')
+    dc_symbol_path = fixture / 'library/Example-DC.kicad_sym'
+    dc_symbol = read_symbol(dc_symbol_path, 'Example:DSub_9', require_two_pin=False)
+    dc_anchor = next(row for row in positions if row['reference'] == 'J1-1')
+    controller.set_dc_connector('J1', dict(
+        dc_footprint.pin(),
+        symbol={'path': str(dc_symbol_path), 'library_id': dc_symbol.library_id,
+                'sha256': dc_symbol.sha256},
+        anchor=[dc_anchor['x_mm'], dc_anchor['y_mm']],
+        anchor_circle={'uuid': dc_anchor['uuid'],
+                       'center': [dc_anchor['x_mm'], dc_anchor['y_mm']]},
+        rotation=0, side='F', anchor_accepted=True,
+    ))
     for name in ('J101', 'J102'):
         anchor = next(row for row in positions if row['reference'] == name + '-1')
         controller.set_gang(name, {
@@ -101,7 +116,7 @@ def run(destination):
     repeat = reopened.review()
     if repeat['status'] != 'NOOP':
         raise AssertionError('Repeated controller preview must be NOOP: ' + str(repeat['changes']))
-    reopened.load_workbook(Path(__file__).resolve().parent / 'inputs/netlist-B.xlsx')
+    reopened.load_workbook(Path(__file__).resolve().parent / 'inputs/netlist-B-mixed.xlsx')
     fixture = Path(__file__).resolve().parent
     for requirement in reopened.rf_transition_requirements():
         architecture = next(

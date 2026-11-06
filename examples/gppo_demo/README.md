@@ -1,11 +1,23 @@
 # GPPO worked example
 
 This example exercises the production Workflow controller with the user's
-12-signal A/B workbooks, two six-position gangs, experimental GPPO footprint,
-800-pad interposer and separately authored RF-L2/RF-L3 artifact bundles.
+21-signal mixed A/B workbooks, two six-position RF gangs, one nine-pin DC D-sub,
+experimental GPPO footprint, 800-pad interposer and separately authored
+RF-L2/RF-L3 artifact bundles.
 The DXF files use mils; the saved board and configuration use millimetres.
 Both gangs in DXF B are single columns on 0.325-inch pitch, numbered top to
 bottom. J201 was a typo; both revisions use J101 and J102.
+The GPPO library symbol uses the conventional coaxial-connector presentation,
+with pin 1 as the center conductor and pin 2 as the shield. The round 2.5 mm
+circle on the DXF `INTERPOSER` layer marks the interposer footprint anchor at
+the center of its round guide pin; in the saved B import that anchor is
+`(94.95, 94.95) mm`.
+The D-sub is `J1`, placed on the south side from its pin-1 anchor at
+`(102.41, 190.00) mm`. Its `DC1` through `DC9` nets map directly to the nine
+adjacent south-edge interposer pads `AK11` through `AK19`; the DC mapping is
+unchanged between A and B.
+The worked run uses `netlist-A-mixed.xlsx` and `netlist-B-mixed.xlsx`. The
+original `netlist-A/B` files remain the focused RF-only contract fixtures.
 
 Run with a tested KiCad Python environment from the repository checkout:
 
@@ -17,9 +29,9 @@ The destination must be new or empty. The script creates a source project from
 the saved native DXF-B import, selects the read-only example parts, applies
 netlist A into `applied-A`, verifies a repeated preview is `NOOP`, and applies
 netlist B into `applied-B`. It records changes and recovery journal paths in
-`demo-results.json`. Netlist B swaps the signals/classes while retaining the
-physical connector positions and assigned routing layers. Initial layer rules
-allow both classes on both inner layers.
+`demo-results.json`. Netlist B swaps the RF signals/classes while retaining the
+physical connector positions, DC assignments and assigned routing layers.
+Initial layer rules allow all three classes on both inner layers.
 
 Open the generated `.kicad_pro` in KiCad Manager, then PCB Editor and
 **Tools → External Plugins → Connector to Interposer Workflow**. The saved sidecar

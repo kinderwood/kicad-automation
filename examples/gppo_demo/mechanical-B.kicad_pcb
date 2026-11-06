@@ -207,6 +207,117 @@
 		(uuid "c7a0f264-2478-4c34-8070-1763a778cb6d")
 	)
 	(gr_circle
+		(center 94.95 94.95)
+		(end 96.2 94.95)
+		(stroke
+			(width 0.2)
+			(type default)
+		)
+		(fill no)
+		(layer "Dwgs.User")
+		(uuid "ce4aa62d-f271-49c8-bfb4-c96f12a96e29")
+	)
+	(gr_circle
+		(center 102.41 190)
+		(end 102.91 190)
+		(stroke
+			(width 0.2)
+			(type default)
+		)
+		(fill no)
+		(layer "Dwgs.User")
+		(uuid "b7f8a357-4e46-523c-96fe-e06b28dcaece")
+	)
+	(gr_circle
+		(center 105.18 190)
+		(end 105.68 190)
+		(stroke
+			(width 0.2)
+			(type default)
+		)
+		(fill no)
+		(layer "Dwgs.User")
+		(uuid "adebeba6-fb89-5185-883b-074cccb54a50")
+	)
+	(gr_circle
+		(center 107.95 190)
+		(end 108.45 190)
+		(stroke
+			(width 0.2)
+			(type default)
+		)
+		(fill no)
+		(layer "Dwgs.User")
+		(uuid "f037b8b5-2882-545c-af43-c86f8ce0ed68")
+	)
+	(gr_circle
+		(center 110.72 190)
+		(end 111.22 190)
+		(stroke
+			(width 0.2)
+			(type default)
+		)
+		(fill no)
+		(layer "Dwgs.User")
+		(uuid "33905e35-8773-5a76-9eae-775fc6805240")
+	)
+	(gr_circle
+		(center 113.49 190)
+		(end 113.99 190)
+		(stroke
+			(width 0.2)
+			(type default)
+		)
+		(fill no)
+		(layer "Dwgs.User")
+		(uuid "03851a30-8e85-57b9-80d0-d12a2fd79803")
+	)
+	(gr_circle
+		(center 103.795 192.84)
+		(end 104.295 192.84)
+		(stroke
+			(width 0.2)
+			(type default)
+		)
+		(fill no)
+		(layer "Dwgs.User")
+		(uuid "35b73476-d5cc-54ac-aec9-0a40c9f7ee30")
+	)
+	(gr_circle
+		(center 106.565 192.84)
+		(end 107.065 192.84)
+		(stroke
+			(width 0.2)
+			(type default)
+		)
+		(fill no)
+		(layer "Dwgs.User")
+		(uuid "41464059-eda1-5945-b7dd-efd45fc569e5")
+	)
+	(gr_circle
+		(center 109.335 192.84)
+		(end 109.835 192.84)
+		(stroke
+			(width 0.2)
+			(type default)
+		)
+		(fill no)
+		(layer "Dwgs.User")
+		(uuid "d078666d-2af5-5d97-84b2-0e64e41c285f")
+	)
+	(gr_circle
+		(center 112.105 192.84)
+		(end 112.605 192.84)
+		(stroke
+			(width 0.2)
+			(type default)
+		)
+		(fill no)
+		(layer "Dwgs.User")
+		(uuid "671f44c0-50a6-5e57-9ed9-1359a61e2444")
+	)
+
+	(gr_circle
 		(center 175.3629 87.3125)
 		(end 176.9758 87.3125)
 		(stroke
