@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.17**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.19**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -105,7 +105,8 @@ an already-open source board does not update the output copy.
    immediately. Footprints use a one-click table-integrated menu; long symbol
    and footprint names are ellipsized inside bounded columns. Hovering a clipped
    assignment cell shows its complete value; fully visible values have no
-   tooltip. Each composed
+   tooltip. Footprint menus begin with **Clear assignment**, followed by the
+   symbol-filtered library choices. Each composed
    connector table sits inside one bordered window-colour surface with a small
    inset. Equal-height bordered cells align displayed connector data with its
    assignment controls, and one clean divider separates the **All** action row

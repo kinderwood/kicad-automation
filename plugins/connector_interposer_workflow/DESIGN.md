@@ -58,6 +58,9 @@ assignment and Connector assignments use this pattern. It avoids
 focus-dependent edit state and makes the control distinct from displayed data.
 When its displayed value is clipped, hovering anywhere on the assignment cell
 shows the complete value; fully visible values do not add a tooltip.
+Footprint assignment menus use one radio group whose first item is **Clear
+assignment**. This makes the empty state explicit and allows the stored mapping
+to be removed without changing the selected symbol.
 
 A **value-entry cell** accepts typed numeric or geometric content in a dense
 editable form. It retains a neutral native surface, activates its real editor

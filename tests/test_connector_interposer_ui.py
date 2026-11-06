@@ -706,10 +706,17 @@ class NativeDialogTests(unittest.TestCase):
                 with mock.patch.object(
                         dialog, '_popup_assignment_menu', side_effect=dismiss_footprint_menu):
                     dialog.interposer_footprint_assignment._show_menu()
-                self.assertEqual(footprint_menu, ['Example:Interposer_800'])
+                self.assertEqual(
+                    footprint_menu,
+                    ['Clear assignment', 'Example:Interposer_800'],
+                )
                 dialog.interposer_footprint_assignment.select_index(0)
                 self.assertEqual(dialog.interposer_assignment_status.GetLabel(),
                                  '1 of 1 interposers assigned')
+                dialog.interposer_footprint_assignment._select({})
+                self.assertEqual(dialog.interposer_assignment_status.GetLabel(),
+                                 '0 of 1 interposers assigned')
+                dialog.interposer_footprint_assignment.select_index(0)
 
                 connector = read_symbol(symbols, 'Example:GPPO')
                 connector_spec = {'path': str(symbols), 'library_id': connector.library_id,
@@ -834,7 +841,13 @@ class NativeDialogTests(unittest.TestCase):
 
         def choose_first(window, menu, _position):
             self.assertIs(window, control)
-            return menu.GetMenuItems()[0].GetId()
+            clear_item, footprint_item = menu.GetMenuItems()
+            self.assertEqual(clear_item.GetItemLabelText(), 'Clear assignment')
+            self.assertEqual(clear_item.GetKind(), self.wx.ITEM_RADIO)
+            self.assertTrue(clear_item.IsChecked())
+            self.assertEqual(footprint_item.GetKind(), self.wx.ITEM_RADIO)
+            self.assertFalse(footprint_item.IsChecked())
+            return footprint_item.GetId()
 
         try:
             with mock.patch.object(
@@ -842,6 +855,18 @@ class NativeDialogTests(unittest.TestCase):
                 control._show_menu()
             self.assertEqual(control.selection(), option)
             self.assertEqual(selected, [option])
+
+            def choose_clear(_window, menu, _position):
+                clear_item, footprint_item = menu.GetMenuItems()
+                self.assertFalse(clear_item.IsChecked())
+                self.assertTrue(footprint_item.IsChecked())
+                return clear_item.GetId()
+
+            with mock.patch.object(
+                    dialog, '_popup_assignment_menu', side_effect=choose_clear):
+                control._show_menu()
+            self.assertEqual(control.selection(), {})
+            self.assertEqual(selected, [option, {}])
         finally:
             control.Destroy()
             dialog.Destroy()
@@ -903,6 +928,10 @@ class NativeDialogTests(unittest.TestCase):
                     self.assertEqual(
                         dialog.controller.gang(name)['library_id'], 'Example:Connector',
                     )
+                dialog.assign_all_gang_footprints({})
+                for name in ('J101', 'J102'):
+                    self.assertEqual(dialog.controller.gang(name)['library_id'], '')
+                dialog.assign_all_gang_footprints(option)
                 self.assertEqual(
                     dialog.gang_assignment_all_controls['symbol'].selection['library_id'],
                     'Example:Connector',
@@ -929,6 +958,8 @@ class NativeDialogTests(unittest.TestCase):
                 dialog.assign_dc_footprint('J1', option)
                 self.assertEqual(dialog.dc_assignment_all_controls['symbol'].selection, {})
                 self.assertFalse(dialog.dc_assignment_all_controls['footprint'].IsEnabled())
+                dialog.assign_dc_footprint('J1', {})
+                self.assertEqual(dialog.controller.dc_connector('J1')['library_id'], '')
             finally:
                 dialog.Destroy()
                 self.app.Yield()

@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.17 and the
+are authorized. Connector to Interposer Workflow is version 0.4.19 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -289,6 +289,17 @@ ID synchronously from wx. The rendered interposer, RF gang and DC connector
 assignment controls are unchanged. DC workbook pins remain a subset of the
 selected symbol and footprint pins; any unused DC pins are emitted as explicit
 no-connect pins.
+
+Windows 11 retesting with KiCad 10.0.8 confirmed that version 0.4.17 still
+returned no selection. A diagnostic build recorded `wx.ID_NONE` after a visible
+footprint option was clicked, before any assignment callback ran. Inspection of
+wxWidgets 3.3.1 source then identified the cause: the Windows menu backend
+suppresses the command event when an already-checked radio item is clicked, and
+a one-item radio group is checked automatically. Version 0.4.19 puts an
+explicit **Clear assignment** state first in the radio group, so an unassigned
+footprint is represented truthfully and the footprint itself remains unchecked
+until selected. Clear assignment also removes the stored interposer, RF, DC or
+bulk footprint mapping.
 
 Additional actual PCB Editor checks use the selected 9.0.9.1 AppImage and
 10.0.8: normal startup discovers both actions and Workflow opens from the

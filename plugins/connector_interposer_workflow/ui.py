@@ -945,7 +945,13 @@ class FootprintAssignmentCtrl(wx.Panel):
         menu = wx.Menu()
         selected_id = self.selected.get('library_id', '')
         choices = {}
+        clear_item = menu.AppendRadioItem(wx.ID_ANY, 'Clear assignment')
+        clear_item.Check(not selected_id)
+        choices[clear_item.GetId()] = {}
         for option in self.options:
+            # Keep an explicit empty state first. MSW suppresses wxEVT_MENU
+            # when an already-checked radio item is clicked, and otherwise a
+            # one-option radio group checks its only footprint automatically.
             item = menu.AppendRadioItem(wx.ID_ANY, option['library_id'])
             item.Check(option['library_id'] == selected_id)
             choices[item.GetId()] = dict(option)
@@ -2475,11 +2481,17 @@ class WorkflowDialog(wx.Dialog):
 
     def assign_interposer_footprint(self, selection):
         reference = self._interposer_reference()
-        if not reference or not selection:
+        if not reference:
+            return
+        current = self.controller.config['interposers'].setdefault(reference, {})
+        if not selection:
+            for key in ('path', 'library_id', 'sha256', 'approved', 'footprint_mpn'):
+                current.pop(key, None)
+            self.controller.changed()
+            self._refresh_assignment_status()
             return
         from .core.libraries import read_footprint
         approved = read_footprint(selection['path'], selection['library_id'], selection.get('sha256'))
-        current = self.controller.config['interposers'].setdefault(reference, {})
         current.update(dict(approved.pin(), approved=True))
         current['footprint_mpn'] = approved.mpn
         current.setdefault('pose', [0, 0, 0])
@@ -2539,9 +2551,14 @@ class WorkflowDialog(wx.Dialog):
         self._refresh_assignment_status()
 
     def assign_gang_footprint(self, gang, selection):
-        if not selection:
-            return
         self._clear_bulk_assignment('rf')
+        if not selection:
+            self.controller.set_gang(gang, {
+                'part_id': '', 'library_id': '', 'part_sha256': '',
+                'footprint_mpn': '',
+            })
+            self._refresh_assignment_status()
+            return
         self.controller.set_gang(gang, {
             'part_id': selection['path'], 'library_id': selection['library_id'],
             'part_sha256': selection.get('sha256', ''),
@@ -2549,17 +2566,19 @@ class WorkflowDialog(wx.Dialog):
         self._refresh_assignment_status()
 
     def assign_all_gang_footprints(self, selection):
-        if not selection:
-            return
         names = self.controller.gang_names()
         state = self._bulk_assignments['rf']
         state['names'] = names
-        state['footprint'] = dict(selection)
+        state['footprint'] = dict(selection or {})
         for gang in names:
-            self.controller.set_gang(gang, {
+            values = ({
                 'part_id': selection['path'], 'library_id': selection['library_id'],
                 'part_sha256': selection.get('sha256', ''),
+            } if selection else {
+                'part_id': '', 'library_id': '', 'part_sha256': '',
+                'footprint_mpn': '',
             })
+            self.controller.set_gang(gang, values)
             controls = self.gang_assignment_controls.get(gang)
             if controls:
                 controls['footprint'].set_options(controls['footprint'].options, selection)
@@ -2616,9 +2635,13 @@ class WorkflowDialog(wx.Dialog):
         self._refresh_assignment_status()
 
     def assign_dc_footprint(self, reference, selection):
-        if not selection:
-            return
         self._clear_bulk_assignment('dc')
+        if not selection:
+            self.controller.set_dc_connector(reference, {
+                'path': '', 'library_id': '', 'sha256': '', 'footprint_mpn': '',
+            })
+            self._refresh_assignment_status()
+            return
         from .core.libraries import read_footprint
         approved = read_footprint(selection['path'], selection['library_id'],
                                   selection.get('sha256'))
@@ -2629,20 +2652,23 @@ class WorkflowDialog(wx.Dialog):
         self._refresh_assignment_status()
 
     def assign_all_dc_footprints(self, selection):
-        if not selection:
-            return
-        from .core.libraries import read_footprint
-        approved = read_footprint(selection['path'], selection['library_id'],
-                                  selection.get('sha256'))
+        approved = None
+        if selection:
+            from .core.libraries import read_footprint
+            approved = read_footprint(selection['path'], selection['library_id'],
+                                      selection.get('sha256'))
         names = self.controller.dc_connector_names()
         state = self._bulk_assignments['dc']
         state['names'] = names
-        state['footprint'] = dict(selection)
+        state['footprint'] = dict(selection or {})
         for reference in names:
-            self.controller.set_dc_connector(reference, {
+            values = ({
                 'path': approved.path, 'library_id': approved.library_id,
                 'sha256': approved.sha256, 'footprint_mpn': approved.mpn,
+            } if approved else {
+                'path': '', 'library_id': '', 'sha256': '', 'footprint_mpn': '',
             })
+            self.controller.set_dc_connector(reference, values)
             controls = self.dc_assignment_controls.get(reference)
             if controls:
                 controls['footprint'].set_options(controls['footprint'].options, selection)
