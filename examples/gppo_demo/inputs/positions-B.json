@@ -3,8 +3,8 @@
     "reference": "J101-1",
     "pin": 1,
     "gang": "J101",
-    "x_mm": 40.5371,
-    "y_mm": 87.31249999999999,
+    "x_mm": 46.88709999999998,
+    "y_mm": 95.24999999999999,
     "uuid": "cda1e61e-e0e5-4294-81c6-88215c92bcfe",
     "orientation_degrees": -90
   },
@@ -12,8 +12,8 @@
     "reference": "J101-2",
     "pin": 2,
     "gang": "J101",
-    "x_mm": 40.5371,
-    "y_mm": 95.5675,
+    "x_mm": 46.88709999999998,
+    "y_mm": 107.94999999999999,
     "uuid": "e156b3f9-1bdb-46c8-a535-49ac5ad9fd47",
     "orientation_degrees": -90
   },
@@ -21,8 +21,8 @@
     "reference": "J101-3",
     "pin": 3,
     "gang": "J101",
-    "x_mm": 40.5371,
-    "y_mm": 103.82249999999999,
+    "x_mm": 46.88709999999998,
+    "y_mm": 120.64999999999998,
     "uuid": "4ee5fe42-8fea-4cdb-b957-963a2f24f919",
     "orientation_degrees": -90
   },
@@ -30,8 +30,8 @@
     "reference": "J101-4",
     "pin": 4,
     "gang": "J101",
-    "x_mm": 40.5371,
-    "y_mm": 112.07749999999999,
+    "x_mm": 34.187099999999994,
+    "y_mm": 95.24999999999999,
     "uuid": "bf70ebf0-5b90-4c4d-89c5-2162a9cdff1f",
     "orientation_degrees": -90
   },
@@ -39,8 +39,8 @@
     "reference": "J101-5",
     "pin": 5,
     "gang": "J101",
-    "x_mm": 40.5371,
-    "y_mm": 120.33249999999998,
+    "x_mm": 34.187099999999994,
+    "y_mm": 107.94999999999999,
     "uuid": "e824e656-4876-46e7-96ad-173fcf90a6fb",
     "orientation_degrees": -90
   },
@@ -48,8 +48,8 @@
     "reference": "J101-6",
     "pin": 6,
     "gang": "J101",
-    "x_mm": 40.5371,
-    "y_mm": 128.58749999999998,
+    "x_mm": 34.187099999999994,
+    "y_mm": 120.64999999999998,
     "uuid": "603f6509-ade1-42fa-b3bb-31583b5da490",
     "orientation_degrees": -90
   },
@@ -57,8 +57,8 @@
     "reference": "J102-1",
     "pin": 1,
     "gang": "J102",
-    "x_mm": 175.3629,
-    "y_mm": 87.31249999999999,
+    "x_mm": 181.7129,
+    "y_mm": 95.25000000000003,
     "uuid": "a31a3960-770a-4e1d-8b36-9ec49169fe57",
     "orientation_degrees": -90
   },
@@ -66,8 +66,8 @@
     "reference": "J102-2",
     "pin": 2,
     "gang": "J102",
-    "x_mm": 175.3629,
-    "y_mm": 95.5675,
+    "x_mm": 181.7129,
+    "y_mm": 107.95000000000002,
     "uuid": "e27c48f1-544f-4296-9c59-b5cb54549f30",
     "orientation_degrees": -90
   },
@@ -75,8 +75,8 @@
     "reference": "J102-3",
     "pin": 3,
     "gang": "J102",
-    "x_mm": 175.3629,
-    "y_mm": 103.82249999999999,
+    "x_mm": 181.7129,
+    "y_mm": 120.65,
     "uuid": "41179569-f02d-443c-8605-efd4507621c1",
     "orientation_degrees": -90
   },
@@ -84,8 +84,8 @@
     "reference": "J102-4",
     "pin": 4,
     "gang": "J102",
-    "x_mm": 175.3629,
-    "y_mm": 112.07749999999999,
+    "x_mm": 169.0129,
+    "y_mm": 95.25000000000003,
     "uuid": "ac859704-b515-4762-920f-1f18d096d673",
     "orientation_degrees": -90
   },
@@ -93,8 +93,8 @@
     "reference": "J102-5",
     "pin": 5,
     "gang": "J102",
-    "x_mm": 175.3629,
-    "y_mm": 120.33249999999998,
+    "x_mm": 169.0129,
+    "y_mm": 107.95000000000002,
     "uuid": "babe2fc1-2646-4220-9b66-e7188e89ba3a",
     "orientation_degrees": -90
   },
@@ -102,90 +102,9 @@
     "reference": "J102-6",
     "pin": 6,
     "gang": "J102",
-    "x_mm": 175.3629,
-    "y_mm": 128.58749999999998,
+    "x_mm": 169.0129,
+    "y_mm": 120.65,
     "uuid": "0c217580-1f4a-4d14-93da-bfdd2b4722be",
     "orientation_degrees": -90
-  },
-  {
-    "reference": "J1-1",
-    "pin": 1,
-    "gang": "J1",
-    "x_mm": 102.41,
-    "y_mm": 190.0,
-    "uuid": "b7f8a357-4e46-523c-96fe-e06b28dcaece",
-    "orientation_degrees": 0
-  },
-  {
-    "reference": "J1-2",
-    "pin": 2,
-    "gang": "J1",
-    "x_mm": 105.18,
-    "y_mm": 190.0,
-    "uuid": "adebeba6-fb89-5185-883b-074cccb54a50",
-    "orientation_degrees": 0
-  },
-  {
-    "reference": "J1-3",
-    "pin": 3,
-    "gang": "J1",
-    "x_mm": 107.95,
-    "y_mm": 190.0,
-    "uuid": "f037b8b5-2882-545c-af43-c86f8ce0ed68",
-    "orientation_degrees": 0
-  },
-  {
-    "reference": "J1-4",
-    "pin": 4,
-    "gang": "J1",
-    "x_mm": 110.72,
-    "y_mm": 190.0,
-    "uuid": "33905e35-8773-5a76-9eae-775fc6805240",
-    "orientation_degrees": 0
-  },
-  {
-    "reference": "J1-5",
-    "pin": 5,
-    "gang": "J1",
-    "x_mm": 113.49,
-    "y_mm": 190.0,
-    "uuid": "03851a30-8e85-57b9-80d0-d12a2fd79803",
-    "orientation_degrees": 0
-  },
-  {
-    "reference": "J1-6",
-    "pin": 6,
-    "gang": "J1",
-    "x_mm": 103.795,
-    "y_mm": 192.84,
-    "uuid": "35b73476-d5cc-54ac-aec9-0a40c9f7ee30",
-    "orientation_degrees": 0
-  },
-  {
-    "reference": "J1-7",
-    "pin": 7,
-    "gang": "J1",
-    "x_mm": 106.565,
-    "y_mm": 192.84,
-    "uuid": "41464059-eda1-5945-b7dd-efd45fc569e5",
-    "orientation_degrees": 0
-  },
-  {
-    "reference": "J1-8",
-    "pin": 8,
-    "gang": "J1",
-    "x_mm": 109.335,
-    "y_mm": 192.84,
-    "uuid": "d078666d-2af5-5d97-84b2-0e64e41c285f",
-    "orientation_degrees": 0
-  },
-  {
-    "reference": "J1-9",
-    "pin": 9,
-    "gang": "J1",
-    "x_mm": 112.105,
-    "y_mm": 192.84,
-    "uuid": "671f44c0-50a6-5e57-9ed9-1359a61e2444",
-    "orientation_degrees": 0
   }
 ]

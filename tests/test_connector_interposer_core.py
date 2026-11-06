@@ -266,6 +266,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(filters, {
             'GPPO': 'GPPO_B012_L13_01_EXPERIMENTAL',
             'Interposer': 'Interposer_800',
+            'DSub_9': 'DSub_9_Pins_Vertical',
         })
         connector = read_symbol(path, 'Example:GPPO')
         interposer = read_symbol(path, 'Example:Interposer', require_two_pin=False)
