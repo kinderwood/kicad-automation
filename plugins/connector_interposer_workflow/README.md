@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.13**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.14**, testing release. The package targets KiCad 9.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -19,7 +19,8 @@ Connector to Interposer Workflow**. Save the project before opening the modeless
 native wx dialog. The dialog follows the operating system light or dark appearance;
 its task panels, assignment states, statuses, tables and previews derive their
 colors from wx system colors. Python core modules also run without KiCad or wx
-dependencies.
+dependencies. The blue task panel remains pinned when a long step needs to
+scroll; only that step's controls, previews and results move beneath it.
 
 ## Saved-state workflow
 
@@ -104,8 +105,9 @@ an already-open source board does not update the output copy.
    immediately. Footprints use a one-click table-integrated menu; long symbol
    and footprint names are ellipsized inside bounded columns. Each composed
    connector table sits inside one bordered window-colour surface with a small
-   inset; the **All** action row is separated from connector data by table space
-   instead of a heavy divider. The visually
+   inset. Equal-height bordered cells align displayed connector data with its
+   assignment controls, and one clean divider separates the **All** action row
+   from connector data. The visually
    separated **All** row in either connector table
    applies its symbol or footprint choice to every connector of that type,
    including filtered rows. Editing an individual row clears the **All** action
@@ -117,13 +119,16 @@ an already-open source board does not update the output copy.
    for each row, then set position and row pitch. Every linear input has its own
    `mm`, `mil`, `inch` or `um` selector, defaulting to `mil`; a suffix such as
    `10mm` or `10 mm` selects that unit when the field is committed. Row offsets
-   keep the value and unit selector together in one cell. On **Numbering**,
+   keep the value and unit selector together in one cell. These value-entry
+   cells activate on one click and commit a complete value on Enter, focus
+   departure, unit selection or cell navigation. On **Numbering**,
    choose row-major, serpentine, column-major or custom numbering; set pattern
    rotation independently from connector orientation; choose the mounting side
    and optional layout mirror. The numbered preview keeps location 1 marked as
    the DXF anchor. The preview keeps the gang centroid at its center while
    pattern rotation changes, refits after every render and reduces circle radius
-   when necessary to keep dense locations distinct. Valid changes update the gang immediately. New gangs remain
+   and label font size when necessary to keep dense locations and multi-digit
+   identifiers distinct. Valid changes update the gang immediately. New gangs remain
    **Not defined** until edited; incomplete or population-mismatched entries are
    **Invalid**. Copying settings never changes gang anchors or selected library parts.
 7. **RF transitions:** optionally assign one immutable published transition to each unique

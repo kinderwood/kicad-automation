@@ -6,6 +6,9 @@ Review changes → Apply / results. A
 read-only virtual grid displays the complete parsed workbook in a separate
 popup. Every page begins with a blue task-description panel whose title exactly
 matches its navigation entry and uses a larger title than the supporting text.
+The task panel is a fixed sibling above that page's scrolling viewport. When a
+step is taller than the available window, only its controls, previews,
+validation and results scroll; the task and purpose remain visible.
 Step titles use sentence case; established acronyms such as RF remain uppercase.
 The dialog header names the tool without repeating a separate purpose subtitle;
 the left step list sizes itself to the native font, stops after the last step,
@@ -45,15 +48,24 @@ assignment and Netclass type size their columns from the headers, displayed
 values and complete choice sets, with bounds for unusually long project names.
 Their tables retain all rows and do not expand horizontally across the page.
 
-Table-integrated assignment cells are rendered interaction surfaces rather than
-persistent wx.Grid editors. Netlist source, Netclass type and Layer assignment
-use the same colored state, chevron and one-click native choice menu. Space or
-Enter opens the menu; dismissing it leaves no editor active. Connector footprint
-cells use the same interaction in their composed tables. This avoids
-focus-dependent edit state and keeps mouse interaction single-step. Mapping
-grids size columns from bounded content measurements and end after the final
-defined column. Dense interactive forms such as gang numbering retain standard
-native form controls instead of table-integrated assignment cells.
+The UI has two named table-entry patterns. An **assignment cell** maps a
+categorical choice into parsed or read-only data. It is a rendered interaction
+surface rather than a persistent wx.Grid editor: amber or blue state remains
+visible, a chevron or **Select…** affordance identifies the action, one click
+opens the native menu or picker, Space or Enter provides keyboard access, and
+dismissal leaves no editor active. Netlist source, Netclass type, Layer
+assignment and Connector assignments use this pattern. It avoids
+focus-dependent edit state and makes the control distinct from displayed data.
+
+A **value-entry cell** accepts typed numeric or geometric content in a dense
+editable form. It retains a neutral native surface, activates its real editor
+on one click and commits on Enter, focus departure, unit selection or cell
+navigation. Dimension value-entry cells keep the number left aligned and the
+unit selector right aligned in one bordered cell. The active editor must be tall
+enough for the native Windows and GTK text and choice controls; typed unit
+suffixes are parsed only when the complete value is committed. Mapping grids
+size columns from bounded content measurements and end after the final defined
+column.
 
 Netclass type uses the same native assignment table, amber/blue cell states,
 persistent choice affordance, status placement and explicit Auto assign pattern.
@@ -68,9 +80,10 @@ cells. Symbol cells launch the native loaded-library browser;
 footprint cells offer only parts allowed by the symbol filters and exact pin/pad
 compatibility. Each composed table has one bordered semantic window-colour
 surface and a small inset around its header and cells, matching the visual
-containment of native grids. Each connector section starts with a separated
-**All** action row; window-colour table space provides separation without a
-heavy rule.
+containment of native grids. Header, read-only and assignment cells have equal
+row height and visible cell borders so their contents share one baseline and
+adjacent connector rows remain distinct. Each connector section starts with an
+**All** action row followed by one clean full-width divider.
 Its choices apply to the complete RF or DC connector set, regardless of the
 current filter. An individual edit clears the action row while retaining the
 resulting per-connector assignments. Gang geometry, placement and BOM overrides do not belong on this
@@ -95,12 +108,13 @@ Each editable linear field in Define RF gangs and Connector placement has an
 independent `mm`, `mil`, `inch` or `um` selector. A typed unit suffix updates
 that selector when the field is committed; new fields default to `mil`. A grid
 dimension keeps its number left aligned and its unit selector right aligned in
-the same cell. Gang definitions update live after validation; their list state
+the same cell and follows the value-entry-cell commit behavior above. Gang
+definitions update live after validation; their list state
 is Not defined, Defined or Invalid. The preview uses hollow connector circles,
 with pin 1 distinguished by colour only, and does not own apply/revert state.
 It maps the gang centroid to the preview center, so rotation is visually stable,
-and recomputes zoom and marker radius after each render to keep dense patterns
-inside the available canvas without overlapping circles.
+and recomputes zoom, marker radius and label font size after each render to keep
+dense patterns and multi-digit identifiers legible inside the available canvas.
 
 UI copy follows a control-ownership rule. The blue task box carries the page's
 short purpose and any cross-page consequence. Labels name controls; tooltips
@@ -127,13 +141,19 @@ explicit library refresh, not an in-memory runtime dependency.
 
 The editable [UI Design Guide](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=135-37)
 records the current workflow, product principles, approved and retired patterns,
-page anatomy, interaction states and open prototypes. It records durable design
-decisions and reasons; implementation history remains in repository documentation.
+page anatomy, interaction states and open prototypes. Its **Entry controls,
+tables, and scrolling** section names the assignment-cell and value-entry-cell
+patterns. The file keeps the current guide first, a dedicated KiCad exemplar
+and Netlist source reference page second, current workshops next and clearly
+named archives last. It records durable design decisions and reasons;
+implementation history remains in repository documentation.
 Its editable Layer assignment pattern is at
 [section 08](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=148-37).
 The implemented Define RF gangs and RF transitions patterns are at
 [section 09](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=177-37)
 and [section 10](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=178-46).
+The curated entry-control and scrolling rules are in
+[section 11](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=200-60).
 
 `WorkflowController` owns UI drafts and preview invalidation. Core records,
 workbook parsing, geometry, validation and schematic generation stay independent

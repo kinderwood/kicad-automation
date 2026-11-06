@@ -112,6 +112,11 @@ class DimensionInput(wx.Panel):
         self.units = wx.Choice(self, choices=list(DIMENSION_UNITS))
         self.units.SetStringSelection(unit)
         self.units.SetMinSize((70, -1))
+        control_height = max(
+            28, self.text.GetBestSize().height, self.units.GetBestSize().height,
+        )
+        self.text.SetMinSize((-1, control_height))
+        self.units.SetMinSize((70, control_height))
         if compact:
             self.text.SetMinSize((86, -1))
             self.text.SetMaxSize((110, -1))
@@ -126,7 +131,9 @@ class DimensionInput(wx.Panel):
 
     def bind_changed(self, handler):
         self._change_handler = handler
-        self.text.Bind(wx.EVT_TEXT, handler)
+        # Dimension fields are value-entry controls. Commit them on Enter,
+        # focus departure or unit selection instead of rebuilding downstream
+        # views after every partially typed character.
         self.units.Bind(wx.EVT_CHOICE, handler)
 
     def _normalize(self, event):
@@ -206,6 +213,7 @@ class DimensionCellEditor(grid.GridCellEditor):
     def __init__(self):
         super().__init__()
         self.panel = self.text = self.units = None
+        self.table = None
         self.start = self.pending = ''
 
     def Create(self, parent, control_id, event_handler):
@@ -216,12 +224,18 @@ class DimensionCellEditor(grid.GridCellEditor):
         layout = wx.BoxSizer(wx.HORIZONTAL)
         self.text = wx.TextCtrl(self.panel, style=wx.TE_PROCESS_ENTER | wx.BORDER_NONE)
         self.units = wx.Choice(self.panel, choices=list(DIMENSION_UNITS))
-        self.units.SetMinSize((68, -1))
+        control_height = max(
+            28, self.text.GetBestSize().height, self.units.GetBestSize().height,
+        )
+        self.text.SetMinSize((-1, control_height))
+        self.units.SetMinSize((68, control_height))
         layout.Add(self.text, 1, wx.RIGHT, 2)
         layout.Add(self.units, 0)
         self.panel.SetSizer(layout)
         self.SetControl(self.panel)
         self.panel.PushEventHandler(event_handler)
+        self.text.Bind(wx.EVT_TEXT_ENTER, self._commit_enter)
+        self.units.Bind(wx.EVT_CHOICE, self._commit_choice)
 
     def Destroy(self):
         if self.panel is not None:
@@ -233,6 +247,7 @@ class DimensionCellEditor(grid.GridCellEditor):
         self.panel.Layout()
 
     def BeginEdit(self, row, col, table):
+        self.table = table
         self.start = table.GetCellValue(row, col) or '0 mil'
         try:
             _value_mm, unit, number_text = parse_dimension(self.start, 'mil')
@@ -242,6 +257,23 @@ class DimensionCellEditor(grid.GridCellEditor):
         self.units.SetStringSelection(unit)
         self.text.SetFocus()
         self.text.SetSelection(-1, -1)
+
+    def _commit_enter(self, event):
+        self._finish_edit()
+
+    def _commit_choice(self, event):
+        wx.CallAfter(self._finish_edit)
+
+    def _finish_edit(self):
+        if self.table is None:
+            return
+        try:
+            self.table.SaveEditControlValue()
+            self.table.DisableCellEditControl()
+        except RuntimeError:
+            # The grid may already be ending the edit because focus moved.
+            return
+        self.table.SetFocus()
 
     def EndEdit(self, row, col, table, old_value):
         try:
@@ -304,6 +336,51 @@ class AssignmentRenderer(grid.GridCellStringRenderer):
                             wx.Point(center_x, center_y + 3)))
         dc.SetPen(wx.Pen(ui_palette().accent, 2))
         dc.DrawLine(rect.x, rect.GetBottom() - 1, rect.GetRight(), rect.GetBottom() - 1)
+
+
+class TableTextCell(wx.Panel):
+    """Vertically aligned read-only cell for a composed native table."""
+    def __init__(self, parent, label='', bold=False, background=None):
+        super().__init__(parent, style=wx.BORDER_SIMPLE)
+        self.text = wx.StaticText(self, label=label, style=wx.ST_ELLIPSIZE_END)
+        if bold:
+            font = self.text.GetFont()
+            font.SetWeight(wx.FONTWEIGHT_BOLD)
+            self.text.SetFont(font)
+        layout = wx.BoxSizer(wx.HORIZONTAL)
+        layout.Add(self.text, 1, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, 7)
+        self.SetSizer(layout)
+        self.set_colours(background or ui_palette().window, ui_palette().text)
+
+    def SetLabel(self, label):
+        self.text.SetLabel(label)
+
+    def GetLabel(self):
+        return self.text.GetLabel()
+
+    def set_colours(self, background, foreground):
+        self.SetBackgroundColour(background)
+        self.SetForegroundColour(foreground)
+        self.text.SetBackgroundColour(background)
+        self.text.SetForegroundColour(foreground)
+        self.Refresh()
+
+
+class TableDividerCell(wx.Panel):
+    """One segment of a contiguous divider across a composed table."""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.SetMinSize((-1, 9))
+        self.SetMaxSize((-1, 9))
+        self.Bind(wx.EVT_PAINT, self._paint)
+
+    def _paint(self, event):
+        palette = ui_palette()
+        dc = wx.PaintDC(self)
+        dc.SetBackground(wx.Brush(palette.window))
+        dc.Clear()
+        dc.SetPen(wx.Pen(palette.frame))
+        dc.DrawLine(0, 4, self.GetClientSize().width, 4)
 
 
 class ReadOnlyTable(grid.GridTableBase):
@@ -396,6 +473,11 @@ class PatternPreview(wx.Panel):
         if not self.points:
             return
         screen_points, radius = self.screen_layout(*self.GetClientSize())
+        label_font = wx.Font(dc.GetFont())
+        label_font.SetPointSize(self.label_point_size(
+            radius, len(screen_points), label_font.GetPointSize(),
+        ))
+        dc.SetFont(label_font)
         for pin, (px, py) in screen_points.items():
             colour = anchor if str(pin) == '1' else geometry
             dc.SetPen(wx.Pen(colour, 2))
@@ -407,6 +489,13 @@ class PatternPreview(wx.Panel):
             label = str(pin)
             label_width, label_height = dc.GetTextExtent(label)
             dc.DrawText(label, px-label_width//2, py-label_height//2)
+
+    @staticmethod
+    def label_point_size(radius, count, default_size):
+        """Keep multi-digit labels distinct when dense gangs shrink their markers."""
+        if count > 12 or radius <= 6:
+            return max(7, min(default_size, radius + 2))
+        return default_size
 
     def screen_layout(self, width, height):
         """Center the gang centroid and fit every location into the live preview."""
@@ -886,12 +975,18 @@ class WorkflowDialog(wx.Dialog):
         body.Add(navigation, 0, wx.TOP | wx.BOTTOM | wx.LEFT | wx.RIGHT, 10)
 
         self.book = wx.Simplebook(self, style=wx.BORDER_SIMPLE)
+        self.page_hosts = []
         self.pages = []
         for title in PAGES:
-            panel = wx.ScrolledWindow(self.book)
+            host = wx.Panel(self.book)
+            host.SetSizer(wx.BoxSizer(wx.VERTICAL))
+            panel = wx.ScrolledWindow(host)
             panel.SetScrollRate(8, 8)
             panel.SetSizer(wx.BoxSizer(wx.VERTICAL))
-            self.book.AddPage(panel, title)
+            panel._workflow_page_host = host
+            host.GetSizer().Add(panel, 1, wx.EXPAND)
+            self.book.AddPage(host, title)
+            self.page_hosts.append(host)
             self.pages.append(panel)
         self.build_spreadsheet(self.pages[0])
         self.build_netclass_types(self.pages[1])
@@ -1097,8 +1192,11 @@ class WorkflowDialog(wx.Dialog):
     @staticmethod
     def _style_table_data_cell(control):
         palette = ui_palette()
-        control.SetBackgroundColour(palette.window)
-        control.SetForegroundColour(palette.text)
+        if isinstance(control, TableTextCell):
+            control.set_colours(palette.window, palette.text)
+        else:
+            control.SetBackgroundColour(palette.window)
+            control.SetForegroundColour(palette.text)
 
     @staticmethod
     def _assignment_table(parent, columns):
@@ -1181,7 +1279,8 @@ class WorkflowDialog(wx.Dialog):
         return label
 
     def task_box(self, parent, title, subtitle, description):
-        box = wx.Panel(parent, style=wx.BORDER_SIMPLE)
+        host = getattr(parent, '_workflow_page_host', parent)
+        box = wx.Panel(host, style=wx.BORDER_SIMPLE)
         palette = ui_palette()
         box.SetBackgroundColour(palette.info)
         box.SetForegroundColour(palette.text)
@@ -1204,7 +1303,10 @@ class WorkflowDialog(wx.Dialog):
         detail.Wrap(820)
         sizer.Add(detail, 0, wx.ALL, 10)
         box.SetSizer(sizer)
-        parent.GetSizer().Add(box, 0, wx.EXPAND | wx.ALL, 8)
+        if host is parent:
+            parent.GetSizer().Add(box, 0, wx.EXPAND | wx.ALL, 8)
+        else:
+            host.GetSizer().Insert(0, box, 0, wx.EXPAND | wx.ALL, 8)
         self._task_box_controls.append((box, (heading, task, detail)))
         return box
 
@@ -2144,8 +2246,8 @@ class WorkflowDialog(wx.Dialog):
             self._persistent_headings.append(heading)
             self._fix_table_cell_width(heading, width, 34)
             self.interposer_assignment_grid.Add(heading, 0, wx.EXPAND | wx.ALL, 0)
-        self.interposer_ref_display = wx.StaticText(
-            self.interposer_assignment_table, label='—', style=wx.BORDER_SIMPLE,
+        self.interposer_ref_display = TableTextCell(
+            self.interposer_assignment_table, label='—',
         )
         self._fix_table_cell_width(self.interposer_ref_display, 100, 38)
         self._style_table_data_cell(self.interposer_ref_display)
@@ -2452,15 +2554,15 @@ class WorkflowDialog(wx.Dialog):
         if tuple(state.get('names', ())) != tuple(names):
             state = {'names': (), 'symbol': {}, 'footprint': {}}
             self._bulk_assignments[kind] = state
-        label = wx.StaticText(parent, label='All', style=wx.BORDER_SIMPLE)
-        quantity = wx.StaticText(parent, label='—', style=wx.BORDER_SIMPLE)
+        label = TableTextCell(
+            parent, label='All', bold=True, background=ui_palette().info,
+        )
+        quantity = TableTextCell(
+            parent, label='—', bold=True, background=ui_palette().info,
+        )
         for control, width in ((label, 100), (quantity, 80)):
-            font = control.GetFont()
-            font.SetWeight(wx.FONTWEIGHT_BOLD)
-            control.SetFont(font)
             self._fix_table_cell_width(control, width, 38)
-            control.SetBackgroundColour(ui_palette().info)
-            control.SetForegroundColour(ui_palette().text)
+            control.set_colours(ui_palette().info, ui_palette().text)
         if kind == 'rf':
             symbol_control = SymbolAssignmentCtrl(
                 parent, self, 'Choose symbol for all RF gangs', True,
@@ -2494,11 +2596,7 @@ class WorkflowDialog(wx.Dialog):
             'symbol': symbol_control, 'footprint': footprint_control,
         })
         for _column in range(4):
-            gap = wx.Panel(parent)
-            gap.SetBackgroundColour(ui_palette().window)
-            gap.SetMinSize((-1, 8))
-            gap.SetMaxSize((-1, 8))
-            sizer.Add(gap, 0, wx.EXPAND)
+            sizer.Add(TableDividerCell(parent), 0, wx.EXPAND)
 
     def refresh_connector_assignments(self, force=False):
         reference = self._interposer_reference()
@@ -2554,10 +2652,10 @@ class WorkflowDialog(wx.Dialog):
                 continue
             settings = self.controller.gang(name)
             count = sum(record.connector == name for record in self.controller.table.records)
-            gang_label = wx.StaticText(self.gang_assignment_table, label=name, style=wx.BORDER_SIMPLE)
+            gang_label = TableTextCell(self.gang_assignment_table, label=name)
             self._fix_table_cell_width(gang_label, 100, 38)
             self._style_table_data_cell(gang_label)
-            positions = wx.StaticText(self.gang_assignment_table, label=str(count), style=wx.BORDER_SIMPLE)
+            positions = TableTextCell(self.gang_assignment_table, label=str(count))
             self._fix_table_cell_width(positions, 80, 38)
             self._style_table_data_cell(positions)
             symbol_control = SymbolAssignmentCtrl(
@@ -2604,10 +2702,10 @@ class WorkflowDialog(wx.Dialog):
                 continue
             selection = self.controller.dc_connector(name)
             used = sum(record.connector == name for record in self.controller.table.records)
-            reference_label = wx.StaticText(self.dc_assignment_table, label=name, style=wx.BORDER_SIMPLE)
+            reference_label = TableTextCell(self.dc_assignment_table, label=name)
             self._fix_table_cell_width(reference_label, 100, 38)
             self._style_table_data_cell(reference_label)
-            pins = wx.StaticText(self.dc_assignment_table, label=str(used), style=wx.BORDER_SIMPLE)
+            pins = TableTextCell(self.dc_assignment_table, label=str(used))
             self._fix_table_cell_width(pins, 80, 38)
             self._style_table_data_cell(pins)
             symbol_control = SymbolAssignmentCtrl(
@@ -2714,9 +2812,11 @@ class WorkflowDialog(wx.Dialog):
         self.gang_rows.SetColLabelValue(2, 'X offset')
         self.gang_rows.SetColSize(0, 48)
         self.gang_rows.SetColSize(1, 80)
-        self.gang_rows.SetColSize(2, 150)
+        self.gang_rows.SetColSize(2, 172)
+        self.gang_rows.SetDefaultRowSize(36, True)
         self.gang_rows.SetReadOnly(0, 0)
-        self.gang_rows.SetMinSize((292, 180))
+        self.gang_rows.SetMinSize((314, 220))
+        self.gang_rows.Bind(grid.EVT_GRID_CELL_LEFT_CLICK, self.gang_cell_clicked)
         self.gang_rows.Bind(grid.EVT_GRID_CELL_CHANGED, self.gang_draft_changed)
         pattern_sizer.Add(self.gang_rows, 0, wx.EXPAND | wx.ALL, 8)
         row_actions = wx.BoxSizer(wx.HORIZONTAL)
@@ -2768,8 +2868,8 @@ class WorkflowDialog(wx.Dialog):
         body.Add(editor, 1, wx.EXPAND | wx.RIGHT, 8)
 
         preview_box = wx.StaticBox(panel, label='Gang preview')
-        preview_box.SetMinSize((285, -1))
-        preview_box.SetMaxSize((395, -1))
+        preview_box.SetMinSize((330, -1))
+        preview_box.SetMaxSize((430, -1))
         preview = wx.StaticBoxSizer(preview_box, wx.VERTICAL)
         self.pattern_view = PatternPreview(preview_box)
         preview.Add(self.pattern_view, 1, wx.EXPAND | wx.ALL | wx.FIXED_MINSIZE, 8)
@@ -2814,6 +2914,20 @@ class WorkflowDialog(wx.Dialog):
         self.gang_rows.SetMaxSize((-1, height))
         if hasattr(self, 'pages') and len(self.pages) > 5:
             self.pages[5].FitInside()
+
+    def gang_cell_clicked(self, event):
+        """Activate the composite dimension editor on the first click."""
+        if event.GetCol() == 2:
+            row, column = event.GetRow(), event.GetCol()
+            self.gang_rows.SetGridCursor(row, column)
+            wx.CallAfter(self._begin_gang_dimension_edit, row, column)
+        event.Skip()
+
+    def _begin_gang_dimension_edit(self, row, column):
+        if self._closing or row >= self.gang_rows.GetNumberRows():
+            return
+        self.gang_rows.SetGridCursor(row, column)
+        self.gang_rows.EnableCellEditControl()
 
     def _gang_editor_values(self):
         row_lengths, row_offsets, row_offset_units = [], [], []

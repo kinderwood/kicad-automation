@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.13 and the
+are authorized. Connector to Interposer Workflow is version 0.4.14 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -264,6 +264,17 @@ inside bordered semantic window-colour surfaces with a small inset. It replaces
 the four-part grey separator below each **All** action row with table-colour
 space, so headers, read-only connector data and colored assignment cells read as
 one contained table.
+
+Version 0.4.14 restores one clean divider below the **All** row and gives every
+read-only connector cell a vertically centered bordered surface aligned with
+the symbol and footprint assignment cells. Each blue task panel now sits above
+its page's scrolling viewport. Define RF gangs uses a one-click, native-height
+dimension value editor that commits on Enter, focus departure, unit selection
+or cell navigation; field-level dimension inputs no longer process partial
+values on every keystroke. Dense gang previews reduce label font size together
+with their marker geometry. The Figma guide now names assignment cells and
+value-entry cells as separate patterns and keeps KiCad exemplars, active
+workshops and archived explorations on clearly named pages.
 
 Additional actual PCB Editor checks use the selected 9.0.9.1 AppImage and
 10.0.8: normal startup discovers both actions and Workflow opens from the

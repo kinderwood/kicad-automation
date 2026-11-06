@@ -291,7 +291,15 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(PAGES[9], 'Review changes')
         self.assertEqual(PAGES[10], 'Apply / results')
         for page_index, page_name in enumerate(PAGES):
-            self.assertIsNotNone(self.wx.FindWindowByLabel(page_name, dialog.pages[page_index]))
+            self.assertIsNotNone(
+                self.wx.FindWindowByLabel(page_name, dialog.page_hosts[page_index]),
+            )
+            task_box = dialog._task_box_controls[page_index][0]
+            self.assertIs(task_box.GetParent(), dialog.page_hosts[page_index])
+            self.assertIs(dialog.pages[page_index].GetParent(), dialog.page_hosts[page_index])
+            host_sizer = dialog.page_hosts[page_index].GetSizer()
+            self.assertIs(host_sizer.GetItem(0).GetWindow(), task_box)
+            self.assertIs(host_sizer.GetItem(1).GetWindow(), dialog.pages[page_index])
         self.assertIsNone(self.wx.FindWindowByLabel('Apply layer assignments', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Apply routing permissions', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Saved permissions retained.', dialog))
@@ -314,7 +322,7 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(dialog.layer_map.GetRowLabelSize(), 0)
         self.assertEqual(dialog.layer_map.GetColLabelValue(0), 'Netlist layer')
         self.assertEqual(dialog.layer_map.GetColLabelValue(1), 'KiCad layer')
-        task_heading = self.wx.FindWindowByLabel('Layer assignment', dialog.pages[2])
+        task_heading = self.wx.FindWindowByLabel('Layer assignment', dialog.page_hosts[2])
         self.assertGreater(task_heading.GetFont().GetPointSize(), dialog.GetFont().GetPointSize())
         dialog.Show()
         self.app.Yield()
@@ -645,7 +653,9 @@ class NativeDialogTests(unittest.TestCase):
 
     def test_connector_assignments_filter_loaded_footprints_per_gang(self):
         import hashlib
-        from plugins.connector_interposer_workflow.ui import WorkflowDialog, ui_palette
+        from plugins.connector_interposer_workflow.ui import (
+            WorkflowDialog, TableDividerCell, TableTextCell, ui_palette,
+        )
         from plugins.connector_interposer_workflow.core.libraries import read_symbol
         example = Path(__file__).resolve().parents[1] / 'examples/gppo_demo'
         with tempfile.TemporaryDirectory() as temporary:
@@ -726,6 +736,19 @@ class NativeDialogTests(unittest.TestCase):
                     isinstance(child, self.wx.StaticLine)
                     for child in dialog.gang_assignment_table.GetChildren()
                 ))
+                self.assertEqual(
+                    sum(isinstance(child, TableDividerCell)
+                        for child in dialog.gang_assignment_table.GetChildren()),
+                    4,
+                )
+                read_only_cells = [
+                    child for child in dialog.gang_assignment_table.GetChildren()
+                    if isinstance(child, TableTextCell) and child.GetLabel() == 'J101'
+                ]
+                self.assertEqual(len(read_only_cells), 1)
+                j101_cell = read_only_cells[0]
+                self.assertEqual(j101_cell.GetSize().height, 38)
+                self.assertGreater(j101_cell.text.GetPosition().y, 0)
                 self.assertLessEqual(
                     dialog.gang_assignment_controls['J101']['symbol'].GetSize().width, 300,
                 )
@@ -1011,15 +1034,29 @@ class NativeDialogTests(unittest.TestCase):
             dialog.gang_rows.SetCellValue(1, 1, '9')
             dialog.gang_draft_changed()
 
-            dialog.gang_rows.SetGridCursor(1, 2)
-            dialog.gang_rows.EnableCellEditControl()
+            class ClickEvent:
+                @staticmethod
+                def GetRow(): return 1
+                @staticmethod
+                def GetCol(): return 2
+                @staticmethod
+                def Skip(): return None
+            dialog.gang_cell_clicked(ClickEvent())
             self.app.Yield()
             focused = self.wx.Window.FindFocus()
             self.assertIsInstance(focused, self.wx.TextCtrl)
+            self.assertGreaterEqual(dialog.gang_rows.GetRowSize(1), 36)
+            unit_choice = next(
+                child for child in focused.GetParent().GetChildren()
+                if isinstance(child, self.wx.Choice)
+            )
+            self.assertGreaterEqual(unit_choice.GetSize().height, 28)
             focused.SetValue('100 mil')
-            dialog.gang_rows.SaveEditControlValue()
-            dialog.gang_rows.DisableCellEditControl()
+            enter = self.wx.CommandEvent(self.wx.EVT_TEXT_ENTER.typeId, focused.GetId())
+            enter.SetEventObject(focused)
+            focused.GetEventHandler().ProcessEvent(enter)
             self.app.Yield()
+            self.assertFalse(dialog.gang_rows.IsCellEditControlShown())
 
             gang = dialog.controller.gang('J501')
             self.assertEqual(gang['row_lengths'], [10, 9])
@@ -1040,6 +1077,16 @@ class NativeDialogTests(unittest.TestCase):
                 for second in tuple(first_layout.values())[index + 1:]
             )
             self.assertGreaterEqual(minimum_spacing, radius * 2)
+            preview_points = dialog.pattern_view.points
+            dialog.pattern_view.points = {
+                str(pin): (float(pin - 1), 0.0) for pin in range(1, 20)
+            }
+            dense_layout, dense_radius = dialog.pattern_view.screen_layout(330, 300)
+            dialog.pattern_view.points = preview_points
+            self.assertEqual(len(dense_layout), 19)
+            self.assertLessEqual(
+                dialog.pattern_view.label_point_size(dense_radius, 19, 10), 8,
+            )
 
             dialog.gang_pattern_rotation.ChangeValue('37')
             dialog.gang_draft_changed()
