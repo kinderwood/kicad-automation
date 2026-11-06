@@ -944,14 +944,20 @@ class FootprintAssignmentCtrl(wx.Panel):
             return
         menu = wx.Menu()
         selected_id = self.selected.get('library_id', '')
+        bindings = []
         for option in self.options:
             item = menu.AppendRadioItem(wx.ID_ANY, option['library_id'])
             item.Check(option['library_id'] == selected_id)
-            menu.Bind(
+            handler = lambda event, value=dict(option): self._select(value)
+            # PopupMenu sends its command events to the window that opened it.
+            # Binding the temporary wx.Menu happens to work on GTK, but Windows
+            # does not consistently route the command through that object.
+            self.Bind(
                 wx.EVT_MENU,
-                lambda event, value=dict(option): self._select(value),
-                item,
+                handler,
+                id=item.GetId(),
             )
+            bindings.append((item.GetId(), handler))
         owner = wx.GetTopLevelParent(self)
         position = wx.Point(0, self.GetClientSize().height)
         try:
@@ -960,6 +966,8 @@ class FootprintAssignmentCtrl(wx.Panel):
             else:
                 self.PopupMenu(menu, position)
         finally:
+            for item_id, handler in bindings:
+                self.Unbind(wx.EVT_MENU, handler=handler, id=item_id)
             menu.Destroy()
 
     def _select(self, selection):

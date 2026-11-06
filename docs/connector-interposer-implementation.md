@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.15 and the
+are authorized. Connector to Interposer Workflow is version 0.4.16 and the
 separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The existing
 BGA Interposer Wizard remains independent and unchanged.
@@ -280,6 +280,12 @@ Version 0.4.15 adds overflow-only hover tooltips to the two established table
 entry patterns. Assignment cells expose a clipped mapping, symbol or footprint
 identity. Value-entry cells expose a clipped typed dimension. Fully visible
 values keep the native table free of redundant tooltips.
+
+Version 0.4.16 routes footprint popup commands back through the assignment cell
+that opened the menu. This addresses the reported Windows failure to retain
+interposer, RF gang and DC connector footprint selections without changing the
+rendered controls. DC workbook pins remain a subset of the selected symbol and
+footprint pins; any unused DC pins are emitted as explicit no-connect pins.
 
 Additional actual PCB Editor checks use the selected 9.0.9.1 AppImage and
 10.0.8: normal startup discovers both actions and Workflow opens from the

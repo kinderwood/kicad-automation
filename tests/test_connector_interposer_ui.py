@@ -816,6 +816,39 @@ class NativeDialogTests(unittest.TestCase):
             dialog.Destroy()
             self.app.Yield()
 
+    def test_footprint_popup_routes_selection_through_its_assignment_cell(self):
+        from plugins.connector_interposer_workflow.ui import (
+            FootprintAssignmentCtrl, WorkflowDialog,
+        )
+
+        dialog = WorkflowDialog()
+        selected = []
+        control = FootprintAssignmentCtrl(dialog, selected.append)
+        option = {
+            'path': '/tmp/Connector_25.kicad_mod',
+            'library_id': 'Project:Connector_25',
+            'sha256': 'test-revision',
+        }
+        control.set_options((option,), {})
+        control.Enable(True)
+
+        def choose_first(window, menu, _position):
+            item = menu.GetMenuItems()[0]
+            event = self.wx.CommandEvent(self.wx.EVT_MENU.typeId, item.GetId())
+            self.assertTrue(window.GetEventHandler().ProcessEvent(event))
+            return True
+
+        try:
+            with mock.patch.object(
+                    dialog, '_popup_assignment_menu', side_effect=choose_first):
+                control._show_menu()
+            self.assertEqual(control.selection(), option)
+            self.assertEqual(selected, [option])
+        finally:
+            control.Destroy()
+            dialog.Destroy()
+            self.app.Yield()
+
     def test_all_connector_assignment_rows_apply_and_individual_edits_clear_them(self):
         from types import SimpleNamespace
         from plugins.connector_interposer_workflow.ui import WorkflowDialog, ui_palette
