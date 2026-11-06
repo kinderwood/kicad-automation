@@ -1,0 +1,30 @@
+name: Build Windows footprint-selection diagnostic package
+
+on:
+  push:
+    branches:
+      - debug/windows-footprint-selection
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package diagnostic plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and validate PCM packages
+        run: |
+          python scripts/build_pcm.py \
+            --base-url https://example.invalid/debug \
+            --output-dir debug-build
+          python scripts/test_pcm.py debug-build
+      - name: Upload Connector to Interposer diagnostic ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: connector-interposer-workflow-0.4.18-windows-debug
+          path: debug-build/connector-interposer-workflow-0.4.18.zip
+          if-no-files-found: error
+          retention-days: 30
