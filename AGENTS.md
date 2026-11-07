@@ -42,6 +42,12 @@ scripts/check_kicad_environment.sh
 
 ## Validate changes
 
+The CLI integration and PCM suites are the standard validation path. Run the
+native GUI suite only when a change affects native wx or visible editor
+behavior, when diagnosing a GUI-specific failure, or when explicitly requested.
+Do not run it routinely for documentation, metadata, packaging, or non-visual
+logic changes.
+
 Run the KiCad integration suite against both supported AppDirs:
 
 ```sh
