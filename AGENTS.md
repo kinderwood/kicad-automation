@@ -104,6 +104,16 @@ unless they are intentional test fixtures or documented evidence. A screenshot
 proves only the rendered state; pair it with native assertions or an interaction
 procedure for behavior claims.
 
+## Delivery workflow
+
+- After local validation, commit completed work and push it directly to
+  `origin/main` unless the user explicitly requests another delivery method.
+- Do not create or push remote branches or open pull requests unless the user
+  explicitly asks for one. Local branches are allowed while work is in progress.
+- Do not stop at a local-only commit: GitHub Actions on remote `main` is the
+  publication path that makes plugin changes available through the Plugin and
+  Content Manager.
+
 ## Releases
 
 - Bump the tool version in its `metadata.json` for every user-visible release.
