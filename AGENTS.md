@@ -6,8 +6,8 @@ each distributable tool self-contained under `plugins/<tool>/`.
 ## Compatibility
 
 Preserve the repository-wide compatibility range documented in `README.md`.
-Continuous integration tests the exact versions 9.0.0, 9.0.9, 10.0.0, and
-10.0.8. Do not narrow the supported range without an explicit project decision.
+Continuous integration tests the exact versions 10.0.0 and 10.0.8. Do not
+narrow the supported range without an explicit project decision.
 
 ## Before changing a tool
 
@@ -51,8 +51,8 @@ scripts/test_native_gui.sh
 This repository's managed environment is headless, but that does not mean GUI
 checks are unavailable. The script starts a private Xvfb display and runs wx
 inside the selected KiCad AppImage runtimes. By default it uses the established
-9.0.9.1 and 10.0.8 AppDirs when they exist; explicit AppDir paths can be passed
-as arguments. The workspace fallback X server is
+10.0.8 AppDir when it exists; explicit AppDir paths can be passed as arguments.
+The workspace fallback X server is
 `/workspace/work/stage0/tools/x/usr/bin/Xvfb`.
 
 The managed command sandbox can prevent Xvfb from binding its Unix socket even

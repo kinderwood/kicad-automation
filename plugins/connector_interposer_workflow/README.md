@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.20**, testing release. The package targets KiCad 9.0.0 through
+Version **0.4.21**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -195,7 +195,7 @@ conflicts. Native annotation must preserve existing tool references; resetting
 annotation can change mechanical identities and is not an accepted update path.
 
 The library picker displays `LibraryNickname:PartName` identities and resolves
-KiCad 9 and 10 global, project and nested library tables using KiCad's own path
+KiCad 10 global, project and nested library tables using KiCad's own path
 variable expansion. Project entries take precedence over global entries. The
 workflow retains the resolved source and content hash internally so a selected
 library revision remains deterministic without exposing filesystem paths as the

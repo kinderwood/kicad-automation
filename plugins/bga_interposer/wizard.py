@@ -1,4 +1,4 @@
-"""BGA interposer footprint wizard for KiCad 9 and 10.
+"""BGA interposer footprint wizard for KiCad 10.
 
 The drawing and parameter conventions intentionally follow KiCad's bundled
 ``bga_wizard.py``.  Pad names retain their full-grid row and column locations,
@@ -891,18 +891,10 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         KiCad 10 supports native PCB_POINT objects in footprints, but does not
         expose their constructor through its legacy Python bindings. Parsing a
         minimal in-memory footprint provides a binding path to the same native
-        object. KiCad 9 has neither the object nor its file syntax, so
-        the wizard retains the ordinary module created by FootprintWizardBase.
+        object.
         """
         origin_x, origin_y = self._origin_offset()
         if not (origin_x or origin_y):
-            return
-
-        if not (
-            hasattr(pcbnew, "PCB_POINT_T")
-            and hasattr(pcbnew, "Cast_to_FOOTPRINT")
-            and hasattr(pcbnew.FOOTPRINT, "Points")
-        ):
             return
 
         center_x = pcbnew.ToMM(-origin_x)
@@ -1014,100 +1006,22 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         layers.AddLayer(pcbnew.B_Mask)
         return layers
 
-    def _add_cutout_line(self, layer, line_width, start, end):
-        line = pcbnew.PCB_SHAPE(self.module)
-        line.SetShape(pcbnew.SHAPE_T_SEGMENT)
-        line.SetLayer(layer)
-        line.SetWidth(line_width)
-        line.SetStartEnd(
-            self.draw.TransformPoint(*start), self.draw.TransformPoint(*end)
-        )
-        self.module.Add(line)
-
-    def _add_cutout_arc(self, layer, line_width, center, start):
-        arc = pcbnew.PCB_SHAPE(self.module)
-        arc.SetShape(pcbnew.SHAPE_T_ARC)
-        arc.SetLayer(layer)
-        arc.SetWidth(line_width)
-        arc.SetCenter(self.draw.TransformPoint(*center))
-        arc.SetStart(self.draw.TransformPoint(*start))
-        arc.SetArcAngleAndEnd(pcbnew.EDA_ANGLE(90, pcbnew.DEGREES_T), True)
-        self.module.Add(arc)
-
-    @staticmethod
-    def _supports_native_rounded_rectangle():
-        return hasattr(pcbnew.PCB_SHAPE, "SetCornerRadius")
-
     def _add_center_board_cutout_on_layer(self, layer, line_width):
         cutout = self.parameters["Center board cutout"]
         half_width = cutout["width"] / 2
         half_length = cutout["length"] / 2
         radius = cutout["corner radius"]
 
-        # KiCad 10 supports a radius on its native rectangle object. KiCad 9
-        # uses exact line and arc primitives for the rounded form instead.
-        if not radius or self._supports_native_rounded_rectangle():
-            rectangle = pcbnew.PCB_SHAPE(self.module)
-            rectangle.SetShape(pcbnew.SHAPE_T_RECT)
-            rectangle.SetLayer(layer)
-            rectangle.SetWidth(line_width)
-            rectangle.SetFilled(False)
-            rectangle.SetStart(self.draw.TransformPoint(-half_width, -half_length))
-            rectangle.SetEnd(self.draw.TransformPoint(half_width, half_length))
-            if radius:
-                rectangle.SetCornerRadius(int(radius))
-            self.module.Add(rectangle)
-            return
-
-        self._add_cutout_line(
-            layer,
-            line_width,
-            (-half_width + radius, -half_length),
-            (half_width - radius, -half_length),
-        )
-        self._add_cutout_line(
-            layer,
-            line_width,
-            (half_width, -half_length + radius),
-            (half_width, half_length - radius),
-        )
-        self._add_cutout_line(
-            layer,
-            line_width,
-            (half_width - radius, half_length),
-            (-half_width + radius, half_length),
-        )
-        self._add_cutout_line(
-            layer,
-            line_width,
-            (-half_width, half_length - radius),
-            (-half_width, -half_length + radius),
-        )
-
-        self._add_cutout_arc(
-            layer,
-            line_width,
-            (half_width - radius, -half_length + radius),
-            (half_width - radius, -half_length),
-        )
-        self._add_cutout_arc(
-            layer,
-            line_width,
-            (half_width - radius, half_length - radius),
-            (half_width, half_length - radius),
-        )
-        self._add_cutout_arc(
-            layer,
-            line_width,
-            (-half_width + radius, half_length - radius),
-            (-half_width + radius, half_length),
-        )
-        self._add_cutout_arc(
-            layer,
-            line_width,
-            (-half_width + radius, -half_length + radius),
-            (-half_width, -half_length + radius),
-        )
+        rectangle = pcbnew.PCB_SHAPE(self.module)
+        rectangle.SetShape(pcbnew.SHAPE_T_RECT)
+        rectangle.SetLayer(layer)
+        rectangle.SetWidth(line_width)
+        rectangle.SetFilled(False)
+        rectangle.SetStart(self.draw.TransformPoint(-half_width, -half_length))
+        rectangle.SetEnd(self.draw.TransformPoint(half_width, half_length))
+        if radius:
+            rectangle.SetCornerRadius(int(radius))
+        self.module.Add(rectangle)
 
     def _add_center_board_cutout(self):
         if not self.parameters["Center board cutout"]["enabled"]:

@@ -85,8 +85,8 @@ depopulation dimensions to zero to generate a full grid.
 The board cutout is independent of center pad depopulation. When enabled, it is
 drawn with matching geometry on `Edge.Cuts` and `F.Fab`, must remain inside the
 package, and cannot overlap a retained BGA pad. A zero-radius cutout is one
-native rectangle object. Rounded cutouts use a native rounded rectangle where
-KiCad supports it and exact line-and-arc geometry otherwise.
+native rectangle object. Rounded cutouts use KiCad 10's native rounded
+rectangle.
 
 When the guide pin hole is enabled, select exactly one corner. Slots may be
 enabled in any of the other three corners. A hole and slot cannot share a corner,
@@ -94,12 +94,10 @@ and guide features cannot overlap each other or a retained BGA pad. Every guide
 feature must remain inside the package. Choosing the guide pin hole center as
 the origin translates the entire footprint without changing the relative
 package, pad, outline, or courtyard geometry. Slots cannot be selected as the
-footprint origin. In KiCad 10, selecting the guide pin hole as origin also adds
+footprint origin. Selecting the guide pin hole as origin also adds
 a native 1 mm point at package center on `F.Cu`. Hover near that point before
 starting a move to pick up the footprint by its package center while retaining
-the guide pin hole as the authoritative footprint origin. KiCad 9 does not
-support footprint point objects, so this secondary pickup point is unavailable
-there.
+the guide pin hole as the authoritative footprint origin.
 
 The guide pin hole and slots are non-electrical NPTH features using KiCad's
 standard `*.Cu` and `*.Mask` layer set. Pad size exactly equals drill size, so
@@ -110,10 +108,9 @@ is intended for plated mechanical terminals rather than NPTH tooling features.
 ## Manual installation
 
 Copy the `bga_interposer` directory into KiCad's per-user scripting plugin
-folder. On Linux this is normally one of:
+folder. On Linux this is normally:
 
 ```text
-~/.local/share/kicad/9.0/scripting/plugins/bga_interposer
 ~/.local/share/kicad/10.0/scripting/plugins/bga_interposer
 ```
 

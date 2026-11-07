@@ -88,7 +88,7 @@ def read_base_part(path, signal_pad="1", shield_pads=("2",),
     if not approved:
         raise RFError("librarian approval of the selected source is required")
     if not capability_report(pcbnew.Version())["supported"]:
-        raise RFError("KiCad runtime lies outside 9.0.0–10.0.8")
+        raise RFError("KiCad runtime lies outside 10.0.0–10.0.8")
     data = source.read_bytes()
     footprint = pcbnew.FootprintLoad(str(source.parent), source.stem)
     if footprint is None:

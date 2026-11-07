@@ -245,7 +245,7 @@ class RFRecipeTests(unittest.TestCase):
             rf.validate_artifact(rehash(unsupported))
 
     def test_runtime_capability_range(self):
-        for version in ["9.0.0", "9.0.9.1", "10.0.0", "10.0.8"]:
+        for version in ["10.0.0", "10.0.4", "10.0.8"]:
             self.assertTrue(rf.capability_report(version)["supported"])
         for version in ["8.0.9", "10.0.9", "11.0.0", "unknown"]:
             self.assertFalse(rf.capability_report(version)["supported"])

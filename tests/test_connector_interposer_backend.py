@@ -1,4 +1,4 @@
-"""Native placement, preservation, stale previews and idempotence on KiCad 9/10."""
+"""Native placement, preservation, stale previews and idempotence on KiCad 10."""
 import copy
 import hashlib
 import json

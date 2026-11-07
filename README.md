@@ -34,7 +34,7 @@ See the [worked example](examples/gppo_demo/README.md) and
 
 ## Runtime compatibility
 
-All distributed tools support stable KiCad releases from 9.0.0 through 10.0.8.
+All distributed tools support KiCad releases from 10.0.0 through 10.0.8.
 
 ## Repository layout
 

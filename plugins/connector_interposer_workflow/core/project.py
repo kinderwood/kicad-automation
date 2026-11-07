@@ -2,11 +2,11 @@
 import copy
 
 
-def merge_project_settings(existing, records, previously_owned_nets=(), target_kicad_major=None):
+def merge_project_settings(existing, records, previously_owned_nets=()):
     """Return a new project dict; preserve designer rules and class dimensions.
 
-    New net settings use schema 4; existing KiCad 10 schema 5 is retained. Every class entry needs
-    an explicit priority (9's parser indexes it unconditionally). New classes
+    New net settings use schema 4; existing KiCad 10 schema 5 is retained. Every
+    class entry needs an explicit priority. New classes
     intentionally have no dimensional overrides, inheriting the project's
     Default class. If no saved Default exists, KiCad retains its native factory
     Default; a dimensionless synthetic Default must not replace it.
@@ -28,10 +28,6 @@ def merge_project_settings(existing, records, previously_owned_nets=(), target_k
     version = meta.get('version', 4)
     if type(version) is not int or version > 5 or version < 0:
         raise ValueError('Unsupported native net_settings schema')
-    if target_kicad_major is not None and target_kicad_major not in (9, 10):
-        raise ValueError('Supported KiCad major versions are 9 and 10')
-    if target_kicad_major == 9 and version > 4:
-        raise ValueError('KiCad 10 project net settings cannot be downgraded to KiCad 9')
     classes = settings.setdefault('classes', [])
     if not isinstance(classes, list) or any(not isinstance(c, dict) or not isinstance(c.get('name'), str) for c in classes):
         raise ValueError('KiCad netclass definitions must be named objects')

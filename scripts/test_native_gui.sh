@@ -2,7 +2,7 @@
 set -eu
 
 # Run native wx checks on a private X server. AppDir paths may be supplied as
-# arguments; otherwise use the selected compatibility runtimes when available.
+# arguments; otherwise use the selected compatibility runtime when available.
 xvfb=${XVFB_BIN:-}
 if [ -z "$xvfb" ]; then
     xvfb=$(command -v Xvfb 2>/dev/null || true)
@@ -20,7 +20,6 @@ fi
 
 if [ "$#" -eq 0 ]; then
     for candidate in \
-        /workspace/work/stage0/runtime-gui/appimage9.0.9.1/AppDir \
         /workspace/shared/kicad-10.0.8/AppDir
     do
         if [ -x "$candidate/AppRun" ]; then

@@ -749,26 +749,24 @@ class BGAInterposerWizardTests(unittest.TestCase):
             self.pads_by_name(wizard)["A1"].GetPosition(),
         )
 
-        if hasattr(wizard.module, "Points"):
-            self.assertEqual(1, wizard.module.Points().size())
+        self.assertEqual(1, wizard.module.Points().size())
 
-            with tempfile.TemporaryDirectory(suffix=".pretty") as library:
-                plugin = pcbnew.PCB_IO_KICAD_SEXPR()
-                plugin.FootprintSave(library, wizard.module)
-                footprint_path = Path(library) / (wizard.GetValue() + ".kicad_mod")
-                footprint_text = footprint_path.read_text()
-                self.assertIn("(point", footprint_text)
-                self.assertIn("(at 11.5 11.5)", footprint_text)
-                self.assertIn('(layer "F.Cu")', footprint_text)
+        with tempfile.TemporaryDirectory(suffix=".pretty") as library:
+            plugin = pcbnew.PCB_IO_KICAD_SEXPR()
+            plugin.FootprintSave(library, wizard.module)
+            footprint_path = Path(library) / (wizard.GetValue() + ".kicad_mod")
+            footprint_text = footprint_path.read_text()
+            self.assertIn("(point", footprint_text)
+            self.assertIn("(at 11.5 11.5)", footprint_text)
+            self.assertIn('(layer "F.Cu")', footprint_text)
 
-                loaded = plugin.FootprintLoad(library, wizard.GetValue())
-                self.assertEqual(1, loaded.Points().size())
+            loaded = plugin.FootprintLoad(library, wizard.GetValue())
+            self.assertEqual(1, loaded.Points().size())
 
     def test_package_center_point_is_only_added_for_guide_pin_origin(self):
         wizard = self.make_wizard()
         self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
-        if hasattr(wizard.module, "Points"):
-            self.assertEqual(0, wizard.module.Points().size())
+        self.assertEqual(0, wizard.module.Points().size())
 
     def test_guide_pin_hole_can_be_disabled(self):
         wizard = self.make_wizard(
@@ -995,63 +993,17 @@ class BGAInterposerWizardTests(unittest.TestCase):
         edge_shapes = self.shapes_on_layer(wizard, pcbnew.Edge_Cuts)
         fab_shapes = self.shapes_on_layer(wizard, pcbnew.F_Fab)
 
-        if hasattr(pcbnew.PCB_SHAPE, "SetCornerRadius"):
-            self.assertEqual(1, len(edge_shapes))
-            self.assertEqual(pcbnew.SHAPE_T_RECT, edge_shapes[0].GetShape())
-            self.assertEqual(pcbnew.FromMM(1), edge_shapes[0].GetCornerRadius())
-            fab_rounded_rectangles = [
-                shape
-                for shape in fab_shapes
-                if shape.GetShape() == pcbnew.SHAPE_T_RECT
-            ]
-            self.assertEqual(1, len(fab_rounded_rectangles))
-            self.assertEqual(
-                pcbnew.FromMM(1), fab_rounded_rectangles[0].GetCornerRadius()
-            )
-        else:
-            self.assertEqual(8, len(edge_shapes))
-            self.assertEqual(
-                4,
-                sum(shape.GetShape() == pcbnew.SHAPE_T_SEGMENT for shape in edge_shapes),
-            )
-            self.assertEqual(
-                4,
-                sum(shape.GetShape() == pcbnew.SHAPE_T_ARC for shape in edge_shapes),
-            )
-            self.assertEqual(
-                4,
-                sum(shape.GetShape() == pcbnew.SHAPE_T_ARC for shape in fab_shapes),
-            )
-
-    def test_center_board_cutout_line_and_arc_fallback(self):
-        with mock.patch.object(
-            BGAInterposerWizard,
-            "_supports_native_rounded_rectangle",
-            return_value=False,
-        ):
-            wizard = self.make_wizard(
-                Center_board_cutout__enabled=True,
-                Center_board_cutout__width=6,
-                Center_board_cutout__length=4,
-                Center_board_cutout__corner_radius=1,
-            )
-        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
-        edge_shapes = self.shapes_on_layer(wizard, pcbnew.Edge_Cuts)
-        self.assertEqual(8, len(edge_shapes))
+        self.assertEqual(1, len(edge_shapes))
+        self.assertEqual(pcbnew.SHAPE_T_RECT, edge_shapes[0].GetShape())
+        self.assertEqual(pcbnew.FromMM(1), edge_shapes[0].GetCornerRadius())
+        fab_rounded_rectangles = [
+            shape
+            for shape in fab_shapes
+            if shape.GetShape() == pcbnew.SHAPE_T_RECT
+        ]
+        self.assertEqual(1, len(fab_rounded_rectangles))
         self.assertEqual(
-            4,
-            sum(shape.GetShape() == pcbnew.SHAPE_T_SEGMENT for shape in edge_shapes),
-        )
-        self.assertEqual(
-            4,
-            sum(shape.GetShape() == pcbnew.SHAPE_T_ARC for shape in edge_shapes),
-        )
-        self.assertEqual(
-            4,
-            sum(
-                shape.GetShape() == pcbnew.SHAPE_T_ARC
-                for shape in self.shapes_on_layer(wizard, pcbnew.F_Fab)
-            ),
+            pcbnew.FromMM(1), fab_rounded_rectangles[0].GetCornerRadius()
         )
 
     def test_center_board_cutout_must_fit_inside_package(self):

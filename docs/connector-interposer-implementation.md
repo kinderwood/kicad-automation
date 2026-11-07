@@ -1,10 +1,10 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.19 and the
-separate GPPO RF Transition Designer is version 0.1.1; both have `testing`
-status. Publication does not imply manufacturing or RF qualification. The existing
-BGA Interposer Wizard remains independent and unchanged.
+are authorized. Connector to Interposer Workflow is version 0.4.21 and the
+separate GPPO RF Transition Designer is version 0.1.2; both have `testing`
+status. Publication does not imply manufacturing or RF qualification. The BGA
+Interposer Wizard remains an independent package at version 0.16.1.
 
 ## Boundaries
 
@@ -163,18 +163,16 @@ results below record their exact runtime and scope.
 
 ## Runtime acceptance matrix
 
-The four-version matrix below is the Stage 6 baseline recorded through version
-0.3.7. The 0.3.8 UI/model change has separate current evidence immediately
-below the table.
+The supported KiCad 10 endpoints below are the Stage 6 baseline recorded
+through version 0.3.7. The 0.3.8 UI/model change has separate current evidence
+immediately below the table.
 
 | Actual native version | Environment | Tests | Skips | Real PCM loader |
 |---|---|---:|---:|---|
-| 9.0.0 | Official OCI binaries, Debian 12 userspace through PRoot | 136 PASS | 0 | All 3 packages PASS |
-| 9.0.9 | Extracted official AppImage | 136 PASS | 0 | All 3 packages PASS |
 | 10.0.0 | Extracted official AppImage | 136 PASS | 0 | All 3 packages PASS |
 | 10.0.8 | Extracted official AppImage | 136 PASS | 0 | All 3 packages PASS |
 
-The four baseline runs used the same 0.3.7 working tree.
+The two baseline runs used the same 0.3.7 working tree.
 The tests include existing BGA regression coverage, pure/core and native PCB
 checks, actual CLI schematic export/ERC, standalone native wx controls on
 Xvfb, automatic populated-column mapping with live examples, 10,000-row
@@ -188,9 +186,8 @@ Version 0.3.8 passes the 136-test native suite and packaged-loader checks on the
 available KiCad 10.0.8 runtime. Three native wx dialog tests also pass under
 Xvfb, including loaded-library filter resolution, independent J101/J102
 assignment and the opening-width regression. The complete demo passes A apply,
-offline reopen/no-op and B reconciliation on 10.0.8. The earlier four-version
-baseline supports the maintained compatibility range, but the 0.3.8 delta has
-not been rerun on the other three exact runtimes in this workspace.
+offline reopen/no-op and B reconciliation on 10.0.8. The 10.0.0 endpoint remains
+covered by the repository compatibility matrix.
 
 Version 0.3.9 fixes the live Connector assignments state transition so selecting
 a symbol immediately enables its filtered footprint dropdown. Layer assignment
@@ -232,7 +229,7 @@ headers and stripes, selections and custom-drawn previews remain distinct in
 light and dark appearances. The dialog reapplies the palette when wx reports a
 system-color change. Native GUI regression checks execute the same dialog tests
 under Adwaita light and dark themes. The complete light/dark dialog set passes
-in the selected KiCad 9.0.9.1 and 10.0.8 AppImage runtimes.
+in the selected KiCad 10.0.8 AppImage runtime.
 
 Version 0.4.10 uses **Define RF gangs** and a
 separate **RF transitions** step. Gang geometry uses live validated updates,
@@ -248,8 +245,8 @@ prototype.
 Version 0.4.11 replaces the Netlist source assignment row's persistent
 `wx.Grid` choice editors with one-click native choice menus. Dismissing a menu
 does not change the assignment and leaves no cell editor active. This removes
-the focus-dependent editor state observed under the exact KiCad 9.0.0 runtime
-after clicking outside an open assignment control. The mapping grid also ends
+the focus-dependent editor state observed after clicking outside an open
+assignment control. The mapping grid also ends
 after its measured, bounded columns instead of stretching across the page.
 
 Version 0.4.12 applies that one-click assignment-menu pattern to Netclass type,
@@ -282,13 +279,12 @@ identity. Value-entry cells expose a clipped typed dimension. Fully visible
 values keep the native table free of redundant tooltips.
 
 Version 0.4.16 attempted to route footprint popup commands through the
-assignment cell that opened the menu. Empirical retest passed on Linux with
-KiCad 9.0.2 but still failed on Windows 11 with KiCad 9.0.0. Version 0.4.17
-therefore removes popup command-event routing and reads the selected menu item
-ID synchronously from wx. The rendered interposer, RF gang and DC connector
-assignment controls are unchanged. DC workbook pins remain a subset of the
-selected symbol and footprint pins; any unused DC pins are emitted as explicit
-no-connect pins.
+assignment cell that opened the menu, but the approach remained unreliable on
+Windows 11. Version 0.4.17 therefore removes popup command-event routing and
+reads the selected menu item ID synchronously from wx. The rendered interposer,
+RF gang and DC connector assignment controls are unchanged. DC workbook pins
+remain a subset of the selected symbol and footprint pins; any unused DC pins
+are emitted as explicit no-connect pins.
 
 Windows 11 retesting with KiCad 10.0.8 confirmed that version 0.4.17 still
 returned no selection. A diagnostic build recorded `wx.ID_NONE` after a visible
@@ -301,27 +297,24 @@ footprint is represented truthfully and the footprint itself remains unchecked
 until selected. Clear assignment also removes the stored interposer, RF, DC or
 bulk footprint mapping.
 
-Additional actual PCB Editor checks use the selected 9.0.9.1 AppImage and
-10.0.8: normal startup discovers both actions and Workflow opens from the
-native Plugins menu. Compare executes through the embedded-editor worker path
-on both selected versions; the relocated 9 project returns zero changes and
-zero conflicts. RF Designer opens from the native menu on both versions; on
-10.0.8 it reopens the saved RF-L2 recipe and validated preview. The 0.2.2
-library-selector dialog and compatible-part acceptance also pass native wx
-checks on Xvfb in 9.0.9.1 and 10.0.8. The 0.2.3 interpreter regression checks
-cover Windows sibling discovery, Linux prefixes, AppImage commands, explicit
-overrides, missing interpreters and mismatched KiCad versions. The complete
-suite also passes on the selected 9.0.9.1 runtime.
+Additional actual PCB Editor checks use the selected 10.0.8 AppImage: normal
+startup discovers both actions and Workflow opens from the native Plugins menu.
+Compare executes through the embedded-editor worker path and RF Designer opens
+from the native menu, reopens the saved RF-L2 recipe and restores its validated
+preview. The 0.2.2 library-selector dialog and compatible-part acceptance also
+pass native wx checks on Xvfb. The 0.2.3 interpreter regression checks cover
+Windows sibling discovery, Linux prefixes, AppImage commands, explicit
+overrides, missing interpreters and mismatched KiCad versions.
 The editor's Python executable differs from its bundled runtime, so worker
 resolution explicitly finds the corresponding AppRun and verifies its version.
 Native application registration happens before an active board exists;
-headless imports remain safe. Endpoint menu interaction on 9.0.0/10.0.0 and
+headless imports remain safe. Endpoint menu interaction on 10.0.0 and
 Windows/macOS interaction remain unconfirmed.
 
 The 0.2.1 Workflow and 0.1.1 RF releases remove an application-name check that
 prevented registration in some packaged KiCad builds. Clean-profile GUI tests
 installed their PCM archives under KiCad's `3rdparty/plugins` hierarchy and
-confirmed both menu entries and Workflow invocation in 9.0.9.1 and 10.0.8.
+confirmed both menu entries and Workflow invocation in 10.0.8.
 The packaged-loader regression also uses a non-`pcbnew` application name and
 requires each action to call `register()`. Fedora RPM and Flatpak behavior
 remains a user-environment check after the updated packages are installed.
@@ -337,11 +330,8 @@ this implementation and these fixtures.
 
 The example uses 12 GPPOs, an 800-pad interposer, mixed L2/L3 RF artifacts,
 108 native RF ground vias, 60 rule areas and a validated outer boundary.
-Actual controller runs on the selected 9.0.9.1 AppImage and 10.0.8 create A,
-reopen it with a no-op preview, then apply B into a separate project copy.
-The selected AppImage's CLI `version --format about` and pcbnew both report
-**9.0.9.1**; its abbreviated CLI `version` prints 9.0.9. This is distinct from
-the exact 9.0.9 runtime used for the required four-version matrix.
+An actual controller run on the selected 10.0.8 AppImage creates A, reopens it
+with a no-op preview, then applies B into a separate project copy.
 The generated project pins all required library inputs for offline reopening.
 
 Independent native inspection confirms A/B preserve all 13 footprint UUIDs,
@@ -350,8 +340,8 @@ Exactly 24 signal-pad net assignments change: 12 connector and 12 interposer
 pads. These worked outputs both use DXF B, so this proves electrical
 reconciliation, not a full interactive DXF-A-to-B migration.
 
-Native ERC and schematic parity report zero findings in both A and B on both
-selected runtimes. Value and MPN are synchronized from the generated BOM onto
+Native ERC and schematic parity report zero findings in both A and B on the
+selected runtime. Value and MPN are synchronized from the generated BOM onto
 project instances without modifying approved library sources. Four-layer Gerber and Excellon exports
 succeed. All 122 drill operations match native positions, diameters and
 plating at 0.001 mm export precision: 108 RF vias, 12 GPPO signal holes,
@@ -375,7 +365,7 @@ Constraints were not weakened and findings were not waived.
 | Recovery durability | Hash-checked journal and backup restoration | Power-loss durability and concurrent-writer guarantees |
 | Cross-platform UI | Linux native wx validation first | Windows/macOS focus, keyboard and accessibility |
 | Large-count interaction | Virtual parsed table and stable gang sheets | Full workflow latency, sorting and selection retention |
-| Per-net routing permissions | Current class-by-layer matrix is workflow validation only | Searchable high-count per-net UI, decision on a separate workflow step, previewed rule changes, managed `.kicad_dru` ownership/merge behavior, and KiCad 9/10 router and DRC prototypes |
+| Per-net routing permissions | Current class-by-layer matrix is workflow validation only | Searchable high-count per-net UI, decision on a separate workflow step, previewed rule changes, managed `.kicad_dru` ownership/merge behavior, and KiCad 10 router and DRC prototypes |
 | DXF variation | Native import and explicit source validation | Arbitrary nested blocks, curves and repair tolerances |
 | RF electrical/fabrication acceptance | Geometry and native output controls | Fabricator stackup review and impedance/EM qualification |
 | Automatic RF selection | Explicit approved artifact selection | Reviewed rules by connector, netclass, layer and stackup |

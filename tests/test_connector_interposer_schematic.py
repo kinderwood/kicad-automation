@@ -145,8 +145,7 @@ class SchematicTests(unittest.TestCase):
         self.assertEqual(result['net_settings']['netclass_assignments'],{'DESIGNER':['RF'],'RF[*]':['RF']})
         self.assertIn('OLD',existing['net_settings']['netclass_assignments'])
         future=json.loads(json.dumps(existing));future['net_settings']['meta']['version']=5
-        self.assertEqual(merge_project_settings(future,[record],target_kicad_major=10)['net_settings']['meta']['version'],5)
-        with self.assertRaises(ValueError):merge_project_settings(future,[record],target_kicad_major=9)
+        self.assertEqual(merge_project_settings(future,[record])['net_settings']['meta']['version'],5)
         table='(sym_lib_table (lib (name "Designer") (type "KiCad") (uri "/designer.kicad_sym") (options "") (descr "Mine")))'
         incoming='(sym_lib_table (lib (name "WorkflowProject") (type "KiCad") (uri "${KIPRJMOD}/WorkflowProject.kicad_sym") (options "") (descr "")))'
         merged=merge_library_table(table,incoming)

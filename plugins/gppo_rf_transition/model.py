@@ -550,7 +550,7 @@ def publish_bundle(directory, artifact):
 def capability_report(version):
     text = str(version)
     match = re.match(r"(\d+)\.(\d+)\.(\d+)", text)
-    supported = bool(match and (9, 0, 0) <= tuple(map(int, match.groups())) <= (10, 0, 8))
+    supported = bool(match and (10, 0, 0) <= tuple(map(int, match.groups())) <= (10, 0, 8))
     return {"runtime": text, "supported": supported,
             "capabilities": sorted(CAPABILITIES) if supported else [],
             "limitations": ["No impedance, electromagnetic or manufacturing qualification",

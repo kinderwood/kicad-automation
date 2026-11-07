@@ -19,14 +19,14 @@ class InterpreterDiscoveryTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def runtime(self, module_path, executable, prefix, version='9.0.0'):
+    def runtime(self, module_path, executable, prefix, version='10.0.0'):
         module = SimpleNamespace(__file__=str(module_path), Version=lambda: version)
         return mock.patch.multiple(
             sys, executable=str(executable), prefix=str(prefix), exec_prefix=str(prefix)
         ), mock.patch.dict(sys.modules, {'pcbnew': module})
 
     @staticmethod
-    def probe(version='9.0.0', error=None, calls=None):
+    def probe(version='10.0.0', error=None, calls=None):
         def run(command, **kwargs):
             if calls is not None:
                 calls.append((list(command), dict(kwargs)))
@@ -113,7 +113,7 @@ class InterpreterDiscoveryTests(unittest.TestCase):
                 NativeProcessBackend()
         message = str(raised.exception)
         self.assertIn('reports KiCad 10.0.8', message)
-        self.assertIn('active editor is KiCad 9.0.0', message)
+        self.assertIn('active editor is KiCad 10.0.0', message)
 
     def test_invalid_explicit_runtime_reports_pcbnew_import_failure(self):
         interpreter = self.root / 'broken/python.exe'

@@ -969,7 +969,7 @@ class NativeBackend:
                     destination.write_text(content, encoding="utf-8")
             if not self.p.SaveBoard(str(candidate), board, True):
                 raise BackendError("Native board staging failed")
-            # KiCad 9 crashes when filling newly built in-memory fixtures: load first.
+            # Reload so native checks use the staged project settings beside the board.
             checked = self._load(candidate)
             checked.SynchronizeNetsAndNetClasses(False)
             checked.BuildConnectivity()
