@@ -338,7 +338,7 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(PAGES[4], 'Connector assignments')
         self.assertEqual(PAGES[5], 'Define RF gangs')
         self.assertEqual(PAGES[6], 'RF transitions')
-        self.assertEqual(PAGES[7], 'Connector placement')
+        self.assertEqual(PAGES[7], 'Mechanical placement')
         self.assertEqual(PAGES[8], 'Board outline')
         self.assertEqual(PAGES[9], 'Review changes')
         self.assertEqual(PAGES[10], 'Apply / results')
@@ -368,6 +368,16 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(dialog.step_list.item_font(1).GetWeight(), self.wx.FONTWEIGHT_NORMAL)
         self.assertTrue(dialog.step_list.GetWindowStyleFlag() & self.wx.BORDER_SIMPLE)
         self.assertIsNotNone(self.wx.FindWindowByLabel('Save workflow settings', dialog))
+        self.assertEqual(
+            tuple(dialog.placement_notebook.GetPageText(index)
+                  for index in range(dialog.placement_notebook.GetPageCount())),
+            ('Imported drawing', 'Interposer', 'RF anchors',
+             'DC connectors', 'Mounting holes'),
+        )
+        self.assertIsNone(self.wx.FindWindowByLabel('Accept interposer placement', dialog))
+        self.assertIsNone(self.wx.FindWindowByLabel('Accept anchor', dialog))
+        self.assertIsNone(self.wx.FindWindowByLabel('Accept DC placement', dialog))
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Use selected center circle', dialog))
         self.assertIsNotNone(self.wx.FindWindowByLabel('Delete workflow settings', dialog))
         self.assertIsNotNone(self.wx.FindWindowByLabel('Reset workflow settings', dialog))
         self.assertIn('without applying board changes', dialog.save_button.GetToolTipText())
@@ -1373,10 +1383,11 @@ class NativeDialogTests(unittest.TestCase):
                 HEADERS,
                 ('CLOCK1', 'CLOCK', 'E1', 'A1', 'J101', '1', 'L1'),
             )))
+            dialog.controller.set_netclass_type('CLOCK', 'RF')
             dialog.controller.config['interposers']['E1'] = {'symbol': {'path': 'selected'}}
             dialog.interposer_x.ChangeValue('1 inch')
             dialog.interposer_y.ChangeValue('25000um')
-            dialog.accept_interposer_placement(None)
+            dialog._interposer_placement_changed()
             selection = dialog.controller.config['interposers']['E1']
             self.assertEqual(selection['pose'][:2], [25.4, 25.0])
             self.assertEqual(selection['pose_units'], ['inch', 'um'])
@@ -1388,6 +1399,15 @@ class NativeDialogTests(unittest.TestCase):
             self.assertEqual(dialog.label_offset_x.units.GetStringSelection(), 'mm')
             dialog.label_offset_y.ChangeValue('100 mil')
             self.assertEqual(dialog.label_offset_y.value_mm(), 2.54)
+
+            dialog.refresh_gangs()
+            dialog.anchor_x.ChangeValue('2 mm')
+            dialog.anchor_y.ChangeValue('100 mil')
+            dialog._rf_anchor_changed()
+            gang = dialog.controller.gang('J101')
+            self.assertEqual(gang['anchor'], [2.0, 2.54])
+            self.assertTrue(gang['anchor_accepted'])
+            self.assertTrue(dialog.controller.config['mechanical']['accepted'])
         finally:
             dialog.Destroy()
             self.app.Yield()

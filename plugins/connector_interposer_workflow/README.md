@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.4.21**, testing release. The package targets KiCad 10.0.0 through
+Version **0.4.22**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -150,21 +150,26 @@ an already-open source board does not update the output copy.
    library** discovers published `.gppo-rf.json` files beneath the project;
    **Browse artifact…** can select a catalog artifact elsewhere. **Open RF
    Transition Designer…** is a disabled placeholder in this release.
-8. **Connector placement:** accept the interposer placement, then import the complete mechanical drawing through KiCad's
-   native **File → Import → Graphics**, selecting a user layer, then save.
-   The bounded association accepts one full `gang-pin` text label per native
-   circle. If labels have a drafting offset, explicitly enter and accept the
-   label X/Y offset from the circle; association remains one-to-one and is
-   previewed before application. Missing, extra, duplicate or ambiguous circles block Review.
-   Capture a selected native circle center or enter numeric location-1
-   coordinates, then explicitly accept the RF anchor. For DC, select the pin 1
-   circle and enter orientation and board side. The native backend measures the
+8. **Mechanical placement:** import the complete mechanical drawing through
+   KiCad's native **File → Import → Graphics**, select its user layer, and
+   save the board. Five native tabs separate drawing association, interposer,
+   RF anchor, DC connector and mounting-hole work. The bounded drawing
+   association accepts one full `gang-pin` text label per native circle. If
+   labels have a drafting offset, enter the label X/Y offset from the circle;
+   association remains one-to-one and is inspected against the saved board.
+   Missing, extra, duplicate or ambiguous circles block Review.
+   Select the interposer center circle or enter its position and orientation.
+   Select RF gangs and DC connectors from compact lists; a selected location-1
+   or pin-1 circle is applied immediately. Valid numeric, orientation, side,
+   source-layer and offset edits also update the current workflow on commit,
+   with no separate acceptance buttons. The native backend measures the
    footprint's transformed pad-1 offset and places that pad at the circle center
    regardless of library origin. Every DC electrical pad, including NC pins,
    must match one imported circle within the current one-nanometre internal
-   comparison tolerance. Mounting holes use approved
-   footprints selected from the loaded KiCad libraries and are board-only,
-   excluded from BOM and position files.
+   comparison tolerance. Mounting holes have independent position inputs,
+   selected-circle capture and a removable placed-hole list. They use approved
+   footprints from the loaded KiCad libraries and are board-only, excluded from
+   BOM and position files.
 9. **Board outline:** explicitly enable this optional feature and capture
    imported outer-boundary segments and optional center-cutout segments
    separately. Review validates exact closure, intersections and ownership.

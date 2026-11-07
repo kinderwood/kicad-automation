@@ -1008,7 +1008,10 @@ class WorkflowDialog(wx.Dialog):
         self.controller = controller or WorkflowController(dispatch=wx.CallAfter)
         self.controller.dispatch = wx.CallAfter
         self.current_gang = None
+        self.current_anchor_gang = None
+        self.current_dc_anchor = None
         self._loading_gang = False
+        self._loading_placement = False
         self._gang_invalid_edits = {}
         self._closing = False
         self._applying = False
@@ -1401,6 +1404,7 @@ class WorkflowDialog(wx.Dialog):
         self.refresh_layers()
         self.refresh_gangs()
         self.refresh_rf_transitions()
+        self.refresh_mounting_holes()
         self.refresh_connector_assignments(True)
         for preview in (self.pattern_view, self.outline_view):
             preview.Refresh()
@@ -2906,15 +2910,19 @@ class WorkflowDialog(wx.Dialog):
         )
         interposer = self.controller.config['interposers'].get(reference, {}) if reference else {}
         if hasattr(self, 'anchor_interposer_ref'):
-            self.anchor_interposer_ref.SetLabel('Ref des: ' + (reference or '—'))
+            self.anchor_interposer_ref.SetLabel('Reference: ' + (reference or '—'))
             pose = interposer.get('pose', [0, 0, 0])
             pose_units = interposer.get('pose_units', ['mil', 'mil'])
-            self.interposer_x.set_mm(pose[0], pose_units[0])
-            self.interposer_y.set_mm(pose[1], pose_units[1])
-            self.interposer_rotation.ChangeValue(str(pose[2]))
+            self._loading_placement = True
+            try:
+                self.interposer_x.set_mm(pose[0], pose_units[0])
+                self.interposer_y.set_mm(pose[1], pose_units[1])
+                self.interposer_rotation.ChangeValue(str(pose[2]))
+            finally:
+                self._loading_placement = False
             self.interposer_pose_status.SetLabel(
-                f'{reference} placement accepted' if reference and interposer.get('pose_accepted')
-                else 'Interposer placement required'
+                f'{reference} placement is ready.' if reference and interposer.get('pose_accepted')
+                else 'Set the interposer position or select its center circle.'
             )
             self._style_status(
                 self.interposer_pose_status,
@@ -3476,19 +3484,10 @@ class WorkflowDialog(wx.Dialog):
             self._style_status(self.gang_definition_status, 'neutral')
             self.gang_preview_status.SetLabel('No RF gangs')
             self._style_status(self.gang_preview_status, 'neutral')
-        if hasattr(self, 'anchor_gang'):
-            current = self.anchor_gang.GetStringSelection()
-            self.anchor_gang.Set(list(names))
-            if names:
-                self.anchor_gang.SetStringSelection(current if current in names else names[0])
-                self.select_anchor_gang()
-        if hasattr(self, 'dc_anchor_connector'):
-            dc_names = list(self.controller.dc_connector_names())
-            current = self.dc_anchor_connector.GetStringSelection()
-            self.dc_anchor_connector.Set(dc_names)
-            if dc_names:
-                self.dc_anchor_connector.SetStringSelection(current if current in dc_names else dc_names[0])
-                self.select_dc_anchor(None)
+        if hasattr(self, 'anchor_gang_list'):
+            self.refresh_anchor_gangs()
+        if hasattr(self, 'dc_anchor_list'):
+            self.refresh_dc_anchors()
         if hasattr(self, 'transition_list'):
             self.refresh_rf_transitions()
 
@@ -3591,9 +3590,9 @@ class WorkflowDialog(wx.Dialog):
         finally:
             self._loading_gang = False
         self.gang_editor_title.SetLabel(f'{self.current_gang} Gang definition')
-        if hasattr(self, 'anchor_gang'):
-            self.anchor_gang.SetStringSelection(self.current_gang)
-            self.select_anchor_gang()
+        if hasattr(self, 'anchor_gang_list'):
+            self.current_anchor_gang = self.current_gang
+            self.refresh_anchor_gangs()
         if self.current_gang in self._gang_invalid_edits:
             try:
                 values = self._gang_editor_values()
@@ -3850,225 +3849,612 @@ class WorkflowDialog(wx.Dialog):
 
     def build_anchors(self, panel):
         self.task_box(
-            panel, 'Connector placement', 'Associate imported connector locations',
-            'Use KiCad File → Import → Graphics to import the whole DXF to a user layer first. Place the interposer, then capture one native connector circle or enter a numeric gang anchor.',
+            panel, 'Mechanical placement', 'Place project parts from the imported drawing',
+            'Import the complete DXF to a user layer with KiCad File → Import → Graphics and save the board. Then use its native circles to place the interposer, RF gangs, DC connectors, and mounting holes. Valid edits update the workflow immediately; the board is unchanged until Apply.',
         )
-        interposer_box = wx.StaticBox(panel, label='Interposer placement')
+        self.placement_notebook = wx.Notebook(panel)
+        self.placement_notebook.SetMinSize((-1, 445))
+        panel.GetSizer().Add(self.placement_notebook, 1, wx.EXPAND | wx.ALL, 8)
+
+        drawing_page = wx.Panel(self.placement_notebook)
+        drawing_page.SetSizer(wx.BoxSizer(wx.VERTICAL))
+        drawing_box = wx.StaticBox(drawing_page, label='Imported drawing association')
+        drawing = wx.StaticBoxSizer(drawing_box, wx.VERTICAL)
+        drawing_fields = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
+        drawing_fields.Add(wx.StaticText(drawing_box, label='Source layer'), 0,
+                           wx.ALIGN_CENTER_VERTICAL)
+        self.user_layer = wx.ComboBox(
+            drawing_box, value='Dwgs.User',
+            choices=['Dwgs.User', 'Cmts.User', 'Eco1.User', 'Eco2.User',
+                     'User.Drawings', 'User.Comments'],
+            style=wx.CB_DROPDOWN | wx.TE_PROCESS_ENTER,
+        )
+        drawing_fields.Add(self.user_layer, 1, wx.EXPAND)
+        drawing_fields.Add(wx.StaticText(drawing_box, label='Label offset X'), 0,
+                           wx.ALIGN_CENTER_VERTICAL)
+        self.label_offset_x = DimensionInput(drawing_box, value='0')
+        drawing_fields.Add(self.label_offset_x, 1, wx.EXPAND)
+        drawing_fields.Add(wx.StaticText(drawing_box, label='Label offset Y'), 0,
+                           wx.ALIGN_CENTER_VERTICAL)
+        self.label_offset_y = DimensionInput(drawing_box, value='0')
+        drawing_fields.Add(self.label_offset_y, 1, wx.EXPAND)
+        drawing_fields.AddGrowableCol(1, 1)
+        drawing.Add(drawing_fields, 0, wx.EXPAND | wx.ALL, 8)
+        drawing_actions = wx.BoxSizer(wx.HORIZONTAL)
+        drawing_actions.Add(
+            self.button(drawing_box, 'Inspect saved drawing', self.inspect_mechanical), 0,
+        )
+        drawing.Add(drawing_actions, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.drawing_status = self.status_label(
+            drawing_box, 'Choose the imported drawing layer, then inspect the saved board.'
+        )
+        self._style_status(self.drawing_status, 'warning')
+        drawing.Add(self.drawing_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        drawing_page.GetSizer().Add(drawing, 0, wx.EXPAND | wx.ALL, 8)
+        self.mechanical_list = wx.ListCtrl(
+            drawing_page, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 190),
+        )
+        for column, (heading, width) in enumerate((
+            ('Location', 130), ('X (mm)', 110), ('Y (mm)', 110),
+            ('Circle source', 300), ('Label source', 300),
+        )):
+            self.mechanical_list.InsertColumn(column, heading, width=width)
+        drawing_page.GetSizer().Add(
+            self.mechanical_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8,
+        )
+        self.placement_notebook.AddPage(drawing_page, 'Imported drawing')
+
+        interposer_page = wx.Panel(self.placement_notebook)
+        interposer_page.SetSizer(wx.BoxSizer(wx.VERTICAL))
+        interposer_box = wx.StaticBox(interposer_page, label='Interposer origin')
         interposer = wx.StaticBoxSizer(interposer_box, wx.VERTICAL)
-        self.anchor_interposer_ref = wx.StaticText(interposer_box, label='Ref des: —')
+        self.anchor_interposer_ref = wx.StaticText(interposer_box, label='Reference: —')
         interposer.Add(self.anchor_interposer_ref, 0, wx.ALL, 8)
-        placement = wx.FlexGridSizer(cols=6, hgap=8, vgap=6)
-        placement.Add(wx.StaticText(interposer_box, label='X'), 0, wx.ALIGN_CENTER_VERTICAL)
+        interposer_fields = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
+        interposer_fields.Add(wx.StaticText(interposer_box, label='Position X'), 0,
+                              wx.ALIGN_CENTER_VERTICAL)
         self.interposer_x = DimensionInput(interposer_box, value='0')
-        self.interposer_x.bind_changed(self.input_changed)
-        placement.Add(self.interposer_x, 1, wx.EXPAND)
-        placement.Add(wx.StaticText(interposer_box, label='Y'), 0, wx.ALIGN_CENTER_VERTICAL)
+        interposer_fields.Add(self.interposer_x, 1, wx.EXPAND)
+        interposer_fields.Add(wx.StaticText(interposer_box, label='Position Y'), 0,
+                              wx.ALIGN_CENTER_VERTICAL)
         self.interposer_y = DimensionInput(interposer_box, value='0')
-        self.interposer_y.bind_changed(self.input_changed)
-        placement.Add(self.interposer_y, 1, wx.EXPAND)
-        placement.Add(wx.StaticText(interposer_box, label='Orientation (degrees)'), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.interposer_rotation = wx.TextCtrl(interposer_box, value='0')
-        placement.Add(self.interposer_rotation, 1, wx.EXPAND)
-        for column in (1, 3, 5): placement.AddGrowableCol(column, 1)
-        interposer.Add(placement, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        interposer.Add(self.button(interposer_box, 'Accept interposer placement', self.accept_interposer_placement),
-                       0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        self.interposer_pose_status = self.status_label(interposer_box, 'Interposer placement required')
-        interposer.Add(self.interposer_pose_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        panel.GetSizer().Add(interposer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        interposer_fields.Add(self.interposer_y, 1, wx.EXPAND)
+        interposer_fields.Add(wx.StaticText(interposer_box, label='Orientation'), 0,
+                              wx.ALIGN_CENTER_VERTICAL)
+        self.interposer_rotation = wx.TextCtrl(
+            interposer_box, value='0', style=wx.TE_PROCESS_ENTER,
+        )
+        interposer_fields.Add(self.interposer_rotation, 1, wx.EXPAND)
+        interposer_fields.AddGrowableCol(1, 1)
+        interposer.Add(interposer_fields, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        interposer.Add(
+            self.button(interposer_box, 'Use selected center circle',
+                        self.capture_interposer_circle),
+            0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8,
+        )
+        self.interposer_pose_status = self.status_label(
+            interposer_box, 'Set the interposer position or select its center circle.'
+        )
+        self._style_status(self.interposer_pose_status, 'warning')
+        interposer.Add(self.interposer_pose_status, 0,
+                       wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        interposer_page.GetSizer().Add(interposer, 0, wx.EXPAND | wx.ALL, 8)
+        self.placement_notebook.AddPage(interposer_page, 'Interposer')
 
-        self.anchor_gang = wx.Choice(panel)
-        self.anchor_gang.Bind(wx.EVT_CHOICE, self.select_anchor_gang)
-        panel.GetSizer().Add(self.anchor_gang, 0, wx.EXPAND | wx.ALL, 8)
-        self.user_layer = self.field(panel, 'Imported mechanical user layer', 'Dwgs.User')
-        self.label_offset_x = self.dimension_field(panel, 'Label offset X from circle', '0')
-        self.label_offset_y = self.dimension_field(panel, 'Label offset Y from circle', '0')
-        self.anchor_x = self.dimension_field(panel, 'Location 1 X', '0')
-        self.anchor_y = self.dimension_field(panel, 'Location 1 Y', '0')
-        panel.GetSizer().Add(self.button(panel, 'Use selected circle center', self.capture_circle), 0, wx.ALL, 8)
-        panel.GetSizer().Add(self.button(panel, 'Accept anchor', self.accept_anchor), 0, wx.ALL, 8)
-        self.anchor_status = self.note(panel, 'No anchor captured.')
+        rf_page = wx.Panel(self.placement_notebook)
+        rf_page.SetSizer(wx.BoxSizer(wx.HORIZONTAL))
+        rf_selector_box = wx.StaticBox(rf_page, label='RF gangs')
+        rf_selector = wx.StaticBoxSizer(rf_selector_box, wx.VERTICAL)
+        self.anchor_gang_filter = wx.SearchCtrl(rf_selector_box)
+        self.anchor_gang_filter.SetDescriptiveText('Search gangs')
+        rf_selector.Add(self.anchor_gang_filter, 0, wx.EXPAND | wx.ALL, 8)
+        self.anchor_gang_list = wx.ListCtrl(
+            rf_selector_box, style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
+        )
+        for column, (heading, width) in enumerate(
+            (('Gang', 72), ('Location 1', 108), ('Status', 82)),
+        ):
+            self.anchor_gang_list.InsertColumn(column, heading, width=width)
+        self.anchor_gang_list.SetMinSize((280, 280))
+        rf_selector.Add(self.anchor_gang_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        rf_page.GetSizer().Add(rf_selector, 0, wx.EXPAND | wx.ALL, 8)
+        rf_editor_box = wx.StaticBox(rf_page, label='Select an RF gang')
+        rf_editor = wx.StaticBoxSizer(rf_editor_box, wx.VERTICAL)
+        self.anchor_gang_title = rf_editor_box
+        rf_fields = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
+        rf_fields.Add(wx.StaticText(rf_editor_box, label='Location 1 X'), 0,
+                      wx.ALIGN_CENTER_VERTICAL)
+        self.anchor_x = DimensionInput(rf_editor_box, value='0')
+        rf_fields.Add(self.anchor_x, 1, wx.EXPAND)
+        rf_fields.Add(wx.StaticText(rf_editor_box, label='Location 1 Y'), 0,
+                      wx.ALIGN_CENTER_VERTICAL)
+        self.anchor_y = DimensionInput(rf_editor_box, value='0')
+        rf_fields.Add(self.anchor_y, 1, wx.EXPAND)
+        rf_fields.AddGrowableCol(1, 1)
+        rf_editor.Add(rf_fields, 0, wx.EXPAND | wx.ALL, 8)
+        rf_editor.Add(
+            self.button(rf_editor_box, 'Use selected location 1 circle',
+                        self.capture_circle),
+            0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8,
+        )
+        self.anchor_status = self.status_label(rf_editor_box, 'Select an RF gang.')
+        rf_editor.Add(self.anchor_status, 0,
+                      wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        rf_page.GetSizer().Add(rf_editor, 1, wx.EXPAND | wx.TOP | wx.RIGHT | wx.BOTTOM, 8)
+        self.placement_notebook.AddPage(rf_page, 'RF anchors')
 
-        dc_box = wx.StaticBox(panel, label='DC connector pin 1 placement')
-        dc = wx.StaticBoxSizer(dc_box, wx.VERTICAL)
-        self.dc_anchor_connector = wx.Choice(dc_box)
-        self.dc_anchor_connector.Bind(wx.EVT_CHOICE, self.select_dc_anchor)
-        dc.Add(self.dc_anchor_connector, 0, wx.EXPAND | wx.ALL, 8)
-        dc_fields = wx.FlexGridSizer(cols=4, hgap=8, vgap=6)
-        dc_fields.Add(wx.StaticText(dc_box, label='Orientation (degrees)'), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.dc_anchor_rotation = wx.TextCtrl(dc_box, value='0')
+        dc_page = wx.Panel(self.placement_notebook)
+        dc_page.SetSizer(wx.BoxSizer(wx.HORIZONTAL))
+        dc_selector_box = wx.StaticBox(dc_page, label='DC connectors')
+        dc_selector = wx.StaticBoxSizer(dc_selector_box, wx.VERTICAL)
+        self.dc_anchor_filter = wx.SearchCtrl(dc_selector_box)
+        self.dc_anchor_filter.SetDescriptiveText('Search connectors')
+        dc_selector.Add(self.dc_anchor_filter, 0, wx.EXPAND | wx.ALL, 8)
+        self.dc_anchor_list = wx.ListCtrl(
+            dc_selector_box, style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
+        )
+        for column, (heading, width) in enumerate(
+            (('Connector', 88), ('Pin 1', 100), ('Status', 82)),
+        ):
+            self.dc_anchor_list.InsertColumn(column, heading, width=width)
+        self.dc_anchor_list.SetMinSize((290, 280))
+        dc_selector.Add(self.dc_anchor_list, 1,
+                        wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        dc_page.GetSizer().Add(dc_selector, 0, wx.EXPAND | wx.ALL, 8)
+        dc_editor_box = wx.StaticBox(dc_page, label='Select a DC connector')
+        dc_editor = wx.StaticBoxSizer(dc_editor_box, wx.VERTICAL)
+        self.dc_anchor_title = dc_editor_box
+        dc_fields = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
+        dc_fields.Add(wx.StaticText(dc_editor_box, label='Orientation'), 0,
+                      wx.ALIGN_CENTER_VERTICAL)
+        self.dc_anchor_rotation = wx.TextCtrl(
+            dc_editor_box, value='0', style=wx.TE_PROCESS_ENTER,
+        )
         dc_fields.Add(self.dc_anchor_rotation, 1, wx.EXPAND)
-        dc_fields.Add(wx.StaticText(dc_box, label='Board side'), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.dc_anchor_side = wx.Choice(dc_box, choices=['Front (F)', 'Back (B)'])
+        dc_fields.Add(wx.StaticText(dc_editor_box, label='Board side'), 0,
+                      wx.ALIGN_CENTER_VERTICAL)
+        self.dc_anchor_side = wx.Choice(dc_editor_box, choices=['Front', 'Back'])
         self.dc_anchor_side.SetSelection(0)
         dc_fields.Add(self.dc_anchor_side, 1, wx.EXPAND)
-        dc_fields.AddGrowableCol(1, 1); dc_fields.AddGrowableCol(3, 1)
-        dc.Add(dc_fields, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        dc_buttons = wx.BoxSizer(wx.HORIZONTAL)
-        dc_buttons.Add(self.button(dc_box, 'Use selected pin 1 circle', self.capture_dc_circle),
-                       0, wx.RIGHT, 8)
-        dc_buttons.Add(self.button(dc_box, 'Accept DC placement', self.accept_dc_anchor), 0)
-        dc.Add(dc_buttons, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        self.dc_anchor_status = self.status_label(dc_box, 'DC pin 1 placement required')
-        dc.Add(self.dc_anchor_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        panel.GetSizer().Add(dc, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-
-        panel.GetSizer().Add(self.button(panel, 'Inspect saved mechanical population', self.inspect_mechanical), 0, wx.ALL, 8)
-        self.mechanical_list = wx.ListCtrl(panel, style=wx.LC_REPORT, size=(-1, 140))
-        for col, (name, width) in enumerate((('Physical key', 120), ('Center X (mm)', 130), ('Center Y (mm)', 130), ('Source circle UUID', 280), ('Source text UUID', 280))): self.mechanical_list.InsertColumn(col, name, width=width)
-        panel.GetSizer().Add(self.mechanical_list, 0, wx.EXPAND | wx.ALL, 8)
-        self.hole_path = self.library_field(panel, 'Approved mounting-hole footprint (optional)', 'footprint', allow_mechanical=True)
-        self.hole_ref = self.field(panel, 'Mounting-hole reference', 'H1')
-        panel.GetSizer().Add(self.button(panel, 'Add mounting hole at this anchor', self.add_hole), 0, wx.ALL, 8)
-
-    def select_anchor_gang(self, event=None):
-        gang = self.anchor_gang.GetStringSelection()
-        if not gang:
-            return
-        settings = self.controller.gang(gang)
-        anchor = settings.get('anchor', [0, 0])
-        units = settings.get('display_units', {})
-        self.anchor_x.set_mm(anchor[0], units.get('anchor_x', 'mil'))
-        self.anchor_y.set_mm(anchor[1], units.get('anchor_y', 'mil'))
-        accepted = bool(settings.get('anchor_accepted'))
-        self.anchor_status.SetLabel(
-            f'{gang} anchor accepted' if accepted else f'{gang} anchor required'
+        dc_fields.AddGrowableCol(1, 1)
+        dc_editor.Add(dc_fields, 0, wx.EXPAND | wx.ALL, 8)
+        dc_editor.Add(
+            self.button(dc_editor_box, 'Use selected pin 1 circle',
+                        self.capture_dc_circle),
+            0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8,
         )
+        self.dc_anchor_status = self.status_label(dc_editor_box, 'Select a DC connector.')
+        dc_editor.Add(self.dc_anchor_status, 0,
+                      wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        dc_page.GetSizer().Add(dc_editor, 1,
+                              wx.EXPAND | wx.TOP | wx.RIGHT | wx.BOTTOM, 8)
+        self.placement_notebook.AddPage(dc_page, 'DC connectors')
 
-    def accept_interposer_placement(self, event):
+        holes_page = wx.Panel(self.placement_notebook)
+        holes_page.SetSizer(wx.BoxSizer(wx.HORIZONTAL))
+        hole_box = wx.StaticBox(holes_page, label='New mounting hole')
+        hole_editor = wx.StaticBoxSizer(hole_box, wx.VERTICAL)
+        hole_part_row = wx.BoxSizer(wx.HORIZONTAL)
+        hole_part_row.Add(wx.StaticText(hole_box, label='Footprint'), 0,
+                          wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
+        self.hole_path = LibrarySelectionCtrl(
+            hole_box, self, 'Choose mounting-hole footprint', 'footprint',
+            allow_mechanical=True, on_change=self.library_changed,
+        )
+        hole_part_row.Add(self.hole_path, 1, wx.EXPAND)
+        hole_editor.Add(hole_part_row, 0, wx.EXPAND | wx.ALL, 8)
+        hole_ref_row = wx.BoxSizer(wx.HORIZONTAL)
+        hole_ref_row.Add(wx.StaticText(hole_box, label='Reference'), 0,
+                         wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
+        self.hole_ref = wx.TextCtrl(hole_box, value='H1')
+        hole_ref_row.Add(self.hole_ref, 1, wx.EXPAND)
+        hole_editor.Add(hole_ref_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        hole_fields = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
+        hole_fields.Add(wx.StaticText(hole_box, label='Position X'), 0,
+                        wx.ALIGN_CENTER_VERTICAL)
+        self.hole_x = DimensionInput(hole_box, value='0')
+        hole_fields.Add(self.hole_x, 1, wx.EXPAND)
+        hole_fields.Add(wx.StaticText(hole_box, label='Position Y'), 0,
+                        wx.ALIGN_CENTER_VERTICAL)
+        self.hole_y = DimensionInput(hole_box, value='0')
+        hole_fields.Add(self.hole_y, 1, wx.EXPAND)
+        hole_fields.AddGrowableCol(1, 1)
+        hole_editor.Add(hole_fields, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        hole_actions = wx.BoxSizer(wx.HORIZONTAL)
+        hole_actions.Add(
+            self.button(hole_box, 'Use selected circle', self.capture_hole_circle),
+            0, wx.RIGHT, 8,
+        )
+        hole_actions.Add(self.button(hole_box, 'Add mounting hole', self.add_hole), 0)
+        hole_editor.Add(hole_actions, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.hole_status = self.status_label(
+            hole_box, 'Choose a footprint and position for the new mounting hole.'
+        )
+        hole_editor.Add(self.hole_status, 0,
+                        wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        holes_page.GetSizer().Add(hole_editor, 1, wx.EXPAND | wx.ALL, 8)
+        holes_list_box = wx.StaticBox(holes_page, label='Placed mounting holes')
+        holes_list = wx.StaticBoxSizer(holes_list_box, wx.VERTICAL)
+        self.hole_list = wx.ListCtrl(
+            holes_list_box, style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
+        )
+        for column, (heading, width) in enumerate(
+            (('Reference', 84), ('Footprint', 230), ('X (mm)', 82), ('Y (mm)', 82)),
+        ):
+            self.hole_list.InsertColumn(column, heading, width=width)
+        self.hole_list.SetMinSize((500, 250))
+        holes_list.Add(self.hole_list, 1, wx.EXPAND | wx.ALL, 8)
+        holes_list.Add(
+            self.button(holes_list_box, 'Remove selected', self.remove_hole),
+            0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8,
+        )
+        holes_page.GetSizer().Add(holes_list, 1,
+                                  wx.EXPAND | wx.TOP | wx.RIGHT | wx.BOTTOM, 8)
+        self.placement_notebook.AddPage(holes_page, 'Mounting holes')
+
+        self.user_layer.Bind(wx.EVT_COMBOBOX, self._mechanical_source_changed)
+        self.user_layer.Bind(wx.EVT_TEXT_ENTER, self._mechanical_source_changed)
+        self.label_offset_x.bind_changed(self._mechanical_source_changed)
+        self.label_offset_y.bind_changed(self._mechanical_source_changed)
+        self.interposer_x.bind_changed(self._interposer_placement_changed)
+        self.interposer_y.bind_changed(self._interposer_placement_changed)
+        self.interposer_rotation.Bind(wx.EVT_TEXT_ENTER, self._interposer_placement_changed)
+        self.interposer_rotation.Bind(wx.EVT_KILL_FOCUS, self._interposer_placement_changed)
+        self.anchor_x.bind_changed(self._rf_anchor_changed)
+        self.anchor_y.bind_changed(self._rf_anchor_changed)
+        self.anchor_gang_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_anchor_gangs())
+        self.anchor_gang_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.select_anchor_gang)
+        self.dc_anchor_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_dc_anchors())
+        self.dc_anchor_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.select_dc_anchor)
+        self.dc_anchor_rotation.Bind(wx.EVT_TEXT_ENTER, self._dc_placement_changed)
+        self.dc_anchor_rotation.Bind(wx.EVT_KILL_FOCUS, self._dc_placement_changed)
+        self.dc_anchor_side.Bind(wx.EVT_CHOICE, self._dc_placement_changed)
+
+    @staticmethod
+    def _coordinate_text(values):
+        if not values or len(values) != 2:
+            return '—'
+        return f'{float(values[0]):.4g}, {float(values[1]):.4g}'
+
+    @staticmethod
+    def _skip_event(event):
+        if event is not None:
+            event.Skip()
+
+    def _store_mechanical_source(self):
+        layer = self.user_layer.GetValue().strip()
+        if not layer:
+            raise ValueError('Choose the user layer that contains the imported drawing')
+        offset = [self.label_offset_x.value_mm(), self.label_offset_y.value_mm()]
+        if not all(math.isfinite(value) for value in offset):
+            raise ValueError('Drawing label offsets must be finite numbers')
+        mechanical = self.controller.config['mechanical']
+        mechanical['layer'] = layer
+        mechanical['label_offset'] = offset
+        mechanical['label_offset_units'] = [
+            self.label_offset_x.selected_unit(), self.label_offset_y.selected_unit(),
+        ]
+        mechanical['accepted'] = True
+        self.controller.changed()
+
+    def _mechanical_source_changed(self, event=None):
+        if self._loading_placement:
+            self._skip_event(event)
+            return
+        try:
+            self._store_mechanical_source()
+        except ValueError as error:
+            self.drawing_status.SetLabel('Needs input — ' + str(error))
+            self._style_status(self.drawing_status, 'error')
+        else:
+            self.drawing_status.SetLabel(
+                'Drawing settings updated. Inspect the saved drawing to verify associations.'
+            )
+            self._style_status(self.drawing_status, 'warning')
+        self._skip_event(event)
+
+    def _selected_mechanical_circle(self, description):
+        if self.pcbnew is None:
+            raise ValueError('Open this workflow from the KiCad PCB Editor')
+        selected = list(self.pcbnew.GetCurrentSelection())
+        if (len(selected) != 1 or not isinstance(selected[0], self.pcbnew.PCB_SHAPE)
+                or selected[0].GetShape() != self.pcbnew.SHAPE_T_CIRCLE):
+            raise ValueError(f'Select exactly one native {description} circle in the PCB canvas')
+        circle = selected[0]
+        layer = self.pcbnew.GetBoard().GetLayerName(circle.GetLayer())
+        if layer != self.user_layer.GetValue().strip():
+            raise ValueError(
+                f'The selected circle is on {layer}; choose a circle on '
+                f'{self.user_layer.GetValue().strip() or "the drawing layer"}'
+            )
+        center = circle.GetCenter()
+        return circle, [center.x / 1e6, center.y / 1e6]
+
+    def _interposer_placement_changed(self, event=None, source_circle=None):
+        if self._loading_placement:
+            self._skip_event(event)
+            return
         reference = self._interposer_reference()
-        if not reference:
-            raise ValueError('The imported netlist must contain exactly one interposer reference')
-        selection = self.controller.config['interposers'].get(reference)
-        if not selection:
-            raise ValueError('Assign the interposer symbol and footprint first')
-        pose = [self.interposer_x.value_mm(), self.interposer_y.value_mm(),
-                float(self.interposer_rotation.GetValue())]
-        if not all(math.isfinite(value) for value in pose):
-            raise ValueError('Interposer placement values must be finite numbers')
+        selection = self.controller.config['interposers'].get(reference) if reference else None
+        if not reference or not selection:
+            self.interposer_pose_status.SetLabel(
+                'Assign the interposer symbol and footprint before placing it.'
+            )
+            self._style_status(self.interposer_pose_status, 'warning')
+            self._skip_event(event)
+            return
+        try:
+            pose = [self.interposer_x.value_mm(), self.interposer_y.value_mm(),
+                    float(self.interposer_rotation.GetValue())]
+            if not all(math.isfinite(value) for value in pose):
+                raise ValueError
+        except ValueError:
+            self.interposer_pose_status.SetLabel(
+                'Needs input — position and orientation must be finite numbers.'
+            )
+            self._style_status(self.interposer_pose_status, 'error')
+            self._skip_event(event)
+            return
+        circle = source_circle or selection.get('pose_circle', {})
+        if circle and source_circle is None and list(circle.get('center', ())) != pose[:2]:
+            circle = {}
         selection['pose'] = pose
         selection['pose_units'] = [
             self.interposer_x.selected_unit(), self.interposer_y.selected_unit(),
         ]
+        selection['pose_circle'] = circle
         selection['pose_accepted'] = True
         self.controller.changed()
-        self.interposer_pose_status.SetLabel(f'{reference} placement accepted')
+        source = 'selected center circle' if circle else 'entered coordinates'
+        self.interposer_pose_status.SetLabel(f'{reference} placed from {source}.')
         self._style_status(self.interposer_pose_status, 'success')
+        self._skip_event(event)
 
-    def capture_circle(self, event):
-        if self.pcbnew is None: raise ValueError('Open this workflow from the KiCad PCB Editor')
-        selected = list(self.pcbnew.GetCurrentSelection())
-        if len(selected) != 1 or not isinstance(selected[0], self.pcbnew.PCB_SHAPE) or selected[0].GetShape() != self.pcbnew.SHAPE_T_CIRCLE:
-            raise ValueError('Select exactly one imported native circle in the PCB canvas')
-        circle = selected[0]
-        if self.pcbnew.GetBoard().GetLayerName(circle.GetLayer()) != self.user_layer.GetValue():
-            raise ValueError('Circle must belong to the selected mechanical user layer')
-        center = circle.GetCenter()
-        self.anchor_x.set_mm(center.x / 1e6)
-        self.anchor_y.set_mm(center.y / 1e6)
-        self._circle_draft = {'uuid': circle.m_Uuid.AsString(), 'center_nm': [center.x, center.y]}
-        self.anchor_status.SetLabel('Draft circle center captured; accept to persist it. Board unchanged.')
-
-    def capture_dc_circle(self, event):
-        if self.pcbnew is None:
-            raise ValueError('Open this workflow from the KiCad PCB Editor')
-        selected = list(self.pcbnew.GetCurrentSelection())
-        if (len(selected) != 1 or not isinstance(selected[0], self.pcbnew.PCB_SHAPE) or
-                selected[0].GetShape() != self.pcbnew.SHAPE_T_CIRCLE):
-            raise ValueError('Select exactly one imported DC pin 1 circle in the PCB canvas')
-        circle = selected[0]
-        if self.pcbnew.GetBoard().GetLayerName(circle.GetLayer()) != self.user_layer.GetValue():
-            raise ValueError('Circle must belong to the selected mechanical user layer')
-        center = circle.GetCenter()
-        self._dc_circle_draft = {
-            'uuid': circle.m_Uuid.AsString(),
-            'center_nm': [center.x, center.y],
-            'center': [center.x / 1e6, center.y / 1e6],
-        }
-        self.dc_anchor_status.SetLabel(
-            'Draft pin 1 circle captured; set orientation and side, then accept placement.'
+    def capture_interposer_circle(self, event):
+        circle, center = self._selected_mechanical_circle('interposer center')
+        self.interposer_x.set_mm(center[0])
+        self.interposer_y.set_mm(center[1])
+        self._store_mechanical_source()
+        self.drawing_status.SetLabel(
+            'Drawing layer recorded from the selected circle. Inspect the saved drawing to verify associations.'
         )
-        self._style_status(self.dc_anchor_status, 'warning')
-
-    def select_dc_anchor(self, event):
-        reference = self.dc_anchor_connector.GetStringSelection()
-        if not reference:
-            return
-        selection = self.controller.dc_connector(reference)
-        self.dc_anchor_rotation.ChangeValue(str(selection.get('rotation', 0)))
-        self.dc_anchor_side.SetSelection(1 if selection.get('side') == 'B' else 0)
-        self.dc_anchor_status.SetLabel(
-            f'{reference} pin 1 placement accepted' if selection.get('anchor_accepted')
-            else f'{reference} pin 1 placement required'
-        )
-        self._style_status(
-            self.dc_anchor_status,
-            'success' if selection.get('anchor_accepted') else 'warning',
-        )
-
-    def accept_dc_anchor(self, event):
-        reference = self.dc_anchor_connector.GetStringSelection()
-        if not reference:
-            raise ValueError('Select a DC connector')
-        draft = getattr(self, '_dc_circle_draft', None)
-        if not draft:
-            raise ValueError('Select the DC pin 1 DXF circle and capture its center first')
-        if self.pcbnew:
-            drawings = {item.m_Uuid.AsString(): item for item in self.pcbnew.GetBoard().GetDrawings()}
-            source = drawings.get(draft['uuid'])
-            if (source is None or not isinstance(source, self.pcbnew.PCB_SHAPE) or
-                    source.GetShape() != self.pcbnew.SHAPE_T_CIRCLE or
-                    [source.GetCenter().x, source.GetCenter().y] != draft['center_nm']):
-                raise ValueError('DC pin 1 circle changed; capture it again')
-        rotation = float(self.dc_anchor_rotation.GetValue())
-        if not math.isfinite(rotation):
-            raise ValueError('DC connector orientation must be a finite number')
-        self.controller.set_dc_connector(reference, {
-            'anchor_pad': '1', 'anchor': list(draft['center']),
-            'anchor_circle': {'uuid': draft['uuid'], 'center': list(draft['center'])},
-            'rotation': rotation,
-            'side': 'B' if self.dc_anchor_side.GetSelection() == 1 else 'F',
-            'anchor_accepted': True,
+        self._style_status(self.drawing_status, 'warning')
+        self._interposer_placement_changed(source_circle={
+            'uuid': circle.m_Uuid.AsString(), 'center': center,
         })
-        self.controller.config['mechanical']['layer'] = self.user_layer.GetValue()
-        self.controller.config['mechanical']['label_offset'] = [
-            self.label_offset_x.value_mm(), self.label_offset_y.value_mm(),
-        ]
-        self.controller.config['mechanical']['label_offset_units'] = [
-            self.label_offset_x.selected_unit(), self.label_offset_y.selected_unit(),
-        ]
-        self.controller.config['mechanical']['accepted'] = True
-        self.dc_anchor_status.SetLabel(f'{reference} pin 1 placement accepted')
-        self._style_status(self.dc_anchor_status, 'success')
-        self._dc_circle_draft = None
 
-    def accept_anchor(self, event):
-        gang = self.anchor_gang.GetStringSelection()
-        if not gang: raise ValueError('Select a gang')
-        if hasattr(self, '_circle_draft') and self.pcbnew:
-            drawings = {s.m_Uuid.AsString(): s for s in self.pcbnew.GetBoard().GetDrawings()}
-            source = drawings.get(self._circle_draft['uuid'])
-            if source is None or [source.GetCenter().x, source.GetCenter().y] != self._circle_draft['center_nm']:
-                raise ValueError('Circle changed; capture its center again')
+    def refresh_anchor_gangs(self):
+        if not hasattr(self, 'anchor_gang_list'):
+            return
+        names = self.controller.gang_names()
+        if self.current_anchor_gang not in names:
+            self.current_anchor_gang = names[0] if names else None
+        query = self.anchor_gang_filter.GetValue().casefold()
+        selected_index = -1
+        self._loading_placement = True
+        try:
+            self.anchor_gang_list.DeleteAllItems()
+            for name in names:
+                if query and query not in name.casefold():
+                    continue
+                settings = self.controller.gang(name)
+                index = self.anchor_gang_list.InsertItem(
+                    self.anchor_gang_list.GetItemCount(), name,
+                )
+                self.anchor_gang_list.SetItem(
+                    index, 1, self._coordinate_text(settings.get('anchor')),
+                )
+                self.anchor_gang_list.SetItem(
+                    index, 2, 'Placed' if settings.get('anchor_accepted') else 'Not placed',
+                )
+                if name == self.current_anchor_gang:
+                    selected_index = index
+            if selected_index >= 0:
+                self.anchor_gang_list.Select(selected_index)
+        finally:
+            self._loading_placement = False
+        self.select_anchor_gang()
+
+    def select_anchor_gang(self, event=None):
+        if self._loading_placement:
+            self._skip_event(event)
+            return
+        if event is not None and hasattr(event, 'GetIndex'):
+            index = event.GetIndex()
+            if index >= 0:
+                self.current_anchor_gang = self.anchor_gang_list.GetItemText(index)
+        gang = self.current_anchor_gang
+        if not gang:
+            self.anchor_gang_title.SetLabel('No RF gangs in the netlist')
+            self.anchor_status.SetLabel('No RF gangs require placement.')
+            self._style_status(self.anchor_status, 'neutral')
+            self._skip_event(event)
+            return
+        settings = self.controller.gang(gang)
+        anchor = settings.get('anchor', [0, 0])
+        units = settings.get('display_units', {})
+        self._loading_placement = True
+        try:
+            self.anchor_x.set_mm(anchor[0], units.get('anchor_x', 'mil'))
+            self.anchor_y.set_mm(anchor[1], units.get('anchor_y', 'mil'))
+        finally:
+            self._loading_placement = False
+        self.anchor_gang_title.SetLabel(f'{gang} location 1 anchor')
+        accepted = bool(settings.get('anchor_accepted'))
+        source = 'selected circle' if settings.get('anchor_circle') else 'coordinates'
+        self.anchor_status.SetLabel(
+            f'{gang} placed from {source}.' if accepted
+            else f'{gang} needs a location 1 anchor.'
+        )
+        self._style_status(self.anchor_status, 'success' if accepted else 'warning')
+        self._skip_event(event)
+
+    def _rf_anchor_changed(self, event=None, source_circle=None):
+        if self._loading_placement:
+            self._skip_event(event)
+            return
+        gang = self.current_anchor_gang
+        if not gang:
+            self._skip_event(event)
+            return
+        try:
+            anchor = [self.anchor_x.value_mm(), self.anchor_y.value_mm()]
+            if not all(math.isfinite(value) for value in anchor):
+                raise ValueError
+        except ValueError:
+            self.anchor_status.SetLabel('Needs input — location 1 must use finite coordinates.')
+            self._style_status(self.anchor_status, 'error')
+            self._skip_event(event)
+            return
         settings = self.controller.gang(gang)
         display_units = dict(settings.get('display_units', {}))
         display_units['anchor_x'] = self.anchor_x.selected_unit()
         display_units['anchor_y'] = self.anchor_y.selected_unit()
+        circle = source_circle or settings.get('anchor_circle', {})
+        if circle and source_circle is None and list(circle.get('center', ())) != anchor:
+            circle = {}
         self.controller.set_gang(gang, {
-            'anchor': [self.anchor_x.value_mm(), self.anchor_y.value_mm()],
-            'display_units': display_units,
+            'anchor': anchor, 'display_units': display_units,
+            'anchor_circle': circle, 'anchor_accepted': True,
+        })
+        self._store_mechanical_source()
+        source = 'selected location 1 circle' if circle else 'entered coordinates'
+        self.anchor_status.SetLabel(f'{gang} placed from {source}.')
+        self._style_status(self.anchor_status, 'success')
+        self.refresh_anchor_gangs()
+        self._skip_event(event)
+
+    def capture_circle(self, event):
+        circle, center = self._selected_mechanical_circle('RF location 1')
+        self.anchor_x.set_mm(center[0])
+        self.anchor_y.set_mm(center[1])
+        self._rf_anchor_changed(source_circle={
+            'uuid': circle.m_Uuid.AsString(), 'center': center,
+        })
+
+    def refresh_dc_anchors(self):
+        if not hasattr(self, 'dc_anchor_list'):
+            return
+        names = list(self.controller.dc_connector_names())
+        if self.current_dc_anchor not in names:
+            self.current_dc_anchor = names[0] if names else None
+        query = self.dc_anchor_filter.GetValue().casefold()
+        selected_index = -1
+        self._loading_placement = True
+        try:
+            self.dc_anchor_list.DeleteAllItems()
+            for name in names:
+                if query and query not in name.casefold():
+                    continue
+                selection = self.controller.dc_connector(name)
+                index = self.dc_anchor_list.InsertItem(
+                    self.dc_anchor_list.GetItemCount(), name,
+                )
+                self.dc_anchor_list.SetItem(
+                    index, 1, self._coordinate_text(selection.get('anchor')),
+                )
+                self.dc_anchor_list.SetItem(
+                    index, 2,
+                    'Placed' if selection.get('anchor_accepted') else 'Not placed',
+                )
+                if name == self.current_dc_anchor:
+                    selected_index = index
+            if selected_index >= 0:
+                self.dc_anchor_list.Select(selected_index)
+        finally:
+            self._loading_placement = False
+        self.select_dc_anchor()
+
+    def select_dc_anchor(self, event=None):
+        if self._loading_placement:
+            self._skip_event(event)
+            return
+        if event is not None and hasattr(event, 'GetIndex'):
+            index = event.GetIndex()
+            if index >= 0:
+                self.current_dc_anchor = self.dc_anchor_list.GetItemText(index)
+        reference = self.current_dc_anchor
+        if not reference:
+            self.dc_anchor_title.SetLabel('No DC connectors in the netlist')
+            self.dc_anchor_status.SetLabel('No DC connectors require placement.')
+            self._style_status(self.dc_anchor_status, 'neutral')
+            self._skip_event(event)
+            return
+        selection = self.controller.dc_connector(reference)
+        self._loading_placement = True
+        try:
+            self.dc_anchor_rotation.ChangeValue(str(selection.get('rotation', 0)))
+            self.dc_anchor_side.SetSelection(1 if selection.get('side') == 'B' else 0)
+        finally:
+            self._loading_placement = False
+        self.dc_anchor_title.SetLabel(f'{reference} pin 1 anchor')
+        accepted = bool(selection.get('anchor_accepted'))
+        self.dc_anchor_status.SetLabel(
+            f'{reference} pin 1 placed at {self._coordinate_text(selection.get("anchor"))}.'
+            if accepted else f'{reference} needs a pin 1 circle.'
+        )
+        self._style_status(self.dc_anchor_status, 'success' if accepted else 'warning')
+        self._skip_event(event)
+
+    def _dc_placement_changed(self, event=None):
+        if self._loading_placement:
+            self._skip_event(event)
+            return
+        reference = self.current_dc_anchor
+        if not reference:
+            self._skip_event(event)
+            return
+        try:
+            rotation = float(self.dc_anchor_rotation.GetValue())
+            if not math.isfinite(rotation):
+                raise ValueError
+        except ValueError:
+            self.dc_anchor_status.SetLabel('Needs input — orientation must be a finite number.')
+            self._style_status(self.dc_anchor_status, 'error')
+            self._skip_event(event)
+            return
+        self.controller.set_dc_connector(reference, {
+            'rotation': rotation,
+            'side': 'B' if self.dc_anchor_side.GetSelection() == 1 else 'F',
+        })
+        selection = self.controller.dc_connector(reference)
+        if selection.get('anchor_accepted'):
+            self.dc_anchor_status.SetLabel(
+                f'{reference} placement updated at '
+                f'{self._coordinate_text(selection.get("anchor"))}.'
+            )
+            self._style_status(self.dc_anchor_status, 'success')
+        else:
+            self.dc_anchor_status.SetLabel(
+                f'{reference} orientation updated; select its pin 1 circle.'
+            )
+            self._style_status(self.dc_anchor_status, 'warning')
+        self._skip_event(event)
+
+    def capture_dc_circle(self, event):
+        reference = self.current_dc_anchor
+        if not reference:
+            raise ValueError('Select a DC connector')
+        circle, center = self._selected_mechanical_circle('DC pin 1')
+        try:
+            rotation = float(self.dc_anchor_rotation.GetValue())
+        except ValueError as error:
+            raise ValueError('DC connector orientation must be a finite number') from error
+        if not math.isfinite(rotation):
+            raise ValueError('DC connector orientation must be a finite number')
+        self.controller.set_dc_connector(reference, {
+            'anchor_pad': '1', 'anchor': center,
+            'anchor_circle': {'uuid': circle.m_Uuid.AsString(), 'center': center},
+            'rotation': rotation,
+            'side': 'B' if self.dc_anchor_side.GetSelection() == 1 else 'F',
             'anchor_accepted': True,
         })
-        self.controller.config['mechanical']['layer'] = self.user_layer.GetValue()
-        self.controller.config['mechanical']['label_offset'] = [
-            self.label_offset_x.value_mm(), self.label_offset_y.value_mm(),
-        ]
-        self.controller.config['mechanical']['label_offset_units'] = [
-            self.label_offset_x.selected_unit(), self.label_offset_y.selected_unit(),
-        ]
-        self.controller.config['mechanical']['accepted'] = True
-        self.controller.changed()
-        self.anchor_status.SetLabel(f'{gang} anchor accepted. Exact mechanical identities are checked during review.')
+        self._store_mechanical_source()
+        self.dc_anchor_status.SetLabel(
+            f'{reference} pin 1 placed from the selected circle.'
+        )
+        self._style_status(self.dc_anchor_status, 'success')
+        self.refresh_dc_anchors()
 
     def inspect_mechanical(self, event):
         backend = self.controller.backend
@@ -4091,11 +4477,31 @@ class WorkflowDialog(wx.Dialog):
                     rf_records, [p['key'] for p in result['locations'] if p['key'] in rf_keys],
                 )
                 except ValueError as error: errors.append(str(error))
-            self.anchor_status.SetLabel('Blocked: ' + '; '.join(errors) if errors else f"{len(result['locations'])} exact mechanical identities matched. Review their circle/text associations.")
-            self.anchor_status.Wrap(820)
+            if errors:
+                self.drawing_status.SetLabel('Blocked — ' + '; '.join(errors))
+                self._style_status(self.drawing_status, 'error')
+            else:
+                self.drawing_status.SetLabel(
+                    f"{len(result['locations'])} drawing locations matched their circles and labels."
+                )
+                self._style_status(self.drawing_status, 'success')
             self.refresh()
         self.controller.run_async(lambda: backend.call('inspect', board_path=str(self.controller.board_path), source_layer=layer, label_offset=offset), complete, self.failed)
         self.refresh()
+
+    def capture_hole_circle(self, event):
+        _circle, center = self._selected_mechanical_circle('mounting hole')
+        self.hole_x.set_mm(center[0])
+        self.hole_y.set_mm(center[1])
+        self._store_mechanical_source()
+        self.drawing_status.SetLabel(
+            'Drawing layer recorded from the selected circle. Inspect the saved drawing to verify associations.'
+        )
+        self._style_status(self.drawing_status, 'warning')
+        self.hole_status.SetLabel(
+            f'New mounting hole positioned at {self._coordinate_text(center)}.'
+        )
+        self._style_status(self.hole_status, 'warning')
 
     def add_hole(self, event):
         from .core.libraries import read_footprint
@@ -4110,9 +4516,41 @@ class WorkflowDialog(wx.Dialog):
         if any(h['reference'] == reference for h in holes): raise ValueError('Mounting-hole reference already exists')
         holes.append({'reference': reference, 'path': str(Path(path).resolve()), 'sha256': part.sha256,
                       'library_id': part.library_id,
-                      'pose': [self.anchor_x.value_mm(), self.anchor_y.value_mm(), 0]})
+                      'pose': [self.hole_x.value_mm(), self.hole_y.value_mm(), 0],
+                      'pose_units': [self.hole_x.selected_unit(), self.hole_y.selected_unit()]})
         self.controller.changed()
-        self.anchor_status.SetLabel(f'{reference} added as board-only, excluded from BOM and position files.')
+        self.hole_status.SetLabel(
+            f'{reference} added as board-only and excluded from BOM and position files.'
+        )
+        self._style_status(self.hole_status, 'success')
+        self.refresh_mounting_holes()
+
+    def refresh_mounting_holes(self):
+        if not hasattr(self, 'hole_list'):
+            return
+        self.hole_list.DeleteAllItems()
+        for hole in self.controller.config.get('mounting_holes', []):
+            pose = hole.get('pose', [0, 0, 0])
+            index = self.hole_list.InsertItem(
+                self.hole_list.GetItemCount(), str(hole.get('reference', '')),
+            )
+            self.hole_list.SetItem(index, 1, str(hole.get('library_id', '')))
+            self.hole_list.SetItem(index, 2, f'{float(pose[0]):.6g}')
+            self.hole_list.SetItem(index, 3, f'{float(pose[1]):.6g}')
+
+    def remove_hole(self, event):
+        index = self.hole_list.GetFirstSelected()
+        if index < 0:
+            raise ValueError('Select a mounting hole to remove')
+        reference = self.hole_list.GetItemText(index)
+        holes = self.controller.config['mounting_holes']
+        self.controller.config['mounting_holes'] = [
+            hole for hole in holes if hole.get('reference') != reference
+        ]
+        self.controller.changed()
+        self.refresh_mounting_holes()
+        self.hole_status.SetLabel(f'{reference} removed from the workflow.')
+        self._style_status(self.hole_status, 'neutral')
 
     def build_outline(self, panel):
         self.task_box(
@@ -4352,10 +4790,10 @@ class WorkflowDialog(wx.Dialog):
         self._spreadsheet_columns = {}
         self._assignment_signature = None
         self.current_gang = None
+        self.current_anchor_gang = None
+        self.current_dc_anchor = None
         self._gang_invalid_edits.clear()
         self._review_details = []
-        self._circle_draft = None
-        self._dc_circle_draft = None
 
         self._updating_spreadsheet = True
         try:
@@ -4371,6 +4809,8 @@ class WorkflowDialog(wx.Dialog):
 
         self.assignment_filter.ChangeValue('')
         self.gang_filter.ChangeValue('')
+        self.anchor_gang_filter.ChangeValue('')
+        self.dc_anchor_filter.ChangeValue('')
         self._loading_gang = True
         try:
             self._resize_gang_rows(1)
@@ -4396,23 +4836,42 @@ class WorkflowDialog(wx.Dialog):
         self.transition_choice.Set([])
         self.transition_detail.SetLabel('Select a requirement')
 
-        for control, value in (
-            (self.interposer_rotation, '0'), (self.user_layer, 'Dwgs.User'),
-            (self.dc_anchor_rotation, '0'), (self.hole_ref, 'H1'),
-            (self.output_dir, ''), (self.journal, ''),
-        ):
-            control.ChangeValue(value)
-        for control in (
-            self.interposer_x, self.interposer_y, self.label_offset_x,
-            self.label_offset_y, self.anchor_x, self.anchor_y,
-        ):
-            control.set_mm(0, 'mil')
-        self.dc_anchor_side.SetSelection(0)
+        self._loading_placement = True
+        try:
+            for control, value in (
+                (self.interposer_rotation, '0'), (self.user_layer, 'Dwgs.User'),
+                (self.dc_anchor_rotation, '0'), (self.hole_ref, 'H1'),
+                (self.output_dir, ''), (self.journal, ''),
+            ):
+                control.ChangeValue(value)
+            for control in (
+                self.interposer_x, self.interposer_y, self.label_offset_x,
+                self.label_offset_y, self.anchor_x, self.anchor_y,
+                self.hole_x, self.hole_y,
+            ):
+                control.set_mm(0, 'mil')
+            self.dc_anchor_side.SetSelection(0)
+        finally:
+            self._loading_placement = False
         self.hole_path.set_selection({})
-        self.anchor_status.SetLabel('No anchor captured.')
-        self.dc_anchor_status.SetLabel('DC pin 1 placement required')
-        self._style_status(self.dc_anchor_status, 'warning')
+        self.drawing_status.SetLabel(
+            'Choose the imported drawing layer, then inspect the saved board.'
+        )
+        self._style_status(self.drawing_status, 'warning')
+        self.interposer_pose_status.SetLabel(
+            'Set the interposer position or select its center circle.'
+        )
+        self._style_status(self.interposer_pose_status, 'warning')
+        self.anchor_status.SetLabel('Select an RF gang.')
+        self._style_status(self.anchor_status, 'neutral')
+        self.dc_anchor_status.SetLabel('Select a DC connector.')
+        self._style_status(self.dc_anchor_status, 'neutral')
+        self.hole_status.SetLabel(
+            'Choose a footprint and position for the new mounting hole.'
+        )
+        self._style_status(self.hole_status, 'neutral')
         self.mechanical_list.DeleteAllItems()
+        self.hole_list.DeleteAllItems()
 
         self.outline_enable.SetValue(False)
         self.outline_status.SetLabel('Managed outline disabled. No Edge.Cuts changes requested.')
@@ -4466,23 +4925,35 @@ class WorkflowDialog(wx.Dialog):
             ref, part = next(iter(cfg['interposers'].items()))
             pose = part.get('pose', [0, 0, 0])
             pose_units = part.get('pose_units', ['mil', 'mil'])
-            self.interposer_x.set_mm(pose[0], pose_units[0])
-            self.interposer_y.set_mm(pose[1], pose_units[1])
-            self.interposer_rotation.ChangeValue(str(pose[2]))
-            self.anchor_interposer_ref.SetLabel('Ref des: ' + ref)
+            self._loading_placement = True
+            try:
+                self.interposer_x.set_mm(pose[0], pose_units[0])
+                self.interposer_y.set_mm(pose[1], pose_units[1])
+                self.interposer_rotation.ChangeValue(str(pose[2]))
+            finally:
+                self._loading_placement = False
+            self.anchor_interposer_ref.SetLabel('Reference: ' + ref)
             if part.get('pose_accepted'):
-                self.interposer_pose_status.SetLabel(f'{ref} placement accepted')
+                self.interposer_pose_status.SetLabel(f'{ref} placement is ready.')
                 self._style_status(self.interposer_pose_status, 'success')
         self.output_dir.ChangeValue(cfg.get('output_dir', ''))
         self.outline_enable.SetValue(cfg['outline'].get('enabled', False))
         self.outline_view.show(cfg['outline'].get('source_preview', {}))
+        self._loading_placement = True
         self.user_layer.ChangeValue(cfg['mechanical'].get('layer', 'Dwgs.User'))
         offset = cfg['mechanical'].get('label_offset', [0, 0])
         offset_units = cfg['mechanical'].get('label_offset_units', ['mil', 'mil'])
         self.label_offset_x.set_mm(offset[0], offset_units[0])
         self.label_offset_y.set_mm(offset[1], offset_units[1])
+        self._loading_placement = False
+        if cfg['mechanical'].get('accepted'):
+            self.drawing_status.SetLabel(
+                'Drawing settings restored. Inspect the saved drawing to verify associations.'
+            )
+            self._style_status(self.drawing_status, 'warning')
         self.refresh_layers()
         self.refresh_gangs()
+        self.refresh_mounting_holes()
         self.refresh_connector_assignments(True)
 
     def refresh(self):

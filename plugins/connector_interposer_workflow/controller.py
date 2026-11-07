@@ -11,7 +11,7 @@ from .core.layers import LayerRules, validate_layers
 from .core.model import HEADERS, Issue
 
 PAGES = ("Netlist source", "Netclass type", "Layer assignment", "Routing permissions",
-         "Connector assignments", "Define RF gangs", "RF transitions", "Connector placement",
+         "Connector assignments", "Define RF gangs", "RF transitions", "Mechanical placement",
          "Board outline", "Review changes", "Apply / results")
 
 
@@ -471,7 +471,10 @@ class WorkflowController:
                         gang['symbol_mpn'] != gang['footprint_mpn']):
                     issues.append(Issue('mpn_conflict', f'{name}: symbol and footprint MPN metadata disagree'))
                 if not gang.get('anchor_accepted'):
-                    issues.append(Issue('anchor_missing', f'{name}: accept an anchor'))
+                    issues.append(Issue(
+                        'anchor_missing',
+                        f'{name}: set the RF location 1 anchor in Mechanical placement',
+                    ))
                 try:
                     pins = set(self.pattern(name))
                     expected = {r.connector_pin for r in self.table.records if r.connector == name}
@@ -526,7 +529,7 @@ class WorkflowController:
                     pass
                 if not selection.get('anchor_accepted'):
                     issues.append(Issue('anchor_missing',
-                                        f'{name}: accept the DC pin 1 DXF anchor'))
+                                        f'{name}: select the DC pin 1 circle in Mechanical placement'))
                 if not selection.get('symbol_mpn') and not selection.get('footprint_mpn'):
                     issues.append(Issue('mpn_missing',
                                         f'{name}: selected library parts have no MPN metadata',
@@ -575,7 +578,7 @@ class WorkflowController:
                 if not selection.get('pose_accepted'):
                     issues.append(Issue(
                         'interposer_pose_missing',
-                        f'{reference}: accept interposer placement in Connector placement',
+                        f'{reference}: set the interposer position in Mechanical placement',
                     ))
                 if not selection.get('symbol_mpn') and not selection.get('footprint_mpn'):
                     issues.append(Issue('mpn_missing', f'{reference}: selected library parts have no MPN metadata', severity='warning'))
@@ -925,7 +928,8 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
         if issues: raise ValueError('; '.join(i.message for i in issues))
         # Only saved native graphics are inspected; unsaved canvas changes are never applied.
         mechanical = cfg['mechanical']
-        if not mechanical.get('accepted'): raise ValueError('Accept mechanical anchors and source layer first')
+        if not mechanical.get('accepted'):
+            raise ValueError('Set the imported drawing layer and placement anchors first')
         native = self.call('inspect', board_path=str(controller.board_path), source_layer=mechanical.get('layer', 'Dwgs.User'), label_offset=mechanical.get('label_offset', [0, 0]))
         if native.get('errors'): raise ValueError('; '.join(str(i) for i in native['errors']))
         if 'locations' not in native: raise RuntimeError('Native inspector returned no mechanical association data')

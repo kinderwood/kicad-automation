@@ -1,7 +1,7 @@
 # Workflow boundaries
 
 The native modeless wx dialog follows Netlist source → Netclass type → Layer assignment →
-Routing permissions → Connector assignments → Define RF gangs → RF transitions → Connector placement → Board outline →
+Routing permissions → Connector assignments → Define RF gangs → RF transitions → Mechanical placement → Board outline →
 Review changes → Apply / results. A
 read-only virtual grid displays the complete parsed workbook in a separate
 popup. Every page begins with a blue task-description panel whose title exactly
@@ -101,7 +101,7 @@ Its choices apply to the complete RF or DC connector set, regardless of the
 current filter. An individual edit clears the action row while retaining the
 resulting per-connector assignments. Gang geometry, placement and BOM overrides do not belong on this
 page. DC selections are single-unit multi-pin librarian parts; the workflow does
-not author them. Interposer and DC pin-1 placement are accepted on Connector placement,
+not author them. Interposer and DC pin-1 placement are set on Mechanical placement,
 and library MPN metadata
 is never overridden by the workflow.
 
@@ -117,7 +117,7 @@ does not belong to a gang definition because locations in the same gang can
 have different electrical requirements.
 
 Linear geometry is stored in millimetres at the controller/backend boundary.
-Each editable linear field in Define RF gangs and Connector placement has an
+Each editable linear field in Define RF gangs and Mechanical placement has an
 independent `mm`, `mil`, `inch` or `um` selector. A typed unit suffix updates
 that selector when the field is committed; new fields default to `mil`. A grid
 dimension keeps its number left aligned and its unit selector right aligned in
@@ -128,6 +128,33 @@ with pin 1 distinguished by colour only, and does not own apply/revert state.
 It maps the gang centroid to the preview center, so rotation is visually stable,
 and recomputes zoom, marker radius and label font size after each render to keep
 dense patterns and multi-digit identifiers legible inside the available canvas.
+
+Mechanical placement owns the imported-drawing source settings and every
+board-space part origin derived from that drawing. A native notebook separates
+**Imported drawing**, **Interposer**, **RF anchors**, **DC connectors** and
+**Mounting holes** so project-wide association, single-part placement,
+repeatable connector placement and optional board-only parts do not compete in
+one flat form. RF gangs and DC connectors use compact, searchable selection
+lists beside one focused editor, following the stable-selection pattern from
+Define RF gangs.
+
+Valid position, orientation, side, drawing-layer and label-offset edits update
+the current workflow when their complete value is committed. There are no
+separate interposer, RF-anchor or DC-placement acceptance buttons. Capturing a
+selected native circle is an explicit canvas action and applies its center
+immediately. The interposer has its own center-circle action; RF uses location
+1 and DC uses footprint pad 1. Numeric RF coordinates remain available when a
+drawing does not provide a selectable location-1 circle. Group-local status
+identifies whether the placement came from a selected circle or entered
+coordinates.
+
+Saved-board inspection remains explicit because it launches bounded native
+analysis rather than changing an in-memory field. Mounting-hole creation also
+remains explicit because it adds a new project item; its independent X/Y fields
+and selected-circle action must never reuse the active RF anchor implicitly.
+The placed-hole list supports removal before Review changes. All source
+geometry is revalidated during Review and Apply; live UI updates do not weaken
+that boundary.
 
 UI copy follows a control-ownership rule. The blue task box carries the page's
 short purpose and any cross-page consequence. Labels name controls; tooltips

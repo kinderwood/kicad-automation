@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.21 and the
+are authorized. Connector to Interposer Workflow is version 0.4.22 and the
 separate GPPO RF Transition Designer is version 0.1.2; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The BGA
 Interposer Wizard remains an independent package at version 0.16.1.
@@ -153,7 +153,7 @@ optionally reconciles unique `(netclass, mapped KiCad layer, connector footprint
 requirements across the project; an unassigned transition does not block review
 or board generation. The project BOM MPN
 override is removed, and interposer placement moves to
-Connector placement. Review changes remains the consolidated validation and comparison
+Mechanical placement. Review changes remains the consolidated validation and comparison
 gate.
 
 Completion requires integration and observed behavior, not only unit-test or
@@ -296,6 +296,16 @@ explicit **Clear assignment** state first in the radio group, so an unassigned
 footprint is represented truthfully and the footprint itself remains unchecked
 until selected. Clear assignment also removes the stored interposer, RF, DC or
 bulk footprint mapping.
+
+Version 0.4.22 replaces the flat Connector placement form with **Mechanical
+placement** and five native tabs for imported drawing association, interposer,
+RF anchors, DC connectors and mounting holes. RF and DC targets use the stable
+selector-plus-editor pattern established by Define RF gangs. Complete numeric,
+orientation, side, layer and offset values update the workflow when committed;
+the redundant interposer, RF-anchor and DC-placement acceptance buttons are
+removed. The interposer can now use a selected native center circle. Mounting
+holes receive independent coordinates, selected-circle capture, a placed-hole
+list and removal instead of implicitly reusing the current RF anchor.
 
 Additional actual PCB Editor checks use the selected 10.0.8 AppImage: normal
 startup discovers both actions and Workflow opens from the native Plugins menu.
