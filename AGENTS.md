@@ -5,9 +5,31 @@ each distributable tool self-contained under `plugins/<tool>/`.
 
 ## Compatibility
 
-Preserve the repository-wide compatibility range documented in `README.md`.
-Continuous integration tests the exact versions 10.0.0 and 10.0.8. Do not
-narrow the supported range without an explicit project decision.
+The supported and tested KiCad matrix is exactly 10.0.0 and 10.0.8. KiCad 9
+and other KiCad versions are unsupported. Do not change this matrix without an
+explicit project decision.
+
+## Managed development environment
+
+The canonical extracted KiCad runtimes are:
+
+- `/workspace/tools/kicad/10.0.0/AppDir`
+- `/workspace/tools/kicad/10.0.8/AppDir`
+
+The unversioned `kicad` and `kicad-cli` commands select 10.0.8. Explicit
+commands are available as `kicad-10.0.0`, `kicad-cli-10.0.0`,
+`kicad-10.0.8`, and `kicad-cli-10.0.8`.
+
+The canonical development virtual environment is
+`/workspace/tools/venvs/kicad-automation`. Use its Python for development-only
+dependencies such as `jsonschema`. Xvfb and `xdotool` are on `PATH`, and
+ImageMagick provides both `import` and `magick`.
+
+Before running the longer validation suites, check the published environment:
+
+```sh
+scripts/check_kicad_environment.sh
+```
 
 ## Before changing a tool
 
@@ -20,20 +42,22 @@ narrow the supported range without an explicit project decision.
 
 ## Validate changes
 
-Run the KiCad integration suite:
+Run the KiCad integration suite against both supported AppDirs:
 
 ```sh
-scripts/test_kicad.sh
+KICAD_APPDIR=/workspace/tools/kicad/10.0.0/AppDir scripts/test_kicad.sh
+KICAD_APPDIR=/workspace/tools/kicad/10.0.8/AppDir scripts/test_kicad.sh
 ```
 
 Build and validate the complete PCM repository in a temporary directory:
 
 ```sh
 pcm_dir=$(mktemp -d)
-python3 scripts/build_pcm.py \
+dev_python=/workspace/tools/venvs/kicad-automation/bin/python
+"$dev_python" scripts/build_pcm.py \
   --base-url https://kinderwood.github.io/kicad-automation/kicad \
   --output-dir "$pcm_dir"
-python3 scripts/test_pcm.py "$pcm_dir"
+"$dev_python" scripts/test_pcm.py "$pcm_dir"
 ```
 
 Do not hand-edit or commit generated `dist/` output. The GitHub Pages workflow
@@ -46,14 +70,15 @@ visible behavior, also run the native GUI suite:
 
 ```sh
 scripts/test_native_gui.sh
+scripts/test_native_gui.sh \
+  /workspace/tools/kicad/10.0.0/AppDir \
+  /workspace/tools/kicad/10.0.8/AppDir
 ```
 
 This repository's managed environment is headless, but that does not mean GUI
 checks are unavailable. The script starts a private Xvfb display and runs wx
-inside the selected KiCad AppImage runtimes. By default it uses the established
-10.0.8 AppDir when it exists; explicit AppDir paths can be passed as arguments.
-The workspace fallback X server is
-`/workspace/work/stage0/tools/x/usr/bin/Xvfb`.
+inside the selected KiCad AppImage runtimes. With no arguments it tests both
+canonical AppDirs; explicit AppDir paths can be passed as arguments.
 
 The managed command sandbox can prevent Xvfb from binding its Unix socket even
 when the binary and runtimes are present. If the script reports that it cannot
@@ -72,11 +97,12 @@ Before reporting a native GUI check as unavailable:
    check, never as a GUI pass.
 
 For visual review or walkthrough evidence, launch the real KiCad runtime on the
-private display, interact with it using the workspace `xdotool` when needed,
-capture the relevant window with `import`, and inspect the resulting PNG. Keep
-temporary screenshots outside the repository unless they are intentional test
-fixtures or documented evidence. A screenshot proves only the rendered state;
-pair it with native assertions or an interaction procedure for behavior claims.
+private display, interact with it using `xdotool` when needed, capture the
+relevant window with ImageMagick `import` (or process it with `magick`), and
+inspect the resulting PNG. Keep temporary screenshots outside the repository
+unless they are intentional test fixtures or documented evidence. A screenshot
+proves only the rendered state; pair it with native assertions or an interaction
+procedure for behavior claims.
 
 ## Releases
 

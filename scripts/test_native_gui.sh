@@ -2,16 +2,10 @@
 set -eu
 
 # Run native wx checks on a private X server. AppDir paths may be supplied as
-# arguments; otherwise use the selected compatibility runtime when available.
+# arguments; otherwise test both canonical compatibility runtimes.
 xvfb=${XVFB_BIN:-}
 if [ -z "$xvfb" ]; then
     xvfb=$(command -v Xvfb 2>/dev/null || true)
-fi
-if [ -z "$xvfb" ] && [ -x /workspace/work/stage0/tools/x/usr/bin/Xvfb ]; then
-    xvfb=/workspace/work/stage0/tools/x/usr/bin/Xvfb
-    x_libraries=/workspace/work/stage0/tools/x/usr/lib/x86_64-linux-gnu
-    LD_LIBRARY_PATH="$x_libraries${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    export LD_LIBRARY_PATH
 fi
 if [ -z "$xvfb" ]; then
     echo "Xvfb is required for native GUI checks" >&2
@@ -19,17 +13,9 @@ if [ -z "$xvfb" ]; then
 fi
 
 if [ "$#" -eq 0 ]; then
-    for candidate in \
-        /workspace/shared/kicad-10.0.8/AppDir
-    do
-        if [ -x "$candidate/AppRun" ]; then
-            set -- "$@" "$candidate"
-        fi
-    done
-fi
-if [ "$#" -eq 0 ]; then
-    echo "Pass one or more extracted KiCad AppDir paths to test" >&2
-    exit 1
+    set -- \
+        /workspace/tools/kicad/10.0.0/AppDir \
+        /workspace/tools/kicad/10.0.8/AppDir
 fi
 
 if [ -n "${KICAD_GUI_DISPLAY:-}" ]; then
