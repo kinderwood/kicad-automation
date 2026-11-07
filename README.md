@@ -34,7 +34,8 @@ See the [worked example](examples/gppo_demo/README.md) and
 
 ## Runtime compatibility
 
-All distributed tools support KiCad releases from 10.0.0 through 10.0.8.
+All distributed tools support exactly KiCad 10.0.0 and 10.0.8. Other KiCad
+versions are not part of the supported or tested matrix.
 
 ## Repository layout
 
@@ -65,6 +66,15 @@ https://kinderwood.github.io/kicad-automation/kicad/repository.json
 Repository policy, validation commands, and release steps are in
 [`AGENTS.md`](AGENTS.md). The minimal new-tool checklist is in
 [`docs/adding-tools.md`](docs/adding-tools.md).
+
+In the managed cloud environment, verify the published toolchain before making
+changes, or run the complete development gate when validating environment
+readiness:
+
+```sh
+scripts/check_kicad_environment.sh
+scripts/validate_development.sh
+```
 
 ## License
 

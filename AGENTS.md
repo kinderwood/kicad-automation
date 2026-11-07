@@ -25,11 +25,31 @@ The canonical development virtual environment is
 dependencies such as `jsonschema`. Xvfb and `xdotool` are on `PATH`, and
 ImageMagick provides both `import` and `magick`.
 
-Before running the longer validation suites, check the published environment:
+The managed environment keeps persistent KiCad state in these configured,
+writable directories:
+
+- `XDG_CONFIG_HOME=/workspace/shared/kicad/config`
+- `XDG_CACHE_HOME=/workspace/shared/kicad/cache`
+- `XDG_DATA_HOME=/workspace/shared/kicad/data`
+
+Run commands from the repository root. Before changing code or running a longer
+suite, check the published environment, including the XDG directories, KiCad
+runtimes and aliases, GUI tools, and development Python dependencies:
 
 ```sh
 scripts/check_kicad_environment.sh
 ```
+
+For the standard environment or pre-delivery readiness check, run the combined
+gate. It covers both supported KiCad versions and the PCM build:
+
+```sh
+scripts/validate_development.sh
+```
+
+Add `--include-native-gui` when the change affects visible or interactive
+behavior, when diagnosing a GUI-specific failure, or when a complete native GUI
+environment check is explicitly requested.
 
 ## Before changing a tool
 
@@ -72,10 +92,12 @@ builds the PCM repository from source after the compatibility matrix passes.
 ### Native GUI validation
 
 For changes to wx dialogs, editor interaction, focus, sizing, menus, or other
-visible behavior, also run the native GUI suite:
+visible behavior, also run the native GUI suite. The first command uses both
+canonical AppDirs; the second form shows the equivalent explicit selection:
 
 ```sh
 scripts/test_native_gui.sh
+# Equivalent explicit form:
 scripts/test_native_gui.sh \
   /workspace/tools/kicad/10.0.0/AppDir \
   /workspace/tools/kicad/10.0.8/AppDir

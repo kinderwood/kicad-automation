@@ -1,6 +1,25 @@
 #!/bin/sh
 set -eu
 
+for variable_and_path in \
+    "XDG_CONFIG_HOME:/workspace/shared/kicad/config" \
+    "XDG_CACHE_HOME:/workspace/shared/kicad/cache" \
+    "XDG_DATA_HOME:/workspace/shared/kicad/data"
+do
+    variable_name=${variable_and_path%%:*}
+    expected_path=${variable_and_path#*:}
+    actual_path=$(printenv "$variable_name" 2>/dev/null || true)
+    if [ "$actual_path" != "$expected_path" ]; then
+        echo "Expected $variable_name=$expected_path, got ${actual_path:-<unset>}" >&2
+        exit 1
+    fi
+    if [ ! -d "$actual_path" ] || [ ! -r "$actual_path" ] || [ ! -w "$actual_path" ]; then
+        echo "$variable_name is not a readable, writable directory: $actual_path" >&2
+        exit 1
+    fi
+    echo "$variable_name: $actual_path"
+done
+
 for version in 10.0.0 10.0.8; do
     appdir="/workspace/tools/kicad/$version/AppDir"
     app_run="$appdir/AppRun"
@@ -67,7 +86,11 @@ jsonschema_version=$("$dev_python" -c '
 import jsonschema
 from importlib.metadata import version
 
-print(version("jsonschema"))
+installed = version("jsonschema")
+if installed.split(".", 1)[0] != "4":
+    raise SystemExit(f"requirements-dev.txt requires jsonschema>=4.0,<5; got {installed}")
+print(installed)
 ')
 echo "Development environment: jsonschema $jsonschema_version"
+"$dev_python" -m pip check
 echo "KiCad environment check passed"
