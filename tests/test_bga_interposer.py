@@ -1,7 +1,10 @@
 """Integration tests executed with KiCad's bundled Python interpreter."""
 
+import base64
+import json
 import math
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -16,7 +19,14 @@ if os.environ.get("KICAD_WIZARD_DIR"):
 
 import pcbnew  # noqa: E402
 
-from bga_interposer.wizard import BGAInterposerWizard  # noqa: E402
+from bga_interposer.embedded_recipe import zstd_decompress  # noqa: E402
+from bga_interposer.wizard import (  # noqa: E402
+    BGAInterposerWizard,
+    GENERATOR_IDENTIFIER,
+    GENERATOR_VERSION,
+    RECIPE_FILENAME,
+    RECIPE_SCHEMA_VERSION,
+)
 
 
 class BGAInterposerWizardTests(unittest.TestCase):
@@ -27,6 +37,30 @@ class BGAInterposerWizardTests(unittest.TestCase):
             wizard.GetParam(page.replace("_", " "), name.replace("_", " ")).SetValue(value)
         wizard.BuildFootprint()
         return wizard
+
+    @staticmethod
+    def recipe_from_text(text):
+        pattern = re.compile(
+            r'\(file\s+\(name\s+"{}"\)\s+\(type\s+other\)\s+'
+            r'\(data\s+\|(?P<data>.*?)\|\s*\)\s+'
+            r'\(checksum\s+"[0-9A-Fa-f]+"\)'.format(
+                re.escape(RECIPE_FILENAME)
+            ),
+            re.DOTALL,
+        )
+        match = pattern.search(text)
+        if match is None:
+            raise AssertionError("embedded BGA Interposer recipe not found")
+        encoded = re.sub(r"\s+", "", match.group("data"))
+        content = zstd_decompress(base64.b64decode(encoded))
+        return json.loads(content.decode("utf-8"))
+
+    @classmethod
+    def save_and_read_recipe(cls, footprint, name):
+        with tempfile.TemporaryDirectory(suffix=".pretty") as library:
+            pcbnew.PCB_IO_KICAD_SEXPR().FootprintSave(library, footprint)
+            text = (Path(library) / (name + ".kicad_mod")).read_text()
+            return cls.recipe_from_text(text), text
 
     @staticmethod
     def pads_by_name(wizard):
@@ -148,6 +182,209 @@ class BGAInterposerWizardTests(unittest.TestCase):
         self.assertEqual("GND", perimeter_naming["prefix"])
         self.assertEqual(1, perimeter_naming["row depth"])
         self.assertEqual(1, perimeter_naming["column depth"])
+
+    def test_embedded_recipe_records_every_default_wizard_setting(self):
+        wizard = self.make_wizard()
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        recipe, footprint_text = self.save_and_read_recipe(
+            wizard.module, wizard.GetValue()
+        )
+
+        self.assertEqual(RECIPE_SCHEMA_VERSION, recipe["schema"])
+        self.assertEqual(
+            {
+                "identifier": GENERATOR_IDENTIFIER,
+                "version": GENERATOR_VERSION,
+                "kicad_version": str(pcbnew.GetBuildVersion()),
+            },
+            recipe["generator"],
+        )
+        self.assertEqual({"name": wizard.GetValue()}, recipe["footprint"])
+        self.assertEqual(
+            {
+                "package": {
+                    "width_mm": 26.0,
+                    "length_mm": 26.0,
+                    "chamfer_size_mm": 1.0,
+                    "chamfer_corners": {
+                        "top_left_a1": True,
+                        "top_right": False,
+                        "bottom_right": False,
+                        "bottom_left": False,
+                    },
+                    "courtyard_margin_mm": 0.25,
+                },
+                "guide_feature_placement": {
+                    "x_offset_mm": 11.5,
+                    "y_offset_mm": 11.5,
+                },
+                "guide_pin_hole": {
+                    "enabled": True,
+                    "diameter_mm": 2.5,
+                    "corners": {
+                        "top_left_a1": True,
+                        "top_right": False,
+                        "bottom_right": False,
+                        "bottom_left": False,
+                    },
+                    "origin_at_guide_pin_hole": False,
+                },
+                "guide_pin_slots": {
+                    "width_mm": 2.5,
+                    "length_mm": 3.0,
+                    "corners": {
+                        "top_left_a1": {
+                            "enabled": False,
+                            "rotation_deg": 0.0,
+                        },
+                        "top_right": {
+                            "enabled": False,
+                            "rotation_deg": 0.0,
+                        },
+                        "bottom_right": {
+                            "enabled": False,
+                            "rotation_deg": 0.0,
+                        },
+                        "bottom_left": {
+                            "enabled": False,
+                            "rotation_deg": 0.0,
+                        },
+                    },
+                },
+                "pads": {
+                    "pitch_mm": 1.0,
+                    "size_mil": 20.0,
+                    "solder_paste": True,
+                    "corner_depop_depth": 0,
+                    "columns": 20,
+                    "rows": 20,
+                },
+                "perimeter_naming": {
+                    "enabled": False,
+                    "prefix": "GND",
+                    "row_depth": 1,
+                    "column_depth": 1,
+                },
+                "center_pad_depop": {"columns": 8, "rows": 8},
+                "center_board_cutout": {
+                    "enabled": False,
+                    "width_mm": 5.0,
+                    "length_mm": 5.0,
+                    "corner_radius_mm": 0.0,
+                },
+                "silkscreen": {
+                    "corners": True,
+                    "corner_offset_mm": 0.12,
+                    "pin_1_dot": True,
+                    "pin_1_dot_offset_mm": 0.7,
+                    "pin_1_dot_diameter_mm": 0.4,
+                    "ref_des": True,
+                },
+            },
+            recipe["parameters"],
+        )
+        self.assertEqual(1, footprint_text.count('(name "{}")'.format(RECIPE_FILENAME)))
+        self.assertNotIn('(property "{}"'.format(RECIPE_FILENAME), footprint_text)
+
+    def test_embedded_recipe_records_inactive_and_non_default_settings(self):
+        wizard = self.make_wizard(
+            Package__width=30,
+            Package__length=28,
+            Package__chamfer_size=1.25,
+            **{
+                "Package__chamfer_top_left_(A1)": False,
+                "Package__chamfer_top_right": True,
+                "Guide_feat_placement__x_offset": 12,
+                "Guide_feat_placement__y_offset": 11,
+                "Guide_pin_hole__enabled": False,
+                "Guide_pin_hole__top_left_(A1_corner)": False,
+                "Guide_pin_hole__top_right": True,
+                "Guide_pin_slots__bottom_left": True,
+                "Guide_pin_slots__bottom_left_rotation": 37,
+                "Pads__size": 18,
+                "Pads__solder_paste": False,
+                "Pads__corner_depop_depth": 1,
+                "Pads__rows": 18,
+                "Perimeter_naming__enabled": True,
+                "Perimeter_naming__prefix": "PWR-",
+                "Perimeter_naming__row_depth": 2,
+                "Perimeter_naming__column_depth": 3,
+                "Center_pad_depop__columns": 8,
+                "Center_pad_depop__rows": 6,
+                "Center_board_cutout__enabled": True,
+                "Center_board_cutout__length": 4,
+                "Center_board_cutout__corner_radius": 0.5,
+                "Silkscreen__ref_des": False,
+            },
+        )
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        recipe, _text = self.save_and_read_recipe(wizard.module, wizard.GetValue())
+        parameters = recipe["parameters"]
+
+        self.assertEqual(30.0, parameters["package"]["width_mm"])
+        self.assertFalse(
+            parameters["package"]["chamfer_corners"]["top_left_a1"]
+        )
+        self.assertTrue(
+            parameters["package"]["chamfer_corners"]["top_right"]
+        )
+        self.assertFalse(parameters["guide_pin_hole"]["enabled"])
+        self.assertTrue(
+            parameters["guide_pin_hole"]["corners"]["top_right"]
+        )
+        self.assertEqual(
+            {"enabled": True, "rotation_deg": 37.0},
+            parameters["guide_pin_slots"]["corners"]["bottom_left"],
+        )
+        self.assertEqual(18.0, parameters["pads"]["size_mil"])
+        self.assertFalse(parameters["pads"]["solder_paste"])
+        self.assertEqual("PWR-", parameters["perimeter_naming"]["prefix"])
+        self.assertEqual(
+            {"columns": 8, "rows": 6}, parameters["center_pad_depop"]
+        )
+        self.assertEqual(
+            0.5, parameters["center_board_cutout"]["corner_radius_mm"]
+        )
+        self.assertFalse(parameters["silkscreen"]["ref_des"])
+
+    def test_embedded_recipe_survives_library_and_board_round_trips(self):
+        wizard = self.make_wizard()
+        self.assertFalse(wizard.AnyErrors(), wizard.GetBuildMessages())
+        expected = wizard._recipe()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            library = root / "generated.pretty"
+            library.mkdir()
+            plugin = pcbnew.PCB_IO_KICAD_SEXPR()
+            plugin.FootprintSave(str(library), wizard.module)
+            loaded = plugin.FootprintLoad(str(library), wizard.GetValue())
+            loaded_recipe, _text = self.save_and_read_recipe(
+                loaded, wizard.GetValue()
+            )
+            self.assertEqual(expected, loaded_recipe)
+
+            board = pcbnew.BOARD()
+            placed = pcbnew.FOOTPRINT(loaded)
+            placed.SetReference("U1")
+            board.Add(placed)
+            board_path = root / "embedded-recipe.kicad_pcb"
+            pcbnew.SaveBoard(str(board_path), board)
+            self.assertEqual(expected, self.recipe_from_text(board_path.read_text()))
+
+            reloaded_board = pcbnew.LoadBoard(str(board_path))
+            reloaded = list(reloaded_board.GetFootprints())[0]
+            reloaded_recipe, _text = self.save_and_read_recipe(
+                reloaded, wizard.GetValue()
+            )
+            self.assertEqual(expected, reloaded_recipe)
+
+    def test_generator_version_matches_pcm_metadata(self):
+        metadata = json.loads(
+            (ROOT / "plugins" / "bga_interposer" / "metadata.json").read_text()
+        )
+        self.assertEqual(GENERATOR_IDENTIFIER, metadata["identifier"])
+        self.assertEqual(GENERATOR_VERSION, metadata["versions"][0]["version"])
 
     def test_parameter_pages_follow_drawing_entry_order(self):
         wizard = BGAInterposerWizard()

@@ -14,8 +14,17 @@ import pcbnew
 import FootprintWizardBase
 import PadArray as PA
 
+from .embedded_recipe import compact_json_bytes, embedded_file_sexpr
+
 
 BGA_ROW_ALPHABET = "ABCDEFGHJKLMNPRTUVWY"
+
+GENERATOR_IDENTIFIER = (
+    "com.github.kinderwood.kicad-automation.bga-interposer"
+)
+GENERATOR_VERSION = "0.17.0"
+RECIPE_FILENAME = "bga-interposer.recipe.json"
+RECIPE_SCHEMA_VERSION = 1
 
 FEATURE_CORNERS = (
     ("top left (A1 corner)", -1, -1),
@@ -885,32 +894,165 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
             return self._guide_pin_hole_position()
         return 0, 0
 
-    def _initialize_module_with_package_center_point(self):
-        """Seed a KiCad 10 footprint with a package-center pickup point.
+    @staticmethod
+    def _mm(value):
+        return round(pcbnew.ToMM(value), 9)
 
-        KiCad 10 supports native PCB_POINT objects in footprints, but does not
-        expose their constructor through its legacy Python bindings. Parsing a
-        minimal in-memory footprint provides a binding path to the same native
-        object.
+    @staticmethod
+    def _mils(value):
+        return round(pcbnew.ToMils(value), 9)
+
+    @staticmethod
+    def _degrees(value):
+        return round(float(value), 9)
+
+    @staticmethod
+    def _corner_key(corner):
+        return {
+            "top left (A1 corner)": "top_left_a1",
+            "top right": "top_right",
+            "bottom right": "bottom_right",
+            "bottom left": "bottom_left",
+        }[corner]
+
+    def _recipe(self):
+        package = self.parameters["Package"]
+        placement = self.parameters["Guide feat placement"]
+        guide_hole = self.parameters["Guide pin hole"]
+        guide_slots = self.parameters["Guide pin slots"]
+        pads = self.parameters["Pads"]
+        perimeter = self.parameters["Perimeter naming"]
+        center_depop = self.parameters["Center pad depop"]
+        center_cutout = self.parameters["Center board cutout"]
+        silkscreen = self.parameters["Silkscreen"]
+
+        return {
+            "schema": RECIPE_SCHEMA_VERSION,
+            "generator": {
+                "identifier": GENERATOR_IDENTIFIER,
+                "version": GENERATOR_VERSION,
+                "kicad_version": str(pcbnew.GetBuildVersion()),
+            },
+            "footprint": {"name": self.GetValue()},
+            "parameters": {
+                "package": {
+                    "width_mm": self._mm(package["width"]),
+                    "length_mm": self._mm(package["length"]),
+                    "chamfer_size_mm": self._mm(package["chamfer size"]),
+                    "chamfer_corners": {
+                        self._corner_key(corner): bool(
+                            package[PACKAGE_CHAMFER_PARAMETERS[corner]]
+                        )
+                        for corner, _x_sign, _y_sign in FEATURE_CORNERS
+                    },
+                    "courtyard_margin_mm": self._mm(
+                        package["courtyard margin"]
+                    ),
+                },
+                "guide_feature_placement": {
+                    "x_offset_mm": self._mm(placement["x offset"]),
+                    "y_offset_mm": self._mm(placement["y offset"]),
+                },
+                "guide_pin_hole": {
+                    "enabled": bool(guide_hole["enabled"]),
+                    "diameter_mm": self._mm(guide_hole["diameter"]),
+                    "corners": {
+                        self._corner_key(corner): bool(guide_hole[corner])
+                        for corner, _x_sign, _y_sign in FEATURE_CORNERS
+                    },
+                    "origin_at_guide_pin_hole": bool(
+                        guide_hole["origin at guide pin hole"]
+                    ),
+                },
+                "guide_pin_slots": {
+                    "width_mm": self._mm(guide_slots["width"]),
+                    "length_mm": self._mm(guide_slots["length"]),
+                    "corners": {
+                        self._corner_key(corner): {
+                            "enabled": bool(guide_slots[corner]),
+                            "rotation_deg": self._degrees(
+                                guide_slots["{} rotation".format(corner)]
+                            ),
+                        }
+                        for corner, _x_sign, _y_sign in FEATURE_CORNERS
+                    },
+                },
+                "pads": {
+                    "pitch_mm": self._mm(pads["pitch"]),
+                    "size_mil": self._mils(pads["size"]),
+                    "solder_paste": bool(pads["solder paste"]),
+                    "corner_depop_depth": int(pads["corner depop depth"]),
+                    "columns": int(pads["columns"]),
+                    "rows": int(pads["rows"]),
+                },
+                "perimeter_naming": {
+                    "enabled": bool(perimeter["enabled"]),
+                    "prefix": str(perimeter["prefix"]),
+                    "row_depth": int(perimeter["row depth"]),
+                    "column_depth": int(perimeter["column depth"]),
+                },
+                "center_pad_depop": {
+                    "columns": int(center_depop["columns"]),
+                    "rows": int(center_depop["rows"]),
+                },
+                "center_board_cutout": {
+                    "enabled": bool(center_cutout["enabled"]),
+                    "width_mm": self._mm(center_cutout["width"]),
+                    "length_mm": self._mm(center_cutout["length"]),
+                    "corner_radius_mm": self._mm(
+                        center_cutout["corner radius"]
+                    ),
+                },
+                "silkscreen": {
+                    "corners": bool(silkscreen["corners"]),
+                    "corner_offset_mm": self._mm(
+                        silkscreen["corner offset"]
+                    ),
+                    "pin_1_dot": bool(silkscreen["pin 1 dot"]),
+                    "pin_1_dot_offset_mm": self._mm(
+                        silkscreen["pin 1 dot offset"]
+                    ),
+                    "pin_1_dot_diameter_mm": self._mm(
+                        silkscreen["pin 1 dot diameter"]
+                    ),
+                    "ref_des": bool(silkscreen["ref des"]),
+                },
+            },
+        }
+
+    def _initialize_module_with_recipe(self):
+        """Seed a footprint with its recipe and optional center pickup point.
+
+        KiCad 10's legacy Python bindings do not expose embedded-file mutation
+        or the PCB_POINT constructor. Parsing a minimal in-memory footprint
+        provides native objects for both before the rest of the footprint is
+        drawn.
         """
         origin_x, origin_y = self._origin_offset()
-        if not (origin_x or origin_y):
-            return
+        point = ""
+        if origin_x or origin_y:
+            center_x = pcbnew.ToMM(-origin_x)
+            center_y = pcbnew.ToMM(-origin_y)
+            point = (
+                '(point (at {:.9g} {:.9g}) (size 1) (layer "F.Cu"))'
+            ).format(center_x, center_y)
 
-        center_x = pcbnew.ToMM(-origin_x)
-        center_y = pcbnew.ToMM(-origin_y)
+        recipe = compact_json_bytes(self._recipe())
+        embedded_recipe = embedded_file_sexpr(RECIPE_FILENAME, recipe)
         source = (
-            '(footprint "BGAInterposerPointSeed" '
-            '(version 20240108) '
+            '(footprint "BGAInterposerSeed" '
+            '(version 20241229) '
             '(generator "bga_interposer_wizard") '
             '(layer "F.Cu") '
-            '(point (at {:.9g} {:.9g}) (size 1) (layer "F.Cu")))'
-        ).format(center_x, center_y)
+            '(embedded_fonts no) '
+            '{} {})'
+        ).format(point, embedded_recipe)
 
         parsed_item = pcbnew.PCB_IO_KICAD_SEXPR().Parse(source)
         module = pcbnew.Cast_to_FOOTPRINT(parsed_item)
-        if module is None or module.Points().size() != 1:
-            raise RuntimeError("KiCad failed to create the package-center point")
+        expected_points = 1 if point else 0
+        if module is None or module.Points().size() != expected_points:
+            raise RuntimeError("KiCad failed to create the BGA Interposer seed")
 
         # BuildFootprint initialized these fields on its original empty module
         # before calling us. Reapply them to the parsed module and point the
@@ -1163,7 +1305,7 @@ class BGAInterposerWizard(FootprintWizardBase.FootprintWizard):
         return anchor_x - offset_component, anchor_y - offset_component
 
     def BuildThisFootprint(self):
-        self._initialize_module_with_package_center_point()
+        self._initialize_module_with_recipe()
         self._add_pads()
         self._add_guide_pin_hole()
         self._add_guide_pin_slots()

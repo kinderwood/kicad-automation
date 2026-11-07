@@ -105,6 +105,20 @@ there is no annular copper; the layer set lets KiCad apply its normal drilled-ho
 clearance behavior. Their fabrication property remains `None`, as `Mechanical`
 is intended for plated mechanical terminals rather than NPTH tooling features.
 
+## Embedded recipe
+
+Every generated footprint contains `bga-interposer.recipe.json` as a native
+KiCad embedded file. The versioned JSON records the generator and KiCad
+versions, generated footprint name, explicit units, and every wizard setting,
+including values belonging to currently disabled features. It creates no
+footprint property, field, text, or graphical item.
+
+KiCad carries the recipe through footprint-library save/load and consolidates
+it into the board's embedded-file collection when the footprint is placed. The
+recipe is intended for regeneration and future companion automation. Actual
+pads and geometry in a possibly edited footprint remain authoritative over its
+recorded generation inputs.
+
 ## Manual installation
 
 Copy the `bga_interposer` directory into KiCad's per-user scripting plugin
