@@ -995,7 +995,10 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
     def preview(self, controller):
         from .core.libraries import read_footprint, read_symbol, footprint_matches_filters
         from .core.model import validate_records
-        from .core.geometry import validate_mechanical_population
+        from .core.geometry import (
+            feature_deviation_message, feature_tolerance,
+            validate_mechanical_population,
+        )
         from .schematic import PartSelection, generate_schematic, merge_library_table
         if not controller.board_path or not controller.board_path.exists():
             raise ValueError('Save the source PCB before comparing')
@@ -1110,12 +1113,14 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
         validate_mechanical_population(rf_records, [p['key'] for p in rf_locations])
         actual_locations = {location['key']: tuple(location['center'])
                             for location in rf_locations}
+        tolerance = feature_tolerance(mechanical['feature_tolerance_mm'])
         import math
         for gang in controller.gang_names():
             for pin, position in controller.pattern(gang).items():
                 key = gang + '-' + str(pin)
-                if math.dist(position, actual_locations[key]) > 1e-6:
-                    raise ValueError(f'{key}: configured position {position} does not match mechanical circle {actual_locations[key]}; correct anchor, pattern or numbering')
+                deviation = math.dist(position, actual_locations[key])
+                if deviation > tolerance:
+                    raise ValueError(feature_deviation_message(key, deviation, tolerance))
         name = controller.board_path.stem
         bundle = generate_schematic(records, gang_parts, interposer_parts, cfg['project_id'],
                                     project_name=name, dc_parts=dc_parts)
@@ -1211,7 +1216,7 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
                            }
                            for reference in controller.dc_connector_names()
                        },
-                       'dc_tolerance_mm': 0.000001,
+                       'feature_tolerance_mm': tolerance,
                    }}
         if cfg.get('microvias', {}).get('enabled'):
             reference = controller.interposer_reference()

@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.5.0 and the
+are authorized. Connector to Interposer Workflow is version 0.5.1 and the
 separate GPPO RF Transition Designer is version 0.1.2; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The BGA
 Interposer Wizard remains an independent package at version 0.16.1.
@@ -214,8 +214,9 @@ selected footprint by its transformed pad-1 center, independent of library
 origin, with explicit rotation and side. Native KiCad 10.0.8 tests confirm exact
 front/back pad-1 placement, netless NC pad round trips, complete mixed RF/DC
 apply, and generated-schematic ERC. Full DC pad geometry currently uses a
-one-nanometre internal circle-center tolerance; an adjustable tolerance remains
-future work.
+project-wide circle-center tolerance. It defaults to 0.3 mil and validates both
+RF location centers and every DC pad center. Review and Apply failures name the
+feature and report its measured deviation and configured limit.
 
 Version 0.4.1 adds explicit saved-settings lifecycle controls. Save asks before
 replacing an existing project sidecar. Delete asks before removing that sidecar
@@ -320,7 +321,15 @@ layer and enable/disable changes while preserving surviving UUIDs. Existing
 ownership and serialized-content checks block silent takeover of manually edited
 managed vias. Final plane connectivity, fabrication acceptance and comprehensive
 board/output DRC remain outside this feature.
-The complete 158-test native/CLI suite and all three packaged PCM loader checks
+
+Version 0.5.1 adds the unit-aware **Center tolerance** control to Mechanical
+placement's Imported drawing tab. Its 0.3 mil default applies uniformly to RF
+pattern locations and DC footprint pads. Review and native Apply revalidation
+use the same validated value and report the feature, measured center deviation
+and limit when a match fails; multiple DC circles inside the limit remain a
+blocking ambiguity.
+
+The complete 159-test native/CLI suite and all three packaged PCM loader checks
 pass on both KiCad 10.0.0 and 10.0.8. The 14-test native dialog suite passes on
 10.0.8 under both Adwaita light and dark themes.
 

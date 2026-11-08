@@ -1442,6 +1442,8 @@ class NativeDialogTests(unittest.TestCase):
             self.assertEqual(dialog.label_offset_x.units.GetStringSelection(), 'mm')
             dialog.label_offset_y.ChangeValue('100 mil')
             self.assertEqual(dialog.label_offset_y.value_mm(), 2.54)
+            self.assertEqual(dialog.feature_tolerance.GetValue(), '0.3')
+            dialog.feature_tolerance.ChangeValue('0.4 mil')
 
             dialog.refresh_gangs()
             dialog.anchor_x.ChangeValue('2 mm')
@@ -1451,6 +1453,20 @@ class NativeDialogTests(unittest.TestCase):
             self.assertEqual(gang['anchor'], [2.0, 2.54])
             self.assertTrue(gang['anchor_accepted'])
             self.assertTrue(dialog.controller.config['mechanical']['accepted'])
+            self.assertAlmostEqual(
+                dialog.controller.config['mechanical']['feature_tolerance_mm'], .01016,
+            )
+            self.assertEqual(
+                dialog.controller.config['mechanical']['feature_tolerance_unit'], 'mil',
+            )
+            failure = (
+                'J101-1: center deviation from its drawing circle is '
+                '0.01 mm (0.393701 mil); limit is 0.00762 mm (0.3 mil)'
+            )
+            dialog.failed(ValueError(failure))
+            row = dialog.validation.GetItemCount() - 1
+            self.assertEqual(dialog.validation.GetItemText(row, 2), 'COMPARE_FAILED')
+            self.assertEqual(dialog.validation.GetItemText(row, 3), failure)
         finally:
             dialog.Destroy()
             self.app.Yield()
@@ -1518,10 +1534,19 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                 part.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True, side='F',
                 symbol={'path': str(symbol), 'library_id': 'Approved:Interposer', 'sha256': symbol_sha},
             )
-            controller.config['mechanical'] = {'layer': 'Dwgs.User', 'accepted': True, 'label_offset': [-2.54, -2.54]}
+            controller.config['mechanical'] = {
+                'layer': 'Dwgs.User', 'accepted': True,
+                'label_offset': [-2.54, -2.54],
+                'label_offset_units': ['mil', 'mil'],
+                'feature_tolerance_mm': .00762,
+                'feature_tolerance_unit': 'mil',
+            }
             before = path.read_bytes()
             controller.set_gang('J101', {'anchor': [21, 30]})
-            with self.assertRaisesRegex(ValueError, 'does not match mechanical circle'):
+            with self.assertRaisesRegex(
+                ValueError,
+                r'J101-1: center deviation.*1 mm.*limit.*0\.00762 mm.*0\.3 mil',
+            ):
                 controller.review()
             controller.set_gang('J101', {'anchor': [20, 30]})
             preview = controller.review()
@@ -1655,6 +1680,9 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             )
             controller.config['mechanical'] = {
                 'layer': 'Dwgs.User', 'accepted': True, 'label_offset': [0, 0],
+                'label_offset_units': ['mil', 'mil'],
+                'feature_tolerance_mm': .00762,
+                'feature_tolerance_unit': 'mil',
             }
             preview = controller.review()
             self.assertEqual(set(preview['desired']['instances']), {'J101-1', 'J1', 'E1'})

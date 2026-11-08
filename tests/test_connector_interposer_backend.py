@@ -234,11 +234,11 @@ class BackendTests(unittest.TestCase):
         }
         board = p.LoadBoard(str(self.board_path))
         circle_ids = {}
-        for label, x in (('left', 18), ('pin1', 20), ('right', 22)):
+        for label, x in (('left', 18), ('pin1', 20), ('right', 22.005)):
             circle = p.PCB_SHAPE(board)
             circle.SetShape(p.SHAPE_T_CIRCLE)
-            circle.SetStart(p.VECTOR2I(x * 1000000, 20000000))
-            circle.SetEnd(p.VECTOR2I(x * 1000000 + 500000, 20000000))
+            circle.SetStart(p.VECTOR2I(round(x * 1000000), 20000000))
+            circle.SetEnd(p.VECTOR2I(round(x * 1000000 + 500000), 20000000))
             circle.SetLayer(p.Dwgs_User)
             board.Add(circle)
             circle_ids[label] = uuid_of(circle)
@@ -256,8 +256,15 @@ class BackendTests(unittest.TestCase):
                 'locations': [], 'rf_keys': [],
                 'dc_anchors': {'J1': {'circle_uuid': circle_ids['pin1'],
                                       'center': [20, 20]}},
-                'dc_tolerance_mm': 0.000001,
+                'feature_tolerance_mm': 0.00762,
             }}
+            too_narrow = copy.deepcopy(desired)
+            too_narrow['mechanical']['feature_tolerance_mm'] = 0.004
+            with self.assertRaisesRegex(
+                BackendError,
+                r'J1 pad 2: center deviation.*0\.005 mm.*limit.*0\.004 mm',
+            ):
+                self.backend.preview(self.board_path, too_narrow)
             preview = self.backend.preview(self.board_path, desired)
             result = self.backend.apply(preview, self.root / ('dc-' + side))
             placed_board = p.LoadBoard(result['board_path'])
@@ -503,7 +510,15 @@ class BackendTests(unittest.TestCase):
         desired["mechanical"] = {name: accepted[name] for name in ("source_layer", "label_offset", "locations")}
         desired["mechanical"]["rf_keys"] = ["J101-1"]
         desired["mechanical"]["dc_anchors"] = {}
+        desired["mechanical"]["feature_tolerance_mm"] = 0.00762
         self.assertEqual("PREVIEW", self.backend.preview(self.board_path, desired)["status"])
+        shifted = copy.deepcopy(desired)
+        shifted["instances"]["J101-1"]["pose"][0] += .01
+        with self.assertRaisesRegex(
+            BackendError,
+            r"J101-1: center deviation.*0\.01 mm.*limit.*0\.00762 mm.*0\.3 mil",
+        ):
+            self.backend.preview(self.board_path, shifted)
         desired["instances"] = {}
         with self.assertRaisesRegex(BackendError, "populations"):
             self.backend.preview(self.board_path, desired)

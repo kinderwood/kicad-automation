@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.5.0**, testing release. The package targets KiCad 10.0.0 through
+Version **0.5.1**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -162,12 +162,13 @@ an already-open source board does not update the output copy.
    Front/Back mounting side.
    Select RF gangs and DC connectors from compact lists; a selected location-1
    or pin-1 circle is applied immediately. Valid numeric, orientation, side,
-   source-layer and offset edits also update the current workflow on commit,
+   source-layer, offset and center-tolerance edits also update the current workflow on commit,
    with no separate acceptance buttons. The native backend measures the
    footprint's transformed pad-1 offset and places that pad at the circle center
-   regardless of library origin. Every DC electrical pad, including NC pins,
-   must match one imported circle within the current one-nanometre internal
-   comparison tolerance. Mounting holes have independent position inputs,
+   regardless of library origin. The drawing-wide center tolerance defaults to
+   0.3 mil and applies to calculated RF locations and every DC electrical pad,
+   including NC pins. Failed checks report the measured center deviation and
+   configured limit; ambiguous DC matches remain blocking. Mounting holes have independent position inputs,
    selected-circle capture and a removable placed-hole list. They use approved
    footprints from the loaded KiCad libraries and are board-only, excluded from
    BOM and position files.
@@ -202,7 +203,8 @@ including mappings, excluded-row selections, netclass types, layer policy,
 independent RF gang definitions, per-connector symbol/footprint assignments,
 DC pin-1 anchors, the interposer assignment, placement and mounting side,
 the optional predefined interposer-microvia size,
-requirement-keyed RF transition selections and accepted mechanical inputs. The exact accepted workbook
+requirement-keyed RF transition selections and accepted mechanical inputs,
+including the drawing-feature center tolerance. The exact accepted workbook
 is snapshotted under `.connector-interposer-inputs`; selected parts, approved
 symbols and RF artifacts remain pinned under `.connector-interposer-pinned`.
 Generated project-local footprint
@@ -245,8 +247,7 @@ metadata contract and is pinned for provenance; its graphical body is not copied
 into the generated split presentation. A fully explicit presentation is a
 future direction. DXF labels split into separate
 gang-only and pin-only texts require unambiguous full identity labels before
-use. DC support is limited to single-unit symbols; a future tolerance control
-may replace the current one-nanometre pad-circle comparison. RF objects stop at
+use. DC support is limited to single-unit symbols. RF objects stop at
 the signal via; no signal route is generated beyond the handoff. Interposer
 microvia generation does not prove plane connectivity, stackup manufacturability
 or production acceptance. Saved geometry and native round trips do not establish

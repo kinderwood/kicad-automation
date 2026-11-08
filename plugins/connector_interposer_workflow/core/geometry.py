@@ -4,6 +4,32 @@ import re
 from dataclasses import dataclass
 
 
+DEFAULT_FEATURE_TOLERANCE_MM = 0.3 * 0.0254
+MAX_FEATURE_TOLERANCE_MM = 0.5
+
+
+def feature_tolerance(value):
+    """Return a valid drawing-feature center tolerance in millimetres."""
+    if not finite(value) or not 0 <= float(value) <= MAX_FEATURE_TOLERANCE_MM:
+        raise ValueError(
+            f"Drawing feature tolerance must be between 0 and "
+            f"{MAX_FEATURE_TOLERANCE_MM:g} mm"
+        )
+    return float(value)
+
+
+def distance_text(value_mm):
+    """Format a small center deviation in both native and drafting units."""
+    return f"{value_mm:.6g} mm ({value_mm / .0254:.6g} mil)"
+
+
+def feature_deviation_message(feature, deviation_mm, limit_mm):
+    return (
+        f"{feature}: center deviation from its drawing circle is "
+        f"{distance_text(deviation_mm)}; limit is {distance_text(limit_mm)}"
+    )
+
+
 def finite(value):
     try:
         return math.isfinite(float(value))

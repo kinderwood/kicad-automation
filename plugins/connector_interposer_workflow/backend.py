@@ -14,6 +14,9 @@ import tempfile
 from pathlib import Path
 
 from .artifacts import canonical, sha256, validate_artifact
+from .core.geometry import (
+    feature_deviation_message, feature_tolerance, distance_text,
+)
 from .recovery import apply_files, file_hash, require_closed
 
 
@@ -396,14 +399,24 @@ class NativeBackend:
             accepted_locations = [x for x in native["locations"] if x["key"] in rf_keys]
             if sorted(accepted_locations, key=lambda x: x["key"]) != sorted(mechanical["locations"], key=lambda x: x["key"]):
                 raise BackendError("Accepted mechanical source geometry or identities changed")
+            try:
+                tolerance = feature_tolerance(mechanical["feature_tolerance_mm"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise BackendError("Invalid drawing feature tolerance: " + str(error)) from error
+            for location in accepted_locations:
+                instance = instances.get(location["key"])
+                if instance is None:
+                    continue
+                deviation = math.dist(instance.get("pose", ())[:2], location["center"])
+                if deviation > tolerance:
+                    raise BackendError(feature_deviation_message(
+                        location["key"], deviation, tolerance,
+                    ))
             allowed_location_keys = set(mechanical.get("allowed_location_keys", rf_keys))
             unexpected = sorted({x["key"] for x in native["locations"]} - allowed_location_keys)
             if unexpected:
                 raise BackendError(f"Unexpected labelled mechanical locations: {unexpected}")
             circles = {circle["uuid"]: circle for circle in native["circles"]}
-            tolerance = float(mechanical.get("dc_tolerance_mm", 0.000001))
-            if not math.isfinite(tolerance) or tolerance < 0:
-                raise BackendError("DC circle matching tolerance must be finite and nonnegative")
             for reference, accepted in mechanical.get("dc_anchors", {}).items():
                 circle = circles.get(accepted.get("circle_uuid"))
                 if circle is None or circle["center"] != accepted.get("center"):
@@ -417,14 +430,33 @@ class NativeBackend:
                     if not pad.GetNumber():
                         continue
                     center = [value / 1e6 for value in _xy(pad.GetPosition())]
-                    matches = [candidate for candidate in native["circles"]
-                               if candidate["uuid"] not in used and
-                               math.dist(candidate["center"], center) <= tolerance]
-                    if len(matches) != 1:
+                    candidates = [
+                        (candidate, math.dist(candidate["center"], center))
+                        for candidate in native["circles"]
+                        if candidate["uuid"] not in used
+                    ]
+                    matches = [(candidate, deviation) for candidate, deviation in candidates
+                               if deviation <= tolerance]
+                    feature = f"{reference} pad {pad.GetNumber()}"
+                    if not matches:
+                        if candidates:
+                            closest = min(deviation for _candidate, deviation in candidates)
+                            raise BackendError(feature_deviation_message(
+                                feature, closest, tolerance,
+                            ))
                         raise BackendError(
-                            f"{reference} pad {pad.GetNumber()}: expected one DXF circle at {center}, found {len(matches)}"
+                            f"{feature}: no drawing circles remain to match; limit is "
+                            f"{distance_text(tolerance)}"
                         )
-                    used.add(matches[0]["uuid"])
+                    if len(matches) != 1:
+                        deviations = ', '.join(
+                            distance_text(deviation) for _candidate, deviation in matches
+                        )
+                        raise BackendError(
+                            f"{feature}: {len(matches)} drawing circles match at center "
+                            f"deviations {deviations}; limit is {distance_text(tolerance)}"
+                        )
+                    used.add(matches[0][0]["uuid"])
         refs = set()
         library_revisions = {}
         artifact_checks = set()

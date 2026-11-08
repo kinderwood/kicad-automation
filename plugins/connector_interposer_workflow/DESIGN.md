@@ -243,6 +243,13 @@ schematic instance keyed by its reference, while workbook rows bind nets to that
 instance's pads. DC placement stores the selected DXF pin-1 circle, orientation
 and side. The native backend resolves the footprint origin from the transformed
 pad-1 center and verifies every electrical pad center against imported circles.
+Mechanical placement owns one drawing-wide center tolerance, defaulting to 0.3
+mil. The same validated value governs calculated RF-location and DC-pad circle
+checks in controller review and native backend revalidation. A failed check
+reports the feature identity, measured center deviation and configured limit;
+multiple DC circles inside the limit remain an ambiguity rather than invoking a
+nearest-circle heuristic. Accepted source UUID and geometry checks remain exact
+because they detect stale source input rather than placement deviation.
 Unused DC pads remain netless and receive schematic no-connect markers. Missing
 RF locations remain blocking population errors.
 

@@ -3881,8 +3881,19 @@ class WorkflowDialog(wx.Dialog):
                            wx.ALIGN_CENTER_VERTICAL)
         self.label_offset_y = DimensionInput(drawing_box, value='0')
         drawing_fields.Add(self.label_offset_y, 1, wx.EXPAND)
+        drawing_fields.Add(wx.StaticText(drawing_box, label='Center tolerance'), 0,
+                           wx.ALIGN_CENTER_VERTICAL)
+        self.feature_tolerance = DimensionInput(drawing_box, value='0.3')
+        drawing_fields.Add(self.feature_tolerance, 1, wx.EXPAND)
         drawing_fields.AddGrowableCol(1, 1)
         drawing.Add(drawing_fields, 0, wx.EXPAND | wx.ALL, 8)
+        tolerance_help = wx.StaticText(
+            drawing_box,
+            label=('Maximum center-to-center deviation when matching calculated RF '
+                   'locations and DC pads to drawing circles.'),
+        )
+        tolerance_help.Wrap(620)
+        drawing.Add(tolerance_help, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         drawing_actions = wx.BoxSizer(wx.HORIZONTAL)
         drawing_actions.Add(
             self.button(drawing_box, 'Inspect saved drawing', self.inspect_mechanical), 0,
@@ -4104,6 +4115,7 @@ class WorkflowDialog(wx.Dialog):
         self.user_layer.Bind(wx.EVT_TEXT_ENTER, self._mechanical_source_changed)
         self.label_offset_x.bind_changed(self._mechanical_source_changed)
         self.label_offset_y.bind_changed(self._mechanical_source_changed)
+        self.feature_tolerance.bind_changed(self._mechanical_source_changed)
         self.interposer_x.bind_changed(self._interposer_placement_changed)
         self.interposer_y.bind_changed(self._interposer_placement_changed)
         self.interposer_rotation.Bind(wx.EVT_TEXT_ENTER, self._interposer_placement_changed)
@@ -4137,12 +4149,16 @@ class WorkflowDialog(wx.Dialog):
         offset = [self.label_offset_x.value_mm(), self.label_offset_y.value_mm()]
         if not all(math.isfinite(value) for value in offset):
             raise ValueError('Drawing label offsets must be finite numbers')
+        from .core.geometry import feature_tolerance
+        tolerance = feature_tolerance(self.feature_tolerance.value_mm())
         mechanical = self.controller.config['mechanical']
         mechanical['layer'] = layer
         mechanical['label_offset'] = offset
         mechanical['label_offset_units'] = [
             self.label_offset_x.selected_unit(), self.label_offset_y.selected_unit(),
         ]
+        mechanical['feature_tolerance_mm'] = tolerance
+        mechanical['feature_tolerance_unit'] = self.feature_tolerance.selected_unit()
         mechanical['accepted'] = True
         self.controller.changed()
 
@@ -4814,10 +4830,15 @@ class WorkflowDialog(wx.Dialog):
         self.refresh()
 
     def failed(self, error):
+        failure_code = 'APPLY_FAILED' if self._applying else 'COMPARE_FAILED'
         self._applying = False
         if self._closing: return
-        self.status.SetLabel(str(error))
-        self.results.ChangeValue('Operation stopped safely:\n' + str(error))
+        message = str(error)
+        row = self.validation.InsertItem(self.validation.GetItemCount(), 'error')
+        self.validation.SetItem(row, 2, failure_code)
+        self.validation.SetItem(row, 3, message)
+        self.status.SetLabel(message)
+        self.results.ChangeValue('Operation stopped safely:\n' + message)
         self.refresh()
 
     def recover(self, event):
@@ -4950,6 +4971,8 @@ class WorkflowDialog(wx.Dialog):
                 self.hole_x, self.hole_y,
             ):
                 control.set_mm(0, 'mil')
+            from .core.geometry import DEFAULT_FEATURE_TOLERANCE_MM
+            self.feature_tolerance.set_mm(DEFAULT_FEATURE_TOLERANCE_MM, 'mil')
             self.dc_anchor_side.SetSelection(0)
             self.interposer_side.SetSelection(0)
         finally:
@@ -5045,11 +5068,15 @@ class WorkflowDialog(wx.Dialog):
         self.outline_enable.SetValue(cfg['outline'].get('enabled', False))
         self.outline_view.show(cfg['outline'].get('source_preview', {}))
         self._loading_placement = True
-        self.user_layer.ChangeValue(cfg['mechanical'].get('layer', 'Dwgs.User'))
-        offset = cfg['mechanical'].get('label_offset', [0, 0])
-        offset_units = cfg['mechanical'].get('label_offset_units', ['mil', 'mil'])
+        self.user_layer.ChangeValue(cfg['mechanical']['layer'])
+        offset = cfg['mechanical']['label_offset']
+        offset_units = cfg['mechanical']['label_offset_units']
         self.label_offset_x.set_mm(offset[0], offset_units[0])
         self.label_offset_y.set_mm(offset[1], offset_units[1])
+        self.feature_tolerance.set_mm(
+            cfg['mechanical']['feature_tolerance_mm'],
+            cfg['mechanical']['feature_tolerance_unit'],
+        )
         self._loading_placement = False
         if cfg['mechanical'].get('accepted'):
             self.drawing_status.SetLabel(

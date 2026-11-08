@@ -12,6 +12,9 @@ import zipfile
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'plugins'))
 from connector_interposer_workflow.core import *
 from connector_interposer_workflow.core.outline import Segment, validate_outline
+from connector_interposer_workflow.core.geometry import (
+    DEFAULT_FEATURE_TOLERANCE_MM, feature_deviation_message, feature_tolerance,
+)
 from connector_interposer_workflow.core.sexpr import loads, dumps, children
 
 
@@ -241,6 +244,17 @@ class ConnectorTypeTests(unittest.TestCase):
 
 
 class GeometryTests(unittest.TestCase):
+    def test_drawing_feature_tolerance_has_one_validated_default_and_message(self):
+        self.assertAlmostEqual(DEFAULT_FEATURE_TOLERANCE_MM, .00762)
+        self.assertAlmostEqual(feature_tolerance(DEFAULT_FEATURE_TOLERANCE_MM), .00762)
+        for invalid in (-.001, .500001, float('nan'), 'bad'):
+            with self.assertRaises(ValueError):
+                feature_tolerance(invalid)
+        message = feature_deviation_message('J101-2', .01, .00762)
+        self.assertIn('center deviation', message)
+        self.assertIn('0.01 mm', message)
+        self.assertIn('0.00762 mm (0.3 mil)', message)
+
     def test_independent_dimension_units_normalize_to_millimetres(self):
         self.assertEqual(DIMENSION_UNITS, ('mm', 'mil', 'inch', 'um'))
         self.assertEqual(parse_dimension('10mm'), (10, 'mm', '10'))
@@ -331,9 +345,15 @@ class LibraryTests(unittest.TestCase):
 
     def test_project_schema_identity(self):
         config=ProjectConfig();self.assertEqual(ProjectConfig.from_dict(config.to_dict()).project_id,config.project_id)
+        self.assertAlmostEqual(config.mechanical['feature_tolerance_mm'], .00762)
+        self.assertEqual(config.mechanical['feature_tolerance_unit'], 'mil')
         self.assertEqual(stable_uuid(config.project_id,'symbol/J1-1'),stable_uuid(config.project_id,'symbol/J1-1'))
         with self.assertRaises(ValueError):ProjectConfig.from_dict(dict(config.to_dict(), schema_version=5))
         with self.assertRaises(ValueError):ProjectConfig.from_dict({'project_id':config.project_id,'schema_version':2})
+        invalid = config.to_dict()
+        del invalid['mechanical']['feature_tolerance_mm']
+        with self.assertRaisesRegex(ValueError, 'Mechanical settings'):
+            ProjectConfig.from_dict(invalid)
 
 
 if __name__=='__main__':unittest.main()
