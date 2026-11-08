@@ -55,9 +55,9 @@ gate. It covers both supported KiCad versions and the PCM build:
 scripts/validate_development.sh
 ```
 
-Add `--include-native-gui` when the change affects visible or interactive
-behavior, when diagnosing a GUI-specific failure, or when a complete native GUI
-environment check is explicitly requested.
+Use `--include-native-gui` at agent discretion for final UI QA, when explicitly
+requested, or to reproduce or diagnose complex native-GUI behavior. Routine UI
+changes do not require it.
 
 ## Before changing a tool
 
@@ -70,11 +70,12 @@ environment check is explicitly requested.
 
 ## Validate changes
 
-The CLI integration and PCM suites are the standard validation path. Run the
-native GUI suite only when a change affects native wx or visible editor
-behavior, when diagnosing a GUI-specific failure, or when explicitly requested.
-Do not run it routinely for documentation, metadata, packaging, or non-visual
-logic changes.
+The CLI integration and PCM suites are the standard validation path. Native GUI
+testing is supplemental, not an automatic gate for UI changes. Use judgment
+based on risk and diagnostic value: it is most useful for final QA of substantial
+UI work, explicit requests, or reproducing and debugging complex/user-reported
+native interaction problems. Prefer targeted unit and CLI coverage for routine
+layout, copy, and straightforward control changes.
 
 Run the KiCad integration suite against both supported AppDirs:
 
@@ -99,9 +100,9 @@ builds the PCM repository from source after the compatibility matrix passes.
 
 ### Native GUI validation
 
-For changes to wx dialogs, editor interaction, focus, sizing, menus, or other
-visible behavior, also run the native GUI suite. The first command uses both
-canonical AppDirs; the second form shows the equivalent explicit selection:
+When native GUI validation is warranted under the policy above, the first
+command tests both canonical AppDirs; the second form shows the equivalent
+explicit selection:
 
 ```sh
 scripts/test_native_gui.sh
