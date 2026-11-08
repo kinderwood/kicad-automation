@@ -32,6 +32,14 @@ class ConnectorToInterposerWorkflowPlugin(pcbnew.ActionPlugin):
             count = board.GetCopperLayerCount()
             copper = [pcbnew.F_Cu] + [getattr(pcbnew, 'In%d_Cu' % i) for i in range(1, count-1)] + [pcbnew.B_Cu]
             controller.set_layers([board.GetLayerName(layer) for layer in copper])
+            settings = board.GetDesignSettings()
+            controller.set_board_microvia_rules(
+                [(pcbnew.ToMM(item.m_Diameter), pcbnew.ToMM(item.m_Drill))
+                 for item in board.GetViasDimensionsList()],
+                pcbnew.ToMM(settings.m_MicroViasMinSize),
+                pcbnew.ToMM(settings.m_MicroViasMinDrill),
+                pcbnew.ToMM(settings.m_MinClearance),
+            )
             dialog = WorkflowDialog(parent, controller=controller, pcbnew_module=pcbnew)
         except Exception as error:
             wx.MessageBox(str(error), self.name, wx.OK | wx.ICON_ERROR, parent)

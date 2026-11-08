@@ -253,6 +253,131 @@ class NativeBackend:
             raise BackendError("Cannot read selected approved footprint")
         return fp
 
+    def _validate_microvias(self, board, desired, instances):
+        config = desired.get('interposer_microvias')
+        if not config:
+            return
+        if config.get('enabled') is not True:
+            raise BackendError('Interposer microvia configuration must be explicitly enabled')
+        reference = config.get('reference', '')
+        spec = instances.get(reference)
+        if not spec or spec.get('kind') != 'interposer':
+            raise BackendError('Interposer microvias require one selected interposer instance')
+        layers = self.copper_layers(board)
+        if config.get('layers') != layers:
+            raise BackendError('Interposer microvia copper stack differs from the saved board')
+        if config.get('side') not in ('F', 'B') or config['side'] != spec.get('side'):
+            raise BackendError('Interposer microvia mounting side differs from placement')
+        if config.get('pose') != spec.get('pose'):
+            raise BackendError('Interposer microvia placement differs from the interposer placement')
+        if config.get('footprint_sha256') != spec['footprint'].get('sha256'):
+            raise BackendError('Interposer microvia footprint revision differs from the selected interposer')
+        if config.get('ground_net') != 'GND' or config.get('protection') != 'none':
+            raise BackendError('Interposer microvias require GND and no IPC-4761 protection')
+        diameter, drill = config.get('diameter'), config.get('drill')
+        settings = board.GetDesignSettings()
+        presets = {(round(self.p.ToMM(item.m_Diameter), 9),
+                    round(self.p.ToMM(item.m_Drill), 9))
+                   for item in board.GetViasDimensionsList()}
+        try:
+            pair = (round(float(diameter), 9), round(float(drill), 9))
+        except (TypeError, ValueError) as error:
+            raise BackendError('Selected microvia size is invalid') from error
+        if pair not in presets or pair == (0.0, 0.0):
+            raise BackendError('Selected microvia size is absent from Board Setup predefined sizes')
+        footprint = self._approved(spec['footprint'])
+        centres = [(self.p.ToMM(pad.GetPosition().x), self.p.ToMM(pad.GetPosition().y))
+                   for pad in footprint.Pads()
+                   if pad.GetNumber() and pad.GetAttribute() != self.p.PAD_ATTRIB_NPTH]
+        from .core.microvias import check_preset, stack_plan
+        eligible, reason = check_preset(
+            diameter, drill,
+            min_diameter=self.p.ToMM(settings.m_MicroViasMinSize),
+            min_drill=self.p.ToMM(settings.m_MicroViasMinDrill),
+            min_clearance=self.p.ToMM(settings.m_MinClearance),
+            pad_centres=centres,
+        )
+        if not eligible:
+            raise BackendError('Selected microvia size ' + reason)
+        pad_numbers = {pad.GetNumber() for pad in footprint.Pads()
+                       if pad.GetNumber() and pad.GetAttribute() != self.p.PAD_ATTRIB_NPTH}
+        signals = config.get('signals', {})
+        if not isinstance(signals, dict) or not set(signals) <= pad_numbers:
+            raise BackendError('Interposer microvia signals reference missing physical pads')
+        expected_signals = {pin: net for pin, net in spec.get('pads', {}).items()
+                            if net != config['ground_net']}
+        if set(signals) != set(expected_signals):
+            raise BackendError('Interposer microvia signal roles differ from interposer connectivity')
+        for pin, signal in signals.items():
+            if (not isinstance(signal, dict) or not signal.get('net') or
+                    signal.get('net') == 'GND' or signal.get('net') != expected_signals[pin]):
+                raise BackendError(f'Interposer microvia signal pin {pin} has an invalid net role')
+            try:
+                stack_plan(layers, config['side'], signal.get('layer'))
+            except ValueError as error:
+                raise BackendError(f'Interposer pin {pin}: {error}') from error
+
+    def _new_unprotected_via(self, board):
+        """Create a via with every native IPC-4761 property explicitly ``no``.
+
+        KiCad 10.0.0 exposes the PCB_VIA properties but its generated Python
+        module omits their typed enum constants.  On that endpoint, clone one
+        native round-trip template rather than relying on Board Setup defaults.
+        Later 10.0 releases use their exported constants directly.
+        """
+        names = (
+            'TENTING_MODE_NOT_TENTED', 'TENTING_MODE_NOT_TENTED',
+            'COVERING_MODE_NOT_COVERED', 'COVERING_MODE_NOT_COVERED',
+            'PLUGGING_MODE_NOT_PLUGGED', 'PLUGGING_MODE_NOT_PLUGGED',
+            'FILLING_MODE_NOT_FILLED', 'CAPPING_MODE_NOT_CAPPED',
+        )
+        if all(hasattr(self.p, name) for name in names):
+            via = self.p.PCB_VIA(board)
+            for method, value in zip((
+                'SetFrontTentingMode', 'SetBackTentingMode',
+                'SetFrontCoveringMode', 'SetBackCoveringMode',
+                'SetFrontPluggingMode', 'SetBackPluggingMode',
+                'SetFillingMode', 'SetCappingMode',
+            ), (getattr(self.p, name) for name in names)):
+                getattr(via, method)(value)
+            return via
+        if self.p.Version() != '10.0.0':
+            raise BackendError('This native runtime cannot set explicit via protection properties')
+        cached = getattr(self, '_explicit_no_via_template', None)
+        if cached is None:
+            with tempfile.TemporaryDirectory(
+                    prefix='connector-interposer-via-modes-') as temporary:
+                path = Path(temporary) / 'modes.kicad_pcb'
+                template_board = self.p.BOARD()
+                via = self.p.PCB_VIA(template_board)
+                via.SetPosition(self.p.VECTOR2I(1000000, 1000000))
+                via.SetWidth(self.p.F_Cu, self.p.FromMM(.3))
+                via.SetDrill(self.p.FromMM(.1))
+                template_board.Add(via)
+                self.p.SaveBoard(str(path), template_board)
+                text = path.read_text(encoding='utf-8')
+                marker = '\n\t\t(net "")'
+                protection = (
+                    '\n\t\t(tenting\n\t\t\t(front no)\n\t\t\t(back no)\n\t\t)'
+                    '\n\t\t(capping no)'
+                    '\n\t\t(covering\n\t\t\t(front no)\n\t\t\t(back no)\n\t\t)'
+                    '\n\t\t(plugging\n\t\t\t(front no)\n\t\t\t(back no)\n\t\t)'
+                    '\n\t\t(filling no)'
+                )
+                if text.count(marker) != 1:
+                    raise BackendError('KiCad 10.0.0 via compatibility template is ambiguous')
+                path.write_text(text.replace(marker, protection + marker), encoding='utf-8')
+                template = self.p.LoadBoard(str(path))
+                source = next((item for item in template.GetTracks()
+                               if isinstance(item, self.p.PCB_VIA)), None)
+                if source is None:
+                    raise BackendError('KiCad 10.0.0 could not load explicit via protection states')
+            cached = (template, source)
+            self._explicit_no_via_template = cached
+        via = self.p.PCB_VIA(cached[1])
+        _set_uuid(via, self.p.KIID(), self.p)
+        return via
+
     def _validate(self, board, desired):
         layers = self.copper_layers(board)
         instances = desired.get("instances", {})
@@ -320,7 +445,8 @@ class NativeBackend:
             if library_id in library_revisions and library_revisions[library_id] != selection["sha256"]:
                 raise BackendError("Two selected revisions share a library identity; select distinct approved aliases")
             library_revisions[library_id] = selection["sha256"]
-            pads = {x.GetNumber() for x in fp.Pads() if x.GetNumber()}
+            pads = {x.GetNumber() for x in fp.Pads()
+                    if x.GetNumber() and x.GetAttribute() != self.p.PAD_ATTRIB_NPTH}
             if set(spec.get("pads", {})) - pads:
                 raise BackendError("Assignment references a missing approved footprint pad: " + key)
             if spec.get("kind", "connector") == "interposer" and set(spec.get("pads", {})) != pads:
@@ -377,6 +503,7 @@ class NativeBackend:
                     raise BackendError("RF artifact requires a different stackup")
                 if set(rf.get("nets", {})) != {"signal", "ground"}:
                     raise BackendError("RF signal and ground net bindings are required")
+        self._validate_microvias(board, desired, instances)
         outline = desired.get("outline")
         if outline and outline.get("enabled"):
             from .core.outline import Segment, validate_outline
@@ -518,6 +645,14 @@ class NativeBackend:
         if registry.get("outline_spec") != desired.get("outline"):
             if registry.get("outline_spec") or desired.get("outline"):
                 changes.append({"key": "board-outline", "kind": "outline"})
+        before_microvias = registry.get('microvia_spec')
+        after_microvias = desired.get('interposer_microvias')
+        if before_microvias != after_microvias:
+            changes.append({
+                'key': 'interposer-microvias',
+                'kind': ('add' if after_microvias and not before_microvias else
+                         'remove' if before_microvias and not after_microvias else 'update'),
+            })
         for name, content in sorted(desired.get("project_files", {}).items()):
             if file_hash(path.parent / name) != hashlib.sha256(content.encode("utf-8")).hexdigest():
                 changes.append({"key": name, "kind": "project-file"})
@@ -820,6 +955,7 @@ class NativeBackend:
                         self._remove(board, obj)
             result["instances"][key] = {"base": uuid_of(fp), "group": uuid_of(group),
                                         "objects": objects, "spec": copy.deepcopy(spec)}
+        self._materialize_microvias(board, desired, registry, result)
         # Empty obsolete parents are removed, while foreign members survive.
         for gang, uid in registry.get("groups", {}).items():
             if gang not in result["groups"]:
@@ -831,9 +967,96 @@ class NativeBackend:
         for entry in result["instances"].values():
             for uid in [entry["base"], entry["group"], *entry["objects"].values()]:
                 result["expected"][uid] = state[uid]
+        for uid in [*result.get('microvia_objects', {}).values(),
+                    *([result['microvia_group']] if result.get('microvia_group') else [])]:
+            result['expected'][uid] = state[uid]
         for uid in [*result["groups"].values(), *result.get("outline_objects", []), *([result["outline_group"]] if result.get("outline_group") else [])]:
             result["expected"][uid] = state[uid]
         return result
+
+    def _materialize_microvias(self, board, desired, old, result):
+        """Reconcile the dedicated locked interposer microvia object set."""
+        config = desired.get('interposer_microvias')
+        old_objects = old.get('microvia_objects', {})
+        old_group = old.get('microvia_group')
+        result['microvia_spec'] = copy.deepcopy(config)
+        if not config:
+            for uid in old_objects.values():
+                obj = board_items(board).get(uid)
+                if obj:
+                    self._remove(board, obj)
+            group = board_items(board).get(old_group)
+            if group and not list(group.GetItems()):
+                self._remove(board, group)
+            return
+        reference = config['reference']
+        footprints = [fp for fp in board.GetFootprints() if fp.GetReference() == reference]
+        if len(footprints) != 1:
+            raise BackendError('Interposer microvias require exactly one placed interposer footprint')
+        footprint = footprints[0]
+        group = self._group(
+            board, 'Workflow:Interposer Microvias:' + reference, old_group,
+        )
+        group.SetLocked(True)
+        result['microvia_group'] = uuid_of(group)
+        layers = config['layers']
+        signals = config['signals']
+        from .core.microvias import stack_plan
+        pads = sorted(
+            (pad for pad in footprint.Pads()
+             if pad.GetNumber() and pad.GetAttribute() != self.p.PAD_ATTRIB_NPTH),
+            key=lambda pad: (pad.GetNumber(), pad.GetPosition().x,
+                             pad.GetPosition().y, uuid_of(pad)),
+        )
+        occurrences = {}
+        wanted = {}
+        for pad in pads:
+            pin = pad.GetNumber()
+            occurrence = occurrences.get(pin, 0)
+            occurrences[pin] = occurrence + 1
+            signal = signals.get(pin)
+            spans = stack_plan(
+                layers, config['side'], signal.get('layer') if signal else None,
+            )
+            for role, top_name, bottom_name in spans:
+                local = f'{pin}:{occurrence}:{role}:{top_name}>{bottom_name}'
+                wanted[local] = (pad.GetPosition(),
+                                 signal['net'] if role == 'signal' else config['ground_net'],
+                                 top_name, bottom_name)
+        objects = {}
+        replace_all = old.get('microvia_spec') != config
+        current_items = board_items(board)
+        for local, (position, net_name, top_name, bottom_name) in wanted.items():
+            uid = old_objects.get(local)
+            obj = current_items.get(uid)
+            if replace_all or not isinstance(obj, self.p.PCB_VIA):
+                replacement = self._new_unprotected_via(board)
+                replacement.SetPosition(position)
+                replacement.SetWidth(self.p.F_Cu, self.p.FromMM(config['diameter']))
+                replacement.SetDrill(self.p.FromMM(config['drill']))
+                via_type = (getattr(self.p, 'VIATYPE_MICROVIA', 1)
+                            if self.p.Version() == '10.0.0'
+                            else self.p.VIATYPE_MICROVIA)
+                replacement.SetViaType(via_type)
+                replacement.SetLayerPair(self._layer(board, top_name),
+                                         self._layer(board, bottom_name))
+                if not replacement.HasValidLayerPair(board.GetCopperLayerCount()):
+                    raise BackendError('Native runtime rejects a generated adjacent microvia span')
+                replacement.SetNet(self._net(board, net_name))
+                replacement.SetLocked(True)
+                if obj:
+                    _set_uuid(replacement, uuid_of(obj), self.p)
+                    self._remove(board, obj)
+                obj = replacement
+                board.Add(obj)
+                group.AddItem(obj)
+            objects[local] = uuid_of(obj)
+        for local, uid in old_objects.items():
+            if local not in objects:
+                obj = board_items(board).get(uid)
+                if obj:
+                    self._remove(board, obj)
+        result['microvia_objects'] = objects
 
     def _outline(self, board, desired, old, result):
         outline = desired.get("outline")

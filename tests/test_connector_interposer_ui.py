@@ -168,6 +168,43 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(count_issues), 1)
         self.assertIn('symbol has 1 pin; 2 pins are used', count_issues[0].message)
 
+    def test_microvia_size_is_board_predefined_and_filtered_by_interposer_pitch(self):
+        import hashlib
+        footprint = self.root / 'Interposer.kicad_mod'
+        footprint.write_text(
+            '(footprint "Interposer" (layer "F.Cu") '
+            '(pad "A1" smd circle (at 0 0) (size .4 .4) (layers "F.Cu")) '
+            '(pad "A2" smd circle (at .5 0) (size .4 .4) (layers "F.Cu")) '
+            '(pad "A3" smd circle (at 1 0) (size .4 .4) (layers "F.Cu")))'
+        )
+        self.controller.config['interposers']['U1'] = {
+            'path': str(footprint), 'library_id': 'Approved:Interposer',
+            'sha256': hashlib.sha256(footprint.read_bytes()).hexdigest(),
+            'pose': [0, 0, 0], 'pose_accepted': True, 'side': 'F',
+        }
+        self.controller.set_layers(('F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'))
+        self.controller.set_layer_mapping('L1', 'In1.Cu')
+        self.controller.set_board_microvia_rules(
+            ((0, 0), (.254, .127), (.305, .152)),
+            min_diameter=.2, min_drill=.1, min_clearance=.2,
+        )
+        presets = self.controller.microvia_presets()
+        self.assertTrue(presets[0].eligible)
+        self.assertFalse(presets[1].eligible)
+        self.controller.set_microvias_enabled(True)
+        self.controller.set_microvia_size(.254, .127)
+        self.assertEqual(self.controller.config['microvias']['size'], {
+            'diameter': .254, 'drill': .127,
+        })
+        with self.assertRaisesRegex(ValueError, 'spacing'):
+            self.controller.set_microvia_size(.305, .152)
+        self.assertEqual(self.controller.microvia_counts(), (0, 3, 6))
+        self.assertNotIn('microvia_outer_signal_layer', {
+            issue.code for issue in self.controller.validate()
+        })
+        self.controller.set_board_microvia_rules(((0, 0), (.305, .152)), .2, .1, .2)
+        self.assertNotIn('size', self.controller.config['microvias'])
+
     def test_independent_gangs_and_explicit_copy_preserve_anchors(self):
         self.controller.set_gang('J101', {
             'pitch_x': 4, 'anchor': [30, 20], 'anchor_accepted': True,
@@ -339,9 +376,10 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(PAGES[5], 'Define RF gangs')
         self.assertEqual(PAGES[6], 'RF transitions')
         self.assertEqual(PAGES[7], 'Mechanical placement')
-        self.assertEqual(PAGES[8], 'Board outline')
-        self.assertEqual(PAGES[9], 'Review changes')
-        self.assertEqual(PAGES[10], 'Apply / results')
+        self.assertEqual(PAGES[8], 'Interposer microvias')
+        self.assertEqual(PAGES[9], 'Board outline')
+        self.assertEqual(PAGES[10], 'Review changes')
+        self.assertEqual(PAGES[11], 'Apply / results')
         for page_index, page_name in enumerate(PAGES):
             self.assertIsNotNone(
                 self.wx.FindWindowByLabel(page_name, dialog.page_hosts[page_index]),
@@ -414,6 +452,9 @@ class NativeDialogTests(unittest.TestCase):
         self.assertIsInstance(dialog.hole_path, LibrarySelectionCtrl)
         self.assertIsInstance(dialog.gang_rows, self.wx.grid.Grid)
         self.assertFalse(dialog.open_transition_designer.IsEnabled())
+        self.assertFalse(dialog.microvia_enable.IsEnabled())
+        self.assertEqual(dialog.microvia_status.GetLabel(), 'Assign an interposer footprint first')
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Board side', dialog.pages[7]))
         self.assertIsNone(self.wx.FindWindowByLabel('Per-location RF assignments…', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Accept library selections', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Project BOM MPN override (if absent)', dialog))
@@ -1387,10 +1428,12 @@ class NativeDialogTests(unittest.TestCase):
             dialog.controller.config['interposers']['E1'] = {'symbol': {'path': 'selected'}}
             dialog.interposer_x.ChangeValue('1 inch')
             dialog.interposer_y.ChangeValue('25000um')
+            dialog.interposer_side.SetSelection(1)
             dialog._interposer_placement_changed()
             selection = dialog.controller.config['interposers']['E1']
             self.assertEqual(selection['pose'][:2], [25.4, 25.0])
             self.assertEqual(selection['pose_units'], ['inch', 'um'])
+            self.assertEqual(selection['side'], 'B')
 
             dialog.label_offset_x.ChangeValue('10 mm')
             event = self.wx.CommandEvent()
@@ -1472,7 +1515,7 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                                        'anchor_accepted': True, 'defined': True})
             part = interposer_parts['E1'].footprint
             controller.config['interposers']['E1'] = dict(
-                part.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True,
+                part.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True, side='F',
                 symbol={'path': str(symbol), 'library_id': 'Approved:Interposer', 'sha256': symbol_sha},
             )
             controller.config['mechanical'] = {'layer': 'Dwgs.User', 'accepted': True, 'label_offset': [-2.54, -2.54]}
@@ -1606,7 +1649,7 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             })
             interposer = interposer_parts['E1'].footprint
             controller.config['interposers']['E1'] = dict(
-                interposer.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True,
+                interposer.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True, side='F',
                 symbol={'path': str(approved_symbols), 'library_id': 'Approved:Interposer',
                         'sha256': approved_sha},
             )

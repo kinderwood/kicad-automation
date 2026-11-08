@@ -69,6 +69,7 @@ def prepare(destination):
             },
             pose=[94.95, 94.95, 0],
             pose_accepted=True,
+            side='F',
         )
     }
 

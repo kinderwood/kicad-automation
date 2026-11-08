@@ -1080,9 +1080,10 @@ class WorkflowDialog(wx.Dialog):
         self.build_gangs(self.pages[5])
         self.build_rf_transitions(self.pages[6])
         self.build_anchors(self.pages[7])
-        self.build_outline(self.pages[8])
-        self.build_review(self.pages[9])
-        self.build_results(self.pages[10])
+        self.build_microvias(self.pages[8])
+        self.build_outline(self.pages[9])
+        self.build_review(self.pages[10])
+        self.build_results(self.pages[11])
         self.book.Bind(wx.EVT_BOOKCTRL_PAGE_CHANGED, self.page_changed)
         body.Add(self.book, 1, wx.EXPAND | wx.RIGHT | wx.BOTTOM, 10)
         outer.Add(body, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
@@ -1406,6 +1407,7 @@ class WorkflowDialog(wx.Dialog):
         self.refresh_rf_transitions()
         self.refresh_mounting_holes()
         self.refresh_connector_assignments(True)
+        self.refresh_microvias()
         for preview in (self.pattern_view, self.outline_view):
             preview.Refresh()
         self.Layout()
@@ -2918,6 +2920,7 @@ class WorkflowDialog(wx.Dialog):
                 self.interposer_x.set_mm(pose[0], pose_units[0])
                 self.interposer_y.set_mm(pose[1], pose_units[1])
                 self.interposer_rotation.ChangeValue(str(pose[2]))
+                self.interposer_side.SetSelection(1 if interposer.get('side') == 'B' else 0)
             finally:
                 self._loading_placement = False
             self.interposer_pose_status.SetLabel(
@@ -3925,6 +3928,11 @@ class WorkflowDialog(wx.Dialog):
             interposer_box, value='0', style=wx.TE_PROCESS_ENTER,
         )
         interposer_fields.Add(self.interposer_rotation, 1, wx.EXPAND)
+        interposer_fields.Add(wx.StaticText(interposer_box, label='Board side'), 0,
+                              wx.ALIGN_CENTER_VERTICAL)
+        self.interposer_side = wx.Choice(interposer_box, choices=['Front', 'Back'])
+        self.interposer_side.SetSelection(0)
+        interposer_fields.Add(self.interposer_side, 1, wx.EXPAND)
         interposer_fields.AddGrowableCol(1, 1)
         interposer.Add(interposer_fields, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         interposer.Add(
@@ -4100,6 +4108,7 @@ class WorkflowDialog(wx.Dialog):
         self.interposer_y.bind_changed(self._interposer_placement_changed)
         self.interposer_rotation.Bind(wx.EVT_TEXT_ENTER, self._interposer_placement_changed)
         self.interposer_rotation.Bind(wx.EVT_KILL_FOCUS, self._interposer_placement_changed)
+        self.interposer_side.Bind(wx.EVT_CHOICE, self._interposer_placement_changed)
         self.anchor_x.bind_changed(self._rf_anchor_changed)
         self.anchor_y.bind_changed(self._rf_anchor_changed)
         self.anchor_gang_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_anchor_gangs())
@@ -4203,12 +4212,103 @@ class WorkflowDialog(wx.Dialog):
             self.interposer_x.selected_unit(), self.interposer_y.selected_unit(),
         ]
         selection['pose_circle'] = circle
+        selection['side'] = 'B' if self.interposer_side.GetSelection() == 1 else 'F'
         selection['pose_accepted'] = True
         self.controller.changed()
         source = 'selected center circle' if circle else 'entered coordinates'
         self.interposer_pose_status.SetLabel(f'{reference} placed from {source}.')
         self._style_status(self.interposer_pose_status, 'success')
         self._skip_event(event)
+
+    @staticmethod
+    def _microvia_size_label(diameter, drill):
+        diameter_mil, drill_mil = diameter / .0254, drill / .0254
+        def number(value):
+            return str(int(round(value))) if abs(value - round(value)) < 1e-6 else f'{value:.3f}'.rstrip('0').rstrip('.')
+        return (f'{number(diameter_mil)} mil pad / {number(drill_mil)} mil drill '
+                f'({diameter:g} / {drill:g} mm)')
+
+    def build_microvias(self, panel):
+        self.task_box(
+            panel, 'Interposer microvias', 'Optionally generate uniform stacked laser microvias',
+            'Generate coincident microvias at every interposer pad. Ground pins stack through the board; signal pins stack to their routing layer, skip one span, then continue as GND where layers remain.',
+        )
+        self.microvia_enable = wx.CheckBox(
+            panel, label='Generate interposer microvia stacks',
+        )
+        self.microvia_enable.Bind(wx.EVT_CHECKBOX, self.guard(self.toggle_microvias))
+        panel.GetSizer().Add(self.microvia_enable, 0, wx.ALL, 8)
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        row.Add(wx.StaticText(panel, label='Predefined microvia size'), 0,
+                wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
+        self.microvia_size = wx.Choice(panel)
+        self.microvia_size.Bind(wx.EVT_CHOICE, self.guard(self.choose_microvia_size))
+        row.Add(self.microvia_size, 0)
+        panel.GetSizer().Add(row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.microvia_summary = wx.StaticText(panel, label='0 ground pins · 0 signal pins · 0 generated microvias')
+        panel.GetSizer().Add(self.microvia_summary, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.microvia_status = self.status_label(panel, 'Assign an interposer footprint first')
+        panel.GetSizer().Add(self.microvia_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.note(
+            panel,
+            'Generated objects are plated native microvias with no IPC-4761 plugging, filling or capping. Final plane connectivity and fabrication validity are verified outside this workflow.',
+        )
+        self._microvia_choice_pairs = []
+
+    def toggle_microvias(self, event):
+        self.controller.set_microvias_enabled(self.microvia_enable.GetValue())
+        self.refresh_microvias()
+
+    def choose_microvia_size(self, event):
+        index = self.microvia_size.GetSelection()
+        if not 0 <= index < len(self._microvia_choice_pairs):
+            return
+        self.controller.set_microvia_size(*self._microvia_choice_pairs[index])
+        self.refresh_microvias()
+
+    def refresh_microvias(self):
+        if not hasattr(self, 'microvia_enable'):
+            return
+        available = self.controller.microvia_available()
+        enabled = bool(self.controller.config.get('microvias', {}).get('enabled'))
+        self.microvia_enable.SetValue(enabled)
+        self.microvia_enable.Enable(available and not self.controller.busy)
+        presets = self.controller.microvia_presets() if available else ()
+        eligible = [item for item in presets if item.eligible]
+        self._microvia_choice_pairs = [(item.diameter, item.drill) for item in eligible]
+        self.microvia_size.Set([
+            self._microvia_size_label(item.diameter, item.drill) for item in eligible
+        ])
+        selected = self.controller.config.get('microvias', {}).get('size', {})
+        pair = (selected.get('diameter'), selected.get('drill'))
+        self.microvia_size.SetSelection(
+            self._microvia_choice_pairs.index(pair)
+            if pair in self._microvia_choice_pairs else wx.NOT_FOUND
+        )
+        self.microvia_size.Enable(available and enabled and bool(eligible) and not self.controller.busy)
+        ground, signal, count = self.controller.microvia_counts()
+        self.microvia_summary.SetLabel(
+            f'{ground} ground pin{("" if ground == 1 else "s")} · '
+            f'{signal} signal pin{("" if signal == 1 else "s")} · '
+            f'{count} generated microvia{("" if count == 1 else "s")}'
+        )
+        if not available:
+            message, state = 'Assign an interposer footprint first', 'warning'
+        elif not enabled:
+            message, state = 'Off — no interposer microvias requested', 'neutral'
+        elif not eligible:
+            rejected = next((item.reason for item in presets if item.reason), '')
+            message = 'No Board Setup predefined size satisfies the board and interposer constraints'
+            if rejected:
+                message += ': ' + rejected
+            state = 'error'
+        elif pair not in self._microvia_choice_pairs:
+            message, state = 'Needs input — select a predefined microvia size', 'warning'
+        else:
+            message, state = 'Ready — selected Board Setup size maintains minimum copper spacing', 'success'
+        self.microvia_status.SetLabel(message)
+        self._style_status(self.microvia_status, state)
+        self.microvia_status.GetParent().Layout()
 
     def capture_interposer_circle(self, event):
         circle, center = self._selected_mechanical_circle('interposer center')
@@ -4851,8 +4951,12 @@ class WorkflowDialog(wx.Dialog):
             ):
                 control.set_mm(0, 'mil')
             self.dc_anchor_side.SetSelection(0)
+            self.interposer_side.SetSelection(0)
         finally:
             self._loading_placement = False
+        self.microvia_enable.SetValue(False)
+        self.microvia_size.Set([])
+        self._microvia_choice_pairs = []
         self.hole_path.set_selection({})
         self.drawing_status.SetLabel(
             'Choose the imported drawing layer, then inspect the saved board.'
@@ -4930,6 +5034,7 @@ class WorkflowDialog(wx.Dialog):
                 self.interposer_x.set_mm(pose[0], pose_units[0])
                 self.interposer_y.set_mm(pose[1], pose_units[1])
                 self.interposer_rotation.ChangeValue(str(pose[2]))
+                self.interposer_side.SetSelection(1 if part.get('side') == 'B' else 0)
             finally:
                 self._loading_placement = False
             self.anchor_interposer_ref.SetLabel('Reference: ' + ref)
@@ -4955,9 +5060,11 @@ class WorkflowDialog(wx.Dialog):
         self.refresh_gangs()
         self.refresh_mounting_holes()
         self.refresh_connector_assignments(True)
+        self.refresh_microvias()
 
     def refresh(self):
         self.refresh_connector_assignments()
+        self.refresh_microvias()
         self.view_button.Enable(self.controller.view_data_enabled)
         workbook_path = Path(self.workbook_path.GetValue()).expanduser()
         self.workbook_reload.Enable(

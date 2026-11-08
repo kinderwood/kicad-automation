@@ -171,6 +171,43 @@ class LayerMappingTests(unittest.TestCase):
         self.assertEqual(mapped['L2'], 'In1.Cu')
 
 
+class MicroviaTests(unittest.TestCase):
+    def test_predefined_size_eligibility_uses_board_minima_and_interposer_pitch(self):
+        presets = evaluate_presets(
+            ((0, 0), (.254, .127), (.305, .152), (.254, .127)),
+            min_diameter=.2, min_drill=.1, min_clearance=.2,
+            pad_centres=((0, 0), (.5, 0), (0, .5)),
+        )
+        self.assertEqual(len(presets), 2)
+        self.assertTrue(presets[0].eligible)
+        self.assertFalse(presets[1].eligible)
+        self.assertIn('spacing', presets[1].reason)
+        self.assertEqual(minimum_pitch(((0, 0), (1, 0), (0, 2))), 1)
+
+    def test_front_and_back_stack_topology_has_one_gap_and_no_depth_limit(self):
+        layers = ('F.Cu', 'In1.Cu', 'In2.Cu', 'In3.Cu',
+                  'In4.Cu', 'In5.Cu', 'B.Cu')
+        front = stack_plan(layers, 'F', 'In2.Cu')
+        self.assertEqual(front, (
+            ('signal', 'F.Cu', 'In1.Cu'),
+            ('signal', 'In1.Cu', 'In2.Cu'),
+            ('ground', 'In3.Cu', 'In4.Cu'),
+            ('ground', 'In4.Cu', 'In5.Cu'),
+            ('ground', 'In5.Cu', 'B.Cu'),
+        ))
+        back = stack_plan(layers, 'B', 'In3.Cu')
+        self.assertEqual(back, (
+            ('signal', 'In5.Cu', 'B.Cu'),
+            ('signal', 'In4.Cu', 'In5.Cu'),
+            ('signal', 'In3.Cu', 'In4.Cu'),
+            ('ground', 'In1.Cu', 'In2.Cu'),
+            ('ground', 'F.Cu', 'In1.Cu'),
+        ))
+        self.assertEqual(len(stack_plan(layers, 'F')), len(layers) - 1)
+        with self.assertRaisesRegex(ValueError, 'outside'):
+            stack_plan(layers, 'F', 'B.Cu')
+
+
 class ConnectorTypeTests(unittest.TestCase):
     def test_conservative_reference_and_netclass_inference(self):
         records = (
@@ -295,6 +332,7 @@ class LibraryTests(unittest.TestCase):
     def test_project_schema_identity(self):
         config=ProjectConfig();self.assertEqual(ProjectConfig.from_dict(config.to_dict()).project_id,config.project_id)
         self.assertEqual(stable_uuid(config.project_id,'symbol/J1-1'),stable_uuid(config.project_id,'symbol/J1-1'))
+        with self.assertRaises(ValueError):ProjectConfig.from_dict(dict(config.to_dict(), schema_version=5))
         with self.assertRaises(ValueError):ProjectConfig.from_dict({'project_id':config.project_id,'schema_version':2})
 
 

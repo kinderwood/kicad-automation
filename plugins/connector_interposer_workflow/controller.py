@@ -12,7 +12,7 @@ from .core.model import HEADERS, Issue
 
 PAGES = ("Netlist source", "Netclass type", "Layer assignment", "Routing permissions",
          "Connector assignments", "Define RF gangs", "RF transitions", "Mechanical placement",
-         "Board outline", "Review changes", "Apply / results")
+         "Interposer microvias", "Board outline", "Review changes", "Apply / results")
 
 
 def row_ranges(text):
@@ -46,6 +46,10 @@ class WorkflowController:
         self.workbook_sha256 = None
         self.table = None
         self.copper_layers = ('F.Cu', 'B.Cu')
+        self.board_microvia_rules = {
+            'presets': (), 'min_diameter': 0.0, 'min_drill': 0.0,
+            'min_clearance': 0.0,
+        }
         self.new_rules = ()
         self.preview = None
         self.preview_token = None
@@ -151,6 +155,113 @@ class WorkflowController:
         self.new_rules = rules.synchronize({r.netclass for r in self.table.records} if self.table else (), self.copper_layers)
         self.config['layer_rules'] = rules.to_dict()
         self.changed()
+
+    def set_board_microvia_rules(self, presets, min_diameter=0, min_drill=0,
+                                 min_clearance=0):
+        """Set transient Board Setup constraints; they are never copied into the sidecar."""
+        pairs = []
+        for pair in presets:
+            if len(pair) != 2:
+                raise ValueError('Predefined via sizes must be diameter/drill pairs')
+            pairs.append((round(float(pair[0]), 9), round(float(pair[1]), 9)))
+        self.board_microvia_rules = {
+            'presets': tuple(pairs), 'min_diameter': float(min_diameter),
+            'min_drill': float(min_drill), 'min_clearance': float(min_clearance),
+        }
+        selected = self.config.get('microvias', {}).get('size', {})
+        if selected:
+            try:
+                selected_pair = (round(float(selected.get('diameter', 0)), 9),
+                                 round(float(selected.get('drill', 0)), 9))
+            except (AttributeError, TypeError, ValueError):
+                selected_pair = None
+            if selected_pair not in set(pairs):
+                self.config['microvias'].pop('size', None)
+        self.changed()
+
+    def interposer_reference(self):
+        references = sorted({record.interposer for record in self.table.records}) if self.table else []
+        return references[0] if len(references) == 1 else ''
+
+    def microvia_presets(self):
+        """Return current Board Setup pairs classified against interposer pitch."""
+        from .core.microvias import evaluate_presets
+        from .core.libraries import read_footprint
+        reference = self.interposer_reference()
+        selection = self.config.get('interposers', {}).get(reference, {})
+        centres = ()
+        if selection.get('path') and selection.get('library_id'):
+            try:
+                part = read_footprint(
+                    self.resolve_path(selection['path'], selection.get('sha256')),
+                    selection['library_id'], selection.get('sha256'),
+                )
+                centres = tuple(pad.position for pad in part.pads
+                                if pad.number and pad.kind != 'np_thru_hole')
+            except (OSError, ValueError):
+                centres = ()
+        return evaluate_presets(
+            self.board_microvia_rules['presets'],
+            min_diameter=self.board_microvia_rules['min_diameter'],
+            min_drill=self.board_microvia_rules['min_drill'],
+            min_clearance=self.board_microvia_rules['min_clearance'],
+            pad_centres=centres,
+        )
+
+    def set_microvias_enabled(self, enabled):
+        if enabled and not self.microvia_available():
+            raise ValueError('Assign an interposer footprint before enabling microvias')
+        self.config['microvias']['enabled'] = bool(enabled)
+        self.changed()
+
+    def set_microvia_size(self, diameter, drill):
+        pair = (round(float(diameter), 9), round(float(drill), 9))
+        preset = next((item for item in self.microvia_presets()
+                       if (item.diameter, item.drill) == pair), None)
+        if preset is None:
+            raise ValueError('Select a size from the current Board Setup predefined list')
+        if not preset.eligible:
+            raise ValueError(preset.reason)
+        self.config['microvias']['size'] = {
+            'diameter': preset.diameter, 'drill': preset.drill,
+        }
+        self.changed()
+
+    def microvia_available(self):
+        reference = self.interposer_reference()
+        return bool(reference and self.config.get('interposers', {}).get(reference, {}).get('path'))
+
+    def microvia_counts(self):
+        """Return ground pins, signal pins and derived via count for ready inputs."""
+        if not self.table or not self.microvia_available():
+            return 0, 0, 0
+        from .core.libraries import read_footprint
+        from .core.microvias import stack_plan
+        reference = self.interposer_reference()
+        selection = self.config['interposers'][reference]
+        try:
+            part = read_footprint(
+                self.resolve_path(selection['path'], selection.get('sha256')),
+                selection['library_id'], selection.get('sha256'),
+            )
+        except (OSError, ValueError):
+            return 0, 0, 0
+        records = {record.interposer_pin: record for record in self.table.records
+                   if record.interposer == reference and record.signal.casefold() != 'gnd'}
+        ground = signal = total = 0
+        for pad in part.pads:
+            if not pad.number or pad.kind == 'np_thru_hole':
+                continue
+            record = records.get(pad.number)
+            if record is None:
+                ground += 1
+                total += len(stack_plan(self.copper_layers, selection.get('side', 'F')))
+            else:
+                signal += 1
+                layer = self.config['layer_mapping'].get(record.layer)
+                if layer in self.copper_layers and layer not in (self.copper_layers[0], self.copper_layers[-1]):
+                    total += len(stack_plan(self.copper_layers, selection.get('side', 'F'), layer))
+        return ground, signal, total
 
     def set_rule(self, netclass, layer, allowed):
         if layer not in self.copper_layers:
@@ -580,11 +691,59 @@ class WorkflowController:
                         'interposer_pose_missing',
                         f'{reference}: set the interposer position in Mechanical placement',
                     ))
+                if selection.get('pose_accepted') and selection.get('side') not in ('F', 'B'):
+                    issues.append(Issue(
+                        'interposer_side_missing',
+                        f'{reference}: choose Front or Back in Mechanical placement',
+                    ))
                 if not selection.get('symbol_mpn') and not selection.get('footprint_mpn'):
                     issues.append(Issue('mpn_missing', f'{reference}: selected library parts have no MPN metadata', severity='warning'))
                 if (selection.get('symbol_mpn') and selection.get('footprint_mpn') and
                         selection['symbol_mpn'] != selection['footprint_mpn']):
                     issues.append(Issue('mpn_conflict', f'{reference}: symbol and footprint MPN metadata disagree'))
+            microvias = self.config.get('microvias', {})
+            if microvias.get('enabled'):
+                reference = self.interposer_reference()
+                if not self.microvia_available():
+                    issues.append(Issue(
+                        'microvia_interposer_missing',
+                        'Assign an interposer footprint before generating interposer microvias',
+                    ))
+                selected = microvias.get('size', {})
+                try:
+                    pair = (round(float(selected.get('diameter', 0)), 9),
+                            round(float(selected.get('drill', 0)), 9))
+                except (TypeError, ValueError):
+                    pair = (0.0, 0.0)
+                preset = next((item for item in self.microvia_presets()
+                               if (item.diameter, item.drill) == pair), None)
+                if preset is None:
+                    issues.append(Issue(
+                        'microvia_size_missing',
+                        'Select a current Board Setup predefined microvia size',
+                    ))
+                elif not preset.eligible:
+                    issues.append(Issue(
+                        'microvia_size_incompatible',
+                        f'{reference}: selected microvia size {preset.reason}',
+                    ))
+                for record in self.table.records:
+                    if record.interposer != reference or record.signal.casefold() == 'gnd':
+                        continue
+                    layer = self.config['layer_mapping'].get(record.layer)
+                    if layer in (self.copper_layers[0], self.copper_layers[-1]):
+                        issues.append(Issue(
+                            'microvia_outer_signal_layer',
+                            f'{record.interposer} pin {record.interposer_pin}: '
+                            f'interposer signals cannot route on outside layer {layer}',
+                            record.source_row, 'layer',
+                        ))
+                issues.append(Issue(
+                    'microvia_ground_connectivity',
+                    'Interposer GND sub-stacks are generated on GND; final plane connectivity '
+                    'and fabrication validity are verified outside this workflow',
+                    severity='warning',
+                ))
         self.issues = tuple(issues)
         return self.issues
 
@@ -1010,7 +1169,8 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
             selection = cfg['interposers'][reference]
             instances[reference] = {'kind': 'interposer', 'footprint': dict(part.footprint.pin(), approved=True),
                 'pose': selection.get('pose', [0, 0, 0]), 'pads': {pin: signals.get(pin, 'GND') for pin in part.footprint.pad_numbers},
-                'symbol_path': bundle.paths.get(reference, ''), 'symbol_fields': symbol_fields(reference)}
+                'symbol_path': bundle.paths.get(reference, ''), 'symbol_fields': symbol_fields(reference),
+                'side': selection['side']}
         for hole in cfg.get('mounting_holes', []):
             part = read_footprint(controller.resolve_path(hole['path'], hole.get('sha256')), hole['library_id'], hole.get('sha256'), allow_mechanical=True)
             part = replace(part, library_id='WorkflowPart_' + part.sha256[:16] + ':' + part.library_id.split(':', 1)[1])
@@ -1053,6 +1213,30 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
                        },
                        'dc_tolerance_mm': 0.000001,
                    }}
+        if cfg.get('microvias', {}).get('enabled'):
+            reference = controller.interposer_reference()
+            selection = cfg['interposers'][reference]
+            signals = {
+                record.interposer_pin: {
+                    'net': record.signal,
+                    'layer': cfg['layer_mapping'][record.layer],
+                }
+                for record in records
+                if record.interposer == reference and record.signal.casefold() != 'gnd'
+            }
+            desired['interposer_microvias'] = {
+                'enabled': True,
+                'reference': reference,
+                'diameter': cfg['microvias']['size']['diameter'],
+                'drill': cfg['microvias']['size']['drill'],
+                'layers': list(controller.copper_layers),
+                'side': selection['side'],
+                'pose': list(selection.get('pose', [0, 0, 0])),
+                'footprint_sha256': interposer_parts[reference].footprint.sha256,
+                'signals': signals,
+                'ground_net': 'GND',
+                'protection': 'none',
+            }
         return self.call('preview', board_path=str(controller.board_path), desired=desired)
 
     def apply(self, controller, preview):

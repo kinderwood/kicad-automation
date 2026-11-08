@@ -3,7 +3,7 @@ from dataclasses import asdict, dataclass, field
 import uuid
 from .identities import canonical_json
 
-CONFIG_VERSION = 5
+CONFIG_VERSION = 6
 
 @dataclass
 class ProjectConfig:
@@ -20,6 +20,7 @@ class ProjectConfig:
     gangs: dict = field(default_factory=dict)
     dc_connectors: dict = field(default_factory=dict)
     interposers: dict = field(default_factory=dict)
+    microvias: dict = field(default_factory=dict)
     mechanical: dict = field(default_factory=dict)
     outline: dict = field(default_factory=dict)
     artifacts: dict = field(default_factory=dict)

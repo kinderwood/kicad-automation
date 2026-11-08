@@ -10,3 +10,5 @@ from .libraries import (ApprovedFootprint, ApprovedSymbol, footprint_matches_fil
                         read_footprint, read_symbol)
 from .config import ProjectConfig
 from .units import DIMENSION_UNITS, dimension_text, normalize_unit, parse_dimension
+from .microvias import (MicroviaPreset, check_preset, evaluate_presets,
+                        minimum_pitch, stack_plan)

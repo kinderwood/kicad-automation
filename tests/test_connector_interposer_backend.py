@@ -59,6 +59,13 @@ class BackendTests(unittest.TestCase):
         self.board_path = self.source/"demo.kicad_pcb"
         p.SaveBoard(str(self.board_path), board, True)
         (self.source/"demo.kicad_pro").write_text(json.dumps({"meta": {"filename": "demo.kicad_pro", "version": 3},
+                  "board": {"design_settings": {
+                      "rules": {"min_clearance": 0.1, "min_microvia_diameter": 0.2,
+                                "min_microvia_drill": 0.1},
+                      "via_dimensions": [{"diameter": 0.0, "drill": 0.0},
+                                         {"diameter": 0.3, "drill": 0.1},
+                                         {"diameter": 0.35, "drill": 0.15}]},
+                  },
                   "net_settings": {"meta": {"version": 4}, "classes": [{"name": "RF", "priority": 0}],
                   "netclass_patterns": [{"netclass": "RF", "pattern": "CLOCK"}, {"netclass": "RF", "pattern": "DATA"}]}}))
         (self.source/"ordinary.kicad_sch").write_text("designer sheet")
@@ -69,6 +76,28 @@ class BackendTests(unittest.TestCase):
     def apply_first(self):
         preview = self.backend.preview(self.board_path, self.desired)
         return self.backend.apply(preview, self.root/"first")
+
+    def microvia_desired(self, side='F', signal_layer='In1.Cu', diameter=.3, drill=.1):
+        desired = copy.deepcopy(self.desired)
+        interposer = copy.deepcopy(desired['instances']['J101-1'])
+        interposer.update(
+            kind='interposer', gang='E1', pose=[40, 20, 0], side=side,
+            pads={'1': 'CLOCK', '2': 'GND'},
+        )
+        interposer.pop('rf', None)
+        interposer.pop('netclass', None)
+        interposer.pop('signal_layer', None)
+        desired['instances']['E1'] = interposer
+        desired['interposer_microvias'] = {
+            'enabled': True, 'reference': 'E1',
+            'diameter': diameter, 'drill': drill,
+            'layers': ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'],
+            'side': side, 'pose': [40, 20, 0],
+            'footprint_sha256': self.selection['sha256'],
+            'signals': {'1': {'net': 'CLOCK', 'layer': signal_layer}},
+            'ground_net': 'GND', 'protection': 'none',
+        }
+        return desired
 
     def test_native_copy_ownership_noop_and_incremental_assignment(self):
         source_bytes = self.board_path.read_bytes()
@@ -95,6 +124,90 @@ class BackendTests(unittest.TestCase):
         second = self.backend.apply(preview, self.root/"second")
         self.assertEqual(base, second["registry"]["instances"]["J101-1"]["base"])
         self.assertEqual(first["registry"]["instances"]["J101-1"]["objects"], second["registry"]["instances"]["J101-1"]["objects"])
+
+    def test_interposer_microvia_generation_noop_and_full_reconciliation(self):
+        desired = self.microvia_desired()
+        first = self.backend.apply(
+            self.backend.preview(self.board_path, desired), self.root / 'microvia-first',
+        )
+        objects = first['registry']['microvia_objects']
+        self.assertEqual(len(objects), 5)
+        board = p.LoadBoard(first['board_path'])
+        state = board_state(board, p)
+        group = state[first['registry']['microvia_group']]
+        self.assertTrue(group['locked'])
+        vias = [state[uid] for uid in objects.values()]
+        self.assertEqual({via['via_type'] for via in vias},
+                         {getattr(p, 'VIATYPE_MICROVIA', 1)})
+        self.assertEqual({p.ToMM(via['width']) for via in vias}, {.3})
+        self.assertEqual({p.ToMM(via['drill']) for via in vias}, {.1})
+        self.assertEqual({via['net'] for via in vias}, {'CLOCK', 'GND'})
+        self.assertTrue(all(via['locked'] for via in vias))
+        by_span = {(board.GetLayerName(via['span'][0]), board.GetLayerName(via['span'][1]), via['net'])
+                   for via in vias}
+        self.assertIn(('F.Cu', 'In1.Cu', 'CLOCK'), by_span)
+        self.assertIn(('In2.Cu', 'B.Cu', 'GND'), by_span)
+        from connector_interposer_workflow.core.sexpr import loads, child
+        tree = loads(Path(first['board_path']).read_text(encoding='utf-8'))
+        first_uid = next(iter(objects.values()))
+        node = next(item for item in tree[1:]
+                    if isinstance(item, list) and child(item, 'uuid') == ['uuid', first_uid])
+        self.assertEqual(child(node, 'tenting'),
+                         ['tenting', ['front', 'no'], ['back', 'no']])
+        self.assertEqual(child(node, 'covering'),
+                         ['covering', ['front', 'no'], ['back', 'no']])
+        self.assertEqual(child(node, 'plugging'),
+                         ['plugging', ['front', 'no'], ['back', 'no']])
+        self.assertEqual(child(node, 'filling'), ['filling', 'no'])
+        self.assertEqual(child(node, 'capping'), ['capping', 'no'])
+        noop = self.backend.preview(first['board_path'], desired)
+        self.assertEqual(noop['status'], 'NOOP')
+
+        changed = self.microvia_desired(diameter=.35, drill=.15)
+        second = self.backend.apply(
+            self.backend.preview(first['board_path'], changed), self.root / 'microvia-size',
+        )
+        self.assertEqual(objects, second['registry']['microvia_objects'])
+        resized = board_state(p.LoadBoard(second['board_path']), p)
+        self.assertEqual({p.ToMM(resized[uid]['width']) for uid in objects.values()}, {.35})
+
+        moved = self.microvia_desired(diameter=.35, drill=.15)
+        moved['instances']['E1']['pose'] = [41, 21, 0]
+        moved['interposer_microvias']['pose'] = [41, 21, 0]
+        third = self.backend.apply(
+            self.backend.preview(second['board_path'], moved), self.root / 'microvia-moved',
+        )
+        self.assertEqual(objects, third['registry']['microvia_objects'])
+        moved_state = board_state(p.LoadBoard(third['board_path']), p)
+        self.assertTrue(all(moved_state[uid]['xy'][0] >= 41000000 for uid in objects.values()))
+
+        removed = copy.deepcopy(moved)
+        del removed['interposer_microvias']
+        fourth = self.backend.apply(
+            self.backend.preview(third['board_path'], removed), self.root / 'microvia-removed',
+        )
+        final = board_state(p.LoadBoard(fourth['board_path']), p)
+        self.assertFalse(set(objects.values()) & set(final))
+
+    def test_edited_owned_microvia_blocks_reconciliation(self):
+        desired = self.microvia_desired(side='B', signal_layer='In2.Cu')
+        first = self.backend.apply(
+            self.backend.preview(self.board_path, desired), self.root / 'microvia-edit',
+        )
+        uid = next(iter(first['registry']['microvia_objects'].values()))
+        board = p.LoadBoard(first['board_path'])
+        via = next(item for item in board.GetTracks() if uuid_of(item) == uid)
+        via.SetDrill(p.FromMM(.12))
+        p.SaveBoard(first['board_path'], board)
+        preview = self.backend.preview(first['board_path'], desired)
+        self.assertEqual(preview['status'], 'BLOCKED')
+        self.assertTrue(any(conflict.get('uuid') == uid for conflict in preview['conflicts']))
+
+    def test_interposer_microvia_signal_roles_must_match_connectivity(self):
+        desired = self.microvia_desired()
+        desired['interposer_microvias']['signals'] = {}
+        with self.assertRaisesRegex(BackendError, 'signal roles differ'):
+            self.backend.preview(self.board_path, desired)
 
     def test_dc_pin_one_anchor_uses_native_transform_and_leaves_nc_open(self):
         library = self.root / 'dc.pretty'

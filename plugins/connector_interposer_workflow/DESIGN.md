@@ -1,7 +1,7 @@
 # Workflow boundaries
 
 The native modeless wx dialog follows Netlist source → Netclass type → Layer assignment →
-Routing permissions → Connector assignments → Define RF gangs → RF transitions → Mechanical placement → Board outline →
+Routing permissions → Connector assignments → Define RF gangs → RF transitions → Mechanical placement → Interposer microvias → Board outline →
 Review changes → Apply / results. A
 read-only virtual grid displays the complete parsed workbook in a separate
 popup. Every page begins with a blue task-description panel whose title exactly
@@ -102,6 +102,7 @@ current filter. An individual edit clears the action row while retaining the
 resulting per-connector assignments. Gang geometry, placement and BOM overrides do not belong on this
 page. DC selections are single-unit multi-pin librarian parts; the workflow does
 not author them. Interposer and DC pin-1 placement are set on Mechanical placement,
+including an explicit Front/Back mounting side for the interposer,
 and library MPN metadata
 is never overridden by the workflow.
 
@@ -179,6 +180,26 @@ tool, but this workflow must remain usable when that package is absent. The two
 tools communicate through the versioned artifact/catalog contract and an
 explicit library refresh, not an in-memory runtime dependency.
 
+Interposer microvias is an optional, compact derivation step after placement and
+before Board outline. It exposes only an enable checkbox, one choice filtered
+from the current Board Setup predefined via-size list, aggregate pin/via counts
+and local status. There is no custom-size, netclass-size, treatment, per-pin
+table or geometry-preview control. One diameter/drill pair applies everywhere.
+Eligible pairs are positive, have a drill smaller than their copper diameter,
+satisfy Board Setup's microvia diameter and drill minima, and preserve the
+board minimum copper clearance between the closest physical electrical pad
+centres. Removing the selected pair from Board Setup clears the selection.
+
+Every generated object is a native, locked, single-adjacent-layer microvia at a
+placed interposer pad centre. A ground pin spans every adjacent copper pair. A
+signal pin spans from the interposer mounting side to its mapped internal
+routing layer, omits one adjacent pair, then uses GND microvias for all remaining
+pairs. Back-side mounting reverses traversal without changing physical layer-pair
+ordering. Outside-layer signal assignments are blocking input errors. Native
+protection properties are explicitly untreated: not tented, covered, plugged,
+filled or capped. The step does not claim fill/cap processing, final GND-plane
+connectivity, fabricator acceptance or end-to-end board DRC.
+
 The editable [UI Design Guide](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=135-37)
 records the current workflow, product principles, approved and retired patterns,
 page anatomy, interaction states and open prototypes. Its **Entry controls,
@@ -208,6 +229,14 @@ signal name or row position. The source PCB and all selected library bytes
 participate in preview freshness. The backend maintains object and generated
 file ownership independently of native group membership. Groups express loose
 placement behavior; they do not authorize takeover of designer content.
+
+Interposer microvias have their own locked managed group and deterministic
+pad-occurrence, role and layer-span identities. Their selected footprint hash,
+placement, side, size, signal layers and nets participate in desired state.
+Reapplication preserves UUIDs for surviving identities while reconciling moves,
+size, side, routing-layer and enable/disable changes. Expected native state and
+serialized checksums detect removed, edited or reparented owned vias and report
+them in Review changes rather than silently replacing manual edits.
 
 RF PCB instances retain `gang-pin` identity. A DC connector has one PCB and
 schematic instance keyed by its reference, while workbook rows bind nets to that

@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.4.22 and the
+are authorized. Connector to Interposer Workflow is version 0.5.0 and the
 separate GPPO RF Transition Designer is version 0.1.2; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The BGA
 Interposer Wizard remains an independent package at version 0.16.1.
@@ -307,6 +307,23 @@ removed. The interposer can now use a selected native center circle. Mounting
 holes receive independent coordinates, selected-circle capture, a placed-hole
 list and removal instead of implicitly reusing the current RF anchor.
 
+Version 0.5.0 inserts **Interposer microvias** after Mechanical placement and
+adds the interposer Front/Back mounting-side choice to placement. The optional
+step filters the current Board Setup predefined size list against native
+microvia minima and the selected interposer's closest-pad copper clearance.
+It derives uniform one-layer native microvia stacks: GND through every adjacent
+span, or signal from the mounting side to an internal routing layer followed by
+one omitted span and GND through the remaining board depth. Generated objects
+are locked in a dedicated managed group, explicitly carry no tenting, covering,
+plugging, filling or capping treatment, and reconcile size, placement, side,
+layer and enable/disable changes while preserving surviving UUIDs. Existing
+ownership and serialized-content checks block silent takeover of manually edited
+managed vias. Final plane connectivity, fabrication acceptance and comprehensive
+board/output DRC remain outside this feature.
+The complete 158-test native/CLI suite and all three packaged PCM loader checks
+pass on both KiCad 10.0.0 and 10.0.8. The 14-test native dialog suite passes on
+10.0.8 under both Adwaita light and dark themes.
+
 Additional actual PCB Editor checks use the selected 10.0.8 AppImage: normal
 startup discovers both actions and Workflow opens from the native Plugins menu.
 Compare executes through the embedded-editor worker path and RF Designer opens
@@ -384,7 +401,7 @@ Constraints were not weakened and findings were not waived.
 | Full mechanical A/B demonstration | Both DXFs supplied; worked controller run starts from native DXF B | Interactive import/reassociation and review of the A-to-B layout change |
 | Full explicit schematic presentation | Stable labelled gang and paginated interposer sheets | Readability review with actual high-count designs |
 | RF authoring ergonomics | Native recipe JSON editor and preview | Typed controls for common parameters and librarian usability review |
-| Via treatment | Untreated vias only | Native support and fabrication export for filled/capped requirements |
+| Via treatment | Interposer microvias explicitly use no tenting, covering, plugging, filling or capping | Native support and fabrication export for filled/capped requirements |
 
 Each unsupported input must produce a specific actionable blocker, not silently
 degraded geometry. Experimental fixture libraries are demonstration data and do
