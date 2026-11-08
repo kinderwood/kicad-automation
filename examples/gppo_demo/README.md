@@ -4,11 +4,11 @@ This example exercises the production Workflow controller with three canonical
 revisions. Every revision has exactly one workbook pair, DXF, position manifest,
 and saved native KiCad mechanical project:
 
-| Revision | RF connector geometry | Electrical content |
+| Revision | RF connector geometry | Electrical / drawing content |
 | --- | --- | --- |
-| A | J101 and J102 are straight six-position columns on 0.325-inch pitch | 12 RF signals |
-| B | Each RF gang is two columns of three positions on 0.500-inch pitch | 12 RF signals, with the A/B signal-class remap |
-| C | Same two-by-three RF geometry as B | B's RF signals plus one nine-pin DE-9 and `DC1` through `DC9` |
+| A | J101 and J102 are straight six-position columns on 0.325-inch pitch | 12 RF signals; no interposer pad circles |
+| B | Each RF gang is two columns of three positions on 0.500-inch pitch | 12 RF signals with the A/B signal-class remap; no interposer pad circles |
+| C | Same two-by-three RF geometry as B | B's RF signals, one nine-pin DE-9, and a complete 800-circle interposer pad set |
 
 The matching files are `inputs/netlist-X.csv`, `inputs/netlist-X.xlsx`,
 `inputs/dxf-X-mils.dxf`, `inputs/positions-X.json`, `mechanical-X.kicad_pcb`,
@@ -26,8 +26,12 @@ The DXFs use mils; saved boards and manifests use millimetres. The round 2.5 mm
 circle on the `INTERPOSER` layer marks the interposer footprint origin at the
 center of its round guide pin, `(94.95, 94.95) mm`. In C, DE-9 pad 1 is the DC
 anchor at `(102.41, 190.00) mm`; all nine `DC_CENTERS` circles must match the
-transformed footprint pads. The DC nets connect to adjacent interposer pads
-`AK11` through `AK19` on `L2`.
+transformed footprint pads. C also includes one 12 mil diameter drawing circle
+at each of the 800 transformed interposer pad centers. A and B intentionally
+omit that optional set so the workflow warns and proceeds; C auto-detects the
+complete set and validates it with the same drawing center tolerance used for
+RF and DC features. The DC nets connect to adjacent interposer pads `AK11`
+through `AK19` on `L2`.
 
 ## Current automated run
 

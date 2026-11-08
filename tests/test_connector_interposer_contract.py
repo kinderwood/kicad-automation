@@ -188,6 +188,51 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
         result = self.backend.apply(self.backend.preview(self.board, desired), self.root / "A")
         self.assert_native_contract(result, desired)
 
+    def test_revision_c_drawing_has_a_complete_interposer_pad_circle_set(self):
+        dxf = (DEMO / 'inputs/dxf-C-mils.dxf').read_text(encoding='utf-8')
+        lines = dxf.splitlines()
+        pairs = [(lines[index].strip(), lines[index + 1].strip())
+                 for index in range(0, len(lines) - 1, 2)]
+        entities = []
+        index = 0
+        while index < len(pairs):
+            if pairs[index] == ('0', 'CIRCLE'):
+                entity = {}
+                index += 1
+                while index < len(pairs) and pairs[index][0] != '0':
+                    entity[pairs[index][0]] = pairs[index][1]
+                    index += 1
+                entities.append(entity)
+                continue
+            index += 1
+        self.assertEqual(len(entities), 822)
+
+        board = p.LoadBoard(str(DEMO / 'mechanical-C.kicad_pcb'))
+        circles = [item for item in board.GetDrawings()
+                   if isinstance(item, p.PCB_SHAPE) and
+                   item.GetShape() == p.SHAPE_T_CIRCLE]
+        self.assertEqual(len(circles), 822)
+        pad_circles = {
+            (item.GetCenter().x, item.GetCenter().y)
+            for item in circles if item.GetRadius() == p.FromMM(.1524)
+        }
+        self.assertEqual(len(pad_circles), 800)
+
+        footprint = p.FootprintLoad(str(INTERPOSER.parent), INTERPOSER.stem)
+        footprint.SetPosition(p.VECTOR2I(p.FromMM(94.95), p.FromMM(94.95)))
+        expected = {
+            (pad.GetPosition().x, pad.GetPosition().y)
+            for pad in footprint.Pads()
+            if pad.GetNumber() and pad.GetAttribute() != p.PAD_ATTRIB_NPTH
+        }
+        self.assertEqual(pad_circles, expected)
+        dxf_pad_centers = {
+            (round(float(entity['10']) * 25400),
+             round((215.9 - float(entity['20']) * .0254) * 1e6))
+            for entity in entities if float(entity['40']) == 6.0
+        }
+        self.assertEqual(dxf_pad_centers, expected)
+
     def test_same_pins_support_mixed_class_a_to_b_and_explicit_layer_override(self):
         desired_a = self.desired("A")
         first = self.backend.apply(self.backend.preview(self.board, desired_a), self.root / "A")

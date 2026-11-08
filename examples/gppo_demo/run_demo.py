@@ -32,7 +32,7 @@ def prepare(destination):
     project_data.setdefault('meta', {})['filename'] = project.name
     project.write_text(json.dumps(project_data, indent=2) + '\n')
 
-    controller = WorkflowController(board, backend=NativeProcessBackend())
+    controller = WorkflowController(board, backend=NativeProcessBackend(python=[sys.executable]))
     controller.set_layers(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'])
     controller.load_workbook(FIXTURE / 'inputs/netlist-C.xlsx')
     controller.config['project_id'] = 'af0ef9ad-e80c-5a97-adf5-ef89acf8d8b9'
@@ -44,6 +44,9 @@ def prepare(destination):
         'layer': 'User.Drawings',
         'accepted': True,
         'label_offset': [-2.54, -2.54],
+        'label_offset_units': ['mil', 'mil'],
+        'feature_tolerance_mm': .00762,
+        'feature_tolerance_unit': 'mil',
     }
 
     symbol_path = FIXTURE / 'library/Example.kicad_sym'
@@ -155,10 +158,12 @@ def run(destination):
     preview = controller.review()
     if preview['conflicts']:
         raise ValueError(preview['conflicts'])
+    if preview.get('warnings'):
+        raise ValueError(preview['warnings'])
     result = controller.apply()
 
     output_board = Path(result['board_path'])
-    reopened = WorkflowController(output_board, backend=NativeProcessBackend())
+    reopened = WorkflowController(output_board, backend=NativeProcessBackend(python=[sys.executable]))
     reopened.set_layers(controller.copper_layers)
     source = reopened.config['workbook']
     reopened.load_workbook(
@@ -178,6 +183,7 @@ def run(destination):
         'variant': 'C',
         'change_count': len(preview['changes']),
         'repeat_status': repeat['status'],
+        'warnings': preview.get('warnings', []),
         'board': result['board_path'],
         'recovery': result.get('journal'),
     }

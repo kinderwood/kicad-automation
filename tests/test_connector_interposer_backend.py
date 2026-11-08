@@ -285,6 +285,57 @@ class BackendTests(unittest.TestCase):
                     changed_result['registry']['instances']['J1']['base'],
                 )
 
+    def test_interposer_pad_circles_auto_detect_warn_or_validate_with_shared_tolerance(self):
+        desired = {
+            'instances': {'E1': {
+                'kind': 'interposer', 'footprint': self.selection,
+                'pose': [20, 20, 0], 'side': 'F',
+                'pads': {'1': 'CLOCK', '2': 'GND'},
+            }},
+            'mechanical': {
+                'source_layer': 'Dwgs.User', 'label_offset': [0, 0],
+                'locations': [], 'rf_keys': [], 'allowed_location_keys': [],
+                'dc_anchors': {}, 'interposer_anchors': {},
+                'feature_tolerance_mm': 0.00762,
+            },
+        }
+        preview = self.backend.preview(self.board_path, desired)
+        self.assertEqual(
+            preview['warnings'][0]['code'], 'interposer_pad_circles_missing',
+        )
+        self.assertIn('0 of 2', preview['warnings'][0]['message'])
+        result = self.backend.apply(preview, self.root / 'interposer-no-circles')
+        self.assertTrue(Path(result['board_path']).is_file())
+
+        board = p.LoadBoard(str(self.board_path))
+        circle = p.PCB_SHAPE(board)
+        circle.SetShape(p.SHAPE_T_CIRCLE)
+        circle.SetStart(p.VECTOR2I(20000000, 20000000))
+        circle.SetEnd(p.VECTOR2I(20150000, 20000000))
+        circle.SetLayer(p.Dwgs_User)
+        board.Add(circle)
+        p.SaveBoard(str(self.board_path), board)
+        preview = self.backend.preview(self.board_path, desired)
+        self.assertIn('1 of 2', preview['warnings'][0]['message'])
+
+        second = p.PCB_SHAPE(board)
+        second.SetShape(p.SHAPE_T_CIRCLE)
+        second.SetStart(p.VECTOR2I(22005000, 20000000))
+        second.SetEnd(p.VECTOR2I(22155000, 20000000))
+        second.SetLayer(p.Dwgs_User)
+        board.Add(second)
+        p.SaveBoard(str(self.board_path), board)
+        self.assertEqual(self.backend.preview(self.board_path, desired)['warnings'], [])
+
+        second.SetStart(p.VECTOR2I(22010000, 20000000))
+        second.SetEnd(p.VECTOR2I(22160000, 20000000))
+        p.SaveBoard(str(self.board_path), board)
+        with self.assertRaisesRegex(
+            BackendError,
+            r'E1 pad 2: center deviation.*0\.01 mm.*limit.*0\.00762 mm',
+        ):
+            self.backend.preview(self.board_path, desired)
+
     def test_edited_owned_and_routed_net_change_block(self):
         first = self.apply_first()
         output = Path(first["board_path"])

@@ -4,7 +4,7 @@
   "sha256": {
     "inputs/dxf-A-mils.dxf": "271843b47fd9d9ac3e2b9e1ed681515072051b0e0aa544908e1d737e435e9f1a",
     "inputs/dxf-B-mils.dxf": "22f83b010b7724789584dce0eabcf20de97b08e638d5b94bd9af130d4f681330",
-    "inputs/dxf-C-mils.dxf": "0511c23d362a060e678619ebabcab1547cea69c1505e78db27fd493f7b098ac6",
+    "inputs/dxf-C-mils.dxf": "d3329d743bac3e9016c876998f08d19bda52afc265a39d72bcaf424036731f64",
     "inputs/netlist-A.csv": "06dee253ff1b4d8132ea5c526c6b23f1e183ba8bdc45e09d743f4cc4dc8fc7cb",
     "inputs/netlist-A.xlsx": "8c91ebeda52fe99c6de45c2b5fb98b5d3e9d46f2943a0c3d58ad9250edfb691a",
     "inputs/netlist-B.csv": "e410467bc5e51e570ab5838091b80f746e25924dd1f452048c951e8efa5ce3e7",
@@ -26,7 +26,7 @@
     "mechanical-A.kicad_pro": "34e2ca84524d340e0738ddc7b3619ba216f3ddf3936689168868fc90107360a1",
     "mechanical-B.kicad_pcb": "a887f87b45716b3181cf120a38dbcb0b5960f6282fa1025c2b0f9d4258076104",
     "mechanical-B.kicad_pro": "250fe469f67b38ebc810a76461d56c734efe8f0898ce240dff93d25300b40f00",
-    "mechanical-C.kicad_pcb": "51af4959964c29593594b91f363b179c8704d6f48ff7fd59ada63c3a0903324a",
+    "mechanical-C.kicad_pcb": "5ef0e87b88a17920610ad7cbd875e734fe7692aa2e95749f8c83c7b283836f1d",
     "mechanical-C.kicad_pro": "c427a4d4ebb3ebfdb4e8e6255eecc2343d8ede68f1f5fa0013aea4e504020997"
   }
 }

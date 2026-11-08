@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.5.1**, testing release. The package targets KiCad 10.0.0 through
+Version **0.5.2**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -166,9 +166,13 @@ an already-open source board does not update the output copy.
    with no separate acceptance buttons. The native backend measures the
    footprint's transformed pad-1 offset and places that pad at the circle center
    regardless of library origin. The drawing-wide center tolerance defaults to
-   0.3 mil and applies to calculated RF locations and every DC electrical pad,
-   including NC pins. Failed checks report the measured center deviation and
-   configured limit; ambiguous DC matches remain blocking. Mounting holes have independent position inputs,
+   0.3 mil and applies to calculated RF locations, every DC electrical pad
+   (including NC pins), and interposer pads when the imported drawing contains
+   a complete interposer pad-circle set. Interposer pad circles are detected
+   automatically: an absent or partial set produces a Review warning and does
+   not block Apply, while a complete set receives the same one-to-one center
+   validation as DC pads. Failed checks report the measured center deviation
+   and configured limit; ambiguous matches remain blocking. Mounting holes have independent position inputs,
    selected-circle capture and a removable placed-hole list. They use approved
    footprints from the loaded KiCad libraries and are board-only, excluded from
    BOM and position files.

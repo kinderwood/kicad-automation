@@ -244,10 +244,14 @@ instance's pads. DC placement stores the selected DXF pin-1 circle, orientation
 and side. The native backend resolves the footprint origin from the transformed
 pad-1 center and verifies every electrical pad center against imported circles.
 Mechanical placement owns one drawing-wide center tolerance, defaulting to 0.3
-mil. The same validated value governs calculated RF-location and DC-pad circle
-checks in controller review and native backend revalidation. A failed check
+mil. The same validated value governs calculated RF-location, DC-pad and
+auto-detected interposer-pad circle checks in controller review and native
+backend revalidation. Interposer validation is optional drawing evidence: a
+missing or partial pad-circle population produces a visible warning and Apply
+continues, while a complete population requires an unambiguous one-to-one match.
+A failed check
 reports the feature identity, measured center deviation and configured limit;
-multiple DC circles inside the limit remain an ambiguity rather than invoking a
+multiple circles inside the limit remain an ambiguity rather than invoking a
 nearest-circle heuristic. Accepted source UUID and geometry checks remain exact
 because they detect stale source input rather than placement deviation.
 Unused DC pads remain netless and receive schematic no-connect markers. Missing

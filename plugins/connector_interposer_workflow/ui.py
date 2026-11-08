@@ -4776,7 +4776,13 @@ class WorkflowDialog(wx.Dialog):
         def complete(preview):
             if self._closing: return
             self.render_changes(preview)
-            self.status.SetLabel('Comparison complete. Review conflicts and changes before Apply.')
+            warning_count = len(preview.get('warnings', []))
+            self.status.SetLabel(
+                'Comparison complete' +
+                (f' with {warning_count} warning{("" if warning_count == 1 else "s")}'
+                 if warning_count else '') +
+                '. Review conflicts and changes before Apply.'
+            )
             self.refresh()
         self.controller.run_async(self.controller.review, complete, self.failed)
         self.refresh()
@@ -4789,6 +4795,10 @@ class WorkflowDialog(wx.Dialog):
                 self.validation.SetItem(index, column, str(value))
 
     def render_changes(self, preview):
+        for warning in preview.get('warnings', []):
+            row = self.validation.InsertItem(self.validation.GetItemCount(), 'warning')
+            self.validation.SetItem(row, 2, warning.get('code', 'NATIVE_WARNING'))
+            self.validation.SetItem(row, 3, warning.get('message', ''))
         self.diff_list.DeleteAllItems()
         self._review_details = []
         conflicts = preview.get('conflicts', [])

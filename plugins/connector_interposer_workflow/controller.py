@@ -978,6 +978,9 @@ elif operation=="apply": result=backend.apply(**request)
 elif operation=="inspect": result=backend.inspect_graphics(**request)
 else: raise ValueError("Unknown worker operation")
 pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
+# pcbnew may fault while its native globals are torn down in a nested KiCad
+# runtime. The completed result is already durably closed; skip that teardown.
+__import__("os")._exit(0)
 '''
         environment = dict(os.environ, CONNECTOR_INTERPOSER_WORKFLOW_WORKER='1')
         with tempfile.TemporaryDirectory(prefix='connector-interposer-native-') as temporary:
@@ -987,7 +990,11 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
                                      env=environment, capture_output=True, text=True, timeout=300,
                                      **self._subprocess_options(subprocess, os))
             if process.returncode:
-                raise RuntimeError('Native project analysis failed: ' + process.stderr[-6000:])
+                diagnostics = process.stderr.strip() or process.stdout.strip() or 'no process diagnostics'
+                raise RuntimeError(
+                    f'Native project analysis failed (exit {process.returncode}): '
+                    + diagnostics[-6000:]
+                )
             if not result.exists():
                 raise RuntimeError('Native project worker returned no result')
             return json.loads(result.read_text())
@@ -1215,6 +1222,13 @@ pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
                                'center': controller.dc_connector(reference).get('anchor', []),
                            }
                            for reference in controller.dc_connector_names()
+                       },
+                       'interposer_anchors': {
+                           reference: {
+                               'circle_uuid': selection.get('pose_circle', {}).get('uuid', ''),
+                               'center': selection.get('pose_circle', {}).get('center', []),
+                           }
+                           for reference, selection in cfg['interposers'].items()
                        },
                        'feature_tolerance_mm': tolerance,
                    }}

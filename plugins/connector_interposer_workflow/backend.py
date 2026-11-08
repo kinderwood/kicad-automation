@@ -15,7 +15,8 @@ from pathlib import Path
 
 from .artifacts import canonical, sha256, validate_artifact
 from .core.geometry import (
-    feature_deviation_message, feature_tolerance, distance_text,
+    MAX_FEATURE_TOLERANCE_MM, distance_text, feature_deviation_message,
+    feature_tolerance,
 )
 from .recovery import apply_files, file_hash, require_closed
 
@@ -381,7 +382,35 @@ class NativeBackend:
         _set_uuid(via, self.p.KIID(), self.p)
         return via
 
+    def _matching_circle(self, feature, center, circles, claimed, tolerance):
+        candidates = [
+            (circle, math.dist(circle["center"], center))
+            for circle in circles if circle["uuid"] not in claimed
+        ]
+        matches = [(circle, deviation) for circle, deviation in candidates
+                   if deviation <= tolerance]
+        if not matches:
+            if candidates:
+                closest = min(deviation for _circle, deviation in candidates)
+                raise BackendError(feature_deviation_message(
+                    feature, closest, tolerance,
+                ))
+            raise BackendError(
+                f"{feature}: no drawing circles remain to match; limit is "
+                f"{distance_text(tolerance)}"
+            )
+        if len(matches) != 1:
+            deviations = ', '.join(
+                distance_text(deviation) for _circle, deviation in matches
+            )
+            raise BackendError(
+                f"{feature}: {len(matches)} drawing circles match at center "
+                f"deviations {deviations}; limit is {distance_text(tolerance)}"
+            )
+        claimed.add(matches[0][0]["uuid"])
+
     def _validate(self, board, desired):
+        warnings = []
         layers = self.copper_layers(board)
         instances = desired.get("instances", {})
         if desired.get("mechanical"):
@@ -417,6 +446,12 @@ class NativeBackend:
             if unexpected:
                 raise BackendError(f"Unexpected labelled mechanical locations: {unexpected}")
             circles = {circle["uuid"]: circle for circle in native["circles"]}
+            claimed = {location["circle_uuid"] for location in accepted_locations}
+            claimed.update(
+                anchor.get("circle_uuid") for anchor in
+                mechanical.get("interposer_anchors", {}).values()
+                if anchor.get("circle_uuid")
+            )
             for reference, accepted in mechanical.get("dc_anchors", {}).items():
                 circle = circles.get(accepted.get("circle_uuid"))
                 if circle is None or circle["center"] != accepted.get("center"):
@@ -425,38 +460,48 @@ class NativeBackend:
                 if not spec or spec.get("connector_type") != "DC":
                     raise BackendError(f"{reference}: DC anchor has no matching connector instance")
                 holder, fp = self._placed_approved(spec)
-                used = set()
                 for pad in fp.Pads():
                     if not pad.GetNumber():
                         continue
                     center = [value / 1e6 for value in _xy(pad.GetPosition())]
-                    candidates = [
-                        (candidate, math.dist(candidate["center"], center))
-                        for candidate in native["circles"]
-                        if candidate["uuid"] not in used
-                    ]
-                    matches = [(candidate, deviation) for candidate, deviation in candidates
-                               if deviation <= tolerance]
-                    feature = f"{reference} pad {pad.GetNumber()}"
-                    if not matches:
-                        if candidates:
-                            closest = min(deviation for _candidate, deviation in candidates)
-                            raise BackendError(feature_deviation_message(
-                                feature, closest, tolerance,
-                            ))
-                        raise BackendError(
-                            f"{feature}: no drawing circles remain to match; limit is "
-                            f"{distance_text(tolerance)}"
-                        )
-                    if len(matches) != 1:
-                        deviations = ', '.join(
-                            distance_text(deviation) for _candidate, deviation in matches
-                        )
-                        raise BackendError(
-                            f"{feature}: {len(matches)} drawing circles match at center "
-                            f"deviations {deviations}; limit is {distance_text(tolerance)}"
-                        )
-                    used.add(matches[0][0]["uuid"])
+                    self._matching_circle(
+                        f"{reference} pad {pad.GetNumber()}", center,
+                        native["circles"], claimed, tolerance,
+                    )
+            for reference, spec in instances.items():
+                if spec.get("kind") != "interposer":
+                    continue
+                holder, fp = self._placed_approved(spec)
+                pads = [pad for pad in fp.Pads()
+                        if pad.GetNumber() and
+                        pad.GetAttribute() != self.p.PAD_ATTRIB_NPTH]
+                expected = [
+                    (f"{reference} pad {pad.GetNumber()}",
+                     [value / 1e6 for value in _xy(pad.GetPosition())])
+                    for pad in pads
+                ]
+                available = [circle for circle in native["circles"]
+                             if circle["uuid"] not in claimed]
+                detected = sum(
+                    any(math.dist(circle["center"], center) <= MAX_FEATURE_TOLERANCE_MM
+                        for circle in available)
+                    for _feature, center in expected
+                )
+                if detected != len(expected):
+                    warnings.append({
+                        "code": "interposer_pad_circles_missing",
+                        "reference": reference,
+                        "message": (
+                            f"{reference}: complete drawing circles for interposer pads "
+                            f"were not detected ({detected} of {len(expected)}); "
+                            "continuing without interposer pad-center validation"
+                        ),
+                    })
+                    continue
+                for feature, center in expected:
+                    self._matching_circle(
+                        feature, center, native["circles"], claimed, tolerance,
+                    )
         refs = set()
         library_revisions = {}
         artifact_checks = set()
@@ -581,6 +626,7 @@ class NativeBackend:
                 raise BackendError("Generated project files must contain UTF-8 text")
             if path.suffix == ".kicad_pro":
                 json.loads(content)
+        return warnings
 
     def preview(self, board_path, desired, registry=None):
         path = Path(board_path).resolve()
@@ -608,7 +654,7 @@ class NativeBackend:
         self._normalize_outline(board, desired)
         if (desired.get("outline") or {}).get("enabled"):
             desired["_owned_outline_uuids"] = registry.get("outline_objects", [])
-        self._validate(board, desired)
+        warnings = self._validate(board, desired)
         actual = board_state(board, self.p)
         conflicts = [{"kind": "ownership", "uuid": uid, "message": "Owned object was edited, removed or reparented"}
                      for uid, state in registry.get("expected", {}).items() if actual.get(uid) != state]
@@ -700,7 +746,8 @@ class NativeBackend:
             self._materialize(board, desired, registry)
         payload = {"source": str(path), "source_sha256": file_hash(path), "desired": desired,
                    "source_project": _project_hashes(path.parent),
-                   "registry": registry, "changes": changes, "conflicts": conflicts}
+                   "registry": registry, "changes": changes, "conflicts": conflicts,
+                   "warnings": warnings}
         payload["token"] = sha256(payload)
         payload["status"] = "BLOCKED" if conflicts else ("PREVIEW" if changes else "NOOP")
         return payload
