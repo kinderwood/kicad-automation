@@ -62,10 +62,13 @@ changes do not require it.
 ## Before changing a tool
 
 - Read the tool's `README.md` and, when present, `DESIGN.md`.
-- Prefer mils for DXF/mechanical data, board placement, routing, rules, and
-  other board-level values. Preserve and use a footprint's native unit/grid
-  instead of converting it for consistency; interposer footprints are normally
-  authored on exact millimetre grids and should remain metric.
+- Treat unit choice primarily as input/display guidance: board and DXF placement,
+  routing, and rule settings typically prefer mils, while footprint controls
+  should follow their native authoring grid (interposers are usually metric).
+  Honor explicit source/project units. Keep calculations and storage in the
+  tool/KiCad canonical representation; convert once at boundaries with shared
+  or `pcbnew` helpers, retain display-unit metadata separately, and avoid
+  conversion round trips or premature rounding.
 - For footprint wizards, treat `AddParam` declaration order as user-interface
   behavior. Update the exact-order integration test when intentionally changing
   it.
