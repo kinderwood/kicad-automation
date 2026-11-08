@@ -3,10 +3,18 @@
 This repository contains independently versioned KiCad automation tools. Keep
 each distributable tool self-contained under `plugins/<tool>/`.
 
-## Compatibility
+## Development status and compatibility
 
-The supported and tested KiCad matrix is exactly 10.0.0 and 10.0.8. KiCad 9
-and other KiCad versions are unsupported. Do not change this matrix without an
+This repository is development-only: its current users are the owner and Codex,
+with no external/production users, deployed projects, durable work products, or
+historical data requiring compatibility. Unless explicitly requested for a
+current requirement, do not add migrations, compatibility shims, deprecated or
+legacy interfaces/formats, or fallback behavior. Change internal APIs and
+persisted development formats directly; update implementation, tests, fixtures,
+and examples together, and remove obsolete compatibility code within task scope.
+
+The supported and tested runtime matrix remains exactly KiCad 10.0.0 and 10.0.8.
+KiCad 9 and other versions are unsupported. Do not change this matrix without an
 explicit project decision.
 
 ## Managed development environment
