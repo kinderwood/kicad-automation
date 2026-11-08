@@ -62,6 +62,10 @@ changes do not require it.
 ## Before changing a tool
 
 - Read the tool's `README.md` and, when present, `DESIGN.md`.
+- Prefer mils for DXF/mechanical data, board placement, routing, rules, and
+  other board-level values. Preserve and use a footprint's native unit/grid
+  instead of converting it for consistency; interposer footprints are normally
+  authored on exact millimetre grids and should remain metric.
 - For footprint wizards, treat `AddParam` declaration order as user-interface
   behavior. Update the exact-order integration test when intentionally changing
   it.
