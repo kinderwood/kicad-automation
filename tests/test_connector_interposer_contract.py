@@ -31,6 +31,9 @@ SOURCE = DEMO / "library" / "Example.pretty" / "GPPO_B012_L13_01_EXPERIMENTAL.ki
 INTERPOSER = SOURCE.with_name("Interposer_800.kicad_mod")
 LAYERS = ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"]
 LAYER_MAP = {"L2": "In1.Cu", "L3": "In2.Cu"}
+BOARD_MM = 111.125
+INTERPOSER_POSE = (42.5625, 42.5625)
+RF_COUNT = 28
 
 
 def demo_artifacts():
@@ -82,7 +85,7 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
                             {"name": "DATA", "priority": 1}],
                 "netclass_patterns": [
                     {"netclass": netclass, "pattern": f"{netclass}{index}"}
-                    for netclass in ("CLOCK", "DATA") for index in range(1, 7)],
+                    for netclass in ("CLOCK", "DATA") for index in range(1, 15)],
             },
         }))
         self.backend = NativeBackend(p)
@@ -123,15 +126,15 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
             "gang": "E1", "kind": "interposer",
             "footprint": {"path": str(INTERPOSER), "sha256": self.source_hashes[INTERPOSER],
                           "approved": True, "library_id": "Example:" + INTERPOSER.stem},
-            "pose": [94.95, 94.95, 0], "pads": pads,
+            "pose": [*INTERPOSER_POSE, 0], "pads": pads,
         }
         return {"instances": instances}
 
     def assert_native_contract(self, result, desired):
         board = p.LoadBoard(result["board_path"])
         native = board_items(board)
-        self.assertEqual(13, len(list(board.GetFootprints())))
-        self.assertEqual(108, len(list(board.GetTracks())))
+        self.assertEqual(RF_COUNT + 1, len(list(board.GetFootprints())))
+        self.assertEqual(RF_COUNT * 9, len(list(board.GetTracks())))
         self.assertTrue(all(isinstance(item, p.PCB_VIA) for item in board.GetTracks()))
         for key, spec in desired["instances"].items():
             registry = result["registry"]["instances"][key]
@@ -205,21 +208,23 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
                 entities.append(entity)
                 continue
             index += 1
-        self.assertEqual(len(entities), 822)
+        self.assertEqual(len(entities), 838)
 
         board = p.LoadBoard(str(DEMO / 'mechanical-C.kicad_pcb'))
         circles = [item for item in board.GetDrawings()
                    if isinstance(item, p.PCB_SHAPE) and
                    item.GetShape() == p.SHAPE_T_CIRCLE]
-        self.assertEqual(len(circles), 822)
+        self.assertEqual(len(circles), 838)
         pad_circles = {
             (item.GetCenter().x, item.GetCenter().y)
-            for item in circles if item.GetRadius() == p.FromMM(.1524)
+            for item in circles if abs(item.GetRadius() - p.FromMM(.1524)) <= 1
         }
         self.assertEqual(len(pad_circles), 800)
 
         footprint = p.FootprintLoad(str(INTERPOSER.parent), INTERPOSER.stem)
-        footprint.SetPosition(p.VECTOR2I(p.FromMM(94.95), p.FromMM(94.95)))
+        footprint.SetPosition(p.VECTOR2I(
+            p.FromMM(INTERPOSER_POSE[0]), p.FromMM(INTERPOSER_POSE[1]),
+        ))
         expected = {
             (pad.GetPosition().x, pad.GetPosition().y)
             for pad in footprint.Pads()
@@ -228,10 +233,75 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
         self.assertEqual(pad_circles, expected)
         dxf_pad_centers = {
             (round(float(entity['10']) * 25400),
-             round((215.9 - float(entity['20']) * .0254) * 1e6))
+             round((BOARD_MM - float(entity['20']) * .0254) * 1e6))
             for entity in entities if float(entity['40']) == 6.0
         }
         self.assertEqual(dxf_pad_centers, expected)
+
+    def test_revision_geometry_uses_maximum_ground_separated_rf_population(self):
+        positions = {
+            variant: json.loads((DEMO / "inputs" / f"positions-{variant}.json").read_text())
+            for variant in "ABC"
+        }
+        for variant, rows in positions.items():
+            for gang in ("J101", "J102"):
+                gang_rows = [row for row in rows if row["gang"] == gang]
+                self.assertEqual(len(gang_rows), 14)
+                x_values = {row["x_mm"] for row in gang_rows}
+                self.assertEqual(len(x_values), 1 if variant == "A" else 2)
+                if variant != "A":
+                    self.assertTrue(all(
+                        math.isclose(b - a, 3.81, abs_tol=1e-9)
+                        for a, b in zip(sorted(x_values), sorted(x_values)[1:])
+                    ))
+
+        for gang in ("J101", "J102"):
+            by_pin = lambda variant: {
+                row["pin"]: row for row in positions[variant] if row["gang"] == gang
+            }
+            rectangular, staggered = by_pin("B"), by_pin("C")
+            for pin in range(1, 8):
+                self.assertEqual(rectangular[pin]["y_mm"], staggered[pin]["y_mm"])
+            for pin in range(8, 15):
+                self.assertAlmostEqual(
+                    staggered[pin]["y_mm"] - rectangular[pin]["y_mm"], 1.905,
+                )
+
+        c_rf = [row for row in positions["C"] if row["gang"] != "J1"]
+        outer_x = min(row["x_mm"] for row in c_rf)
+        self.assertAlmostEqual(outer_x - 1.8629, 12.7)
+        self.assertAlmostEqual(BOARD_MM - max(row["x_mm"] for row in c_rf) - 1.8629, 12.7)
+        inner_x = max(row["x_mm"] for row in c_rf if row["gang"] == "J101")
+        pin_field_left = INTERPOSER_POSE[0] + 1.4
+        self.assertAlmostEqual(pin_field_left - inner_x, 25.5896)
+
+        signal_rows = [row.interposer_pin.rstrip("0123456789") for row in self.rows("A")]
+        row_indices = [
+            ("A", "B", "C", "D", "E", "F", "G", "H", "J", "K",
+             "L", "M", "N", "P", "R", "T", "U", "V", "W", "Y",
+             "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AJ", "AK").index(row)
+            for row in signal_rows[:14]
+        ]
+        self.assertEqual(row_indices, list(range(1, 28, 2)))
+
+        for variant in "ABC":
+            board = p.LoadBoard(str(DEMO / f"mechanical-{variant}.kicad_pcb"))
+            outline_corners = {
+                (0, 0), (p.FromMM(BOARD_MM), 0),
+                (p.FromMM(BOARD_MM), p.FromMM(BOARD_MM)), (0, p.FromMM(BOARD_MM)),
+            }
+            edge_lines = [
+                item for item in board.GetDrawings()
+                if isinstance(item, p.PCB_SHAPE) and item.GetShape() == p.SHAPE_T_SEGMENT
+                and (item.GetStart().x, item.GetStart().y) in outline_corners
+                and (item.GetEnd().x, item.GetEnd().y) in outline_corners
+            ]
+            self.assertEqual(len(edge_lines), 4)
+            points = [point for line in edge_lines for point in (line.GetStart(), line.GetEnd())]
+            self.assertEqual(
+                {(p.ToMM(point.x), p.ToMM(point.y)) for point in points},
+                {(0.0, 0.0), (BOARD_MM, 0.0), (BOARD_MM, BOARD_MM), (0.0, BOARD_MM)},
+            )
 
     def test_same_pins_support_mixed_class_a_to_b_and_explicit_layer_override(self):
         desired_a = self.desired("A")
@@ -240,7 +310,7 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
         # A and B use the same physical keys/route layers while swapping
         # CLOCK/DATA assignments. Class never determines the routing layer.
         self.assertEqual({row.netclass for row in self.rows("A")}, {"CLOCK", "DATA"})
-        self.assertEqual({desired_b["instances"][f"J101-{i}"]["signal_layer"] for i in range(1, 7)}, {"In1.Cu", "In2.Cu"})
+        self.assertEqual({desired_b["instances"][f"J101-{i}"]["signal_layer"] for i in range(1, 15)}, {"In1.Cu", "In2.Cu"})
         second = self.backend.apply(self.backend.preview(first["board_path"], desired_b), self.root / "B")
         self.assert_native_contract(second, desired_b)
         for key in desired_a["instances"]:

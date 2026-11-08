@@ -373,32 +373,20 @@ this implementation and these fixtures.
 
 ## Worked-project evidence
 
-The example uses 12 GPPOs, an 800-pad interposer, mixed L2/L3 RF artifacts,
-108 native RF ground vias, 60 rule areas and a validated outer boundary.
-An actual controller run on the selected 10.0.8 AppImage creates A, reopens it
-with a no-op preview, then applies B into a separate project copy.
-The generated project pins all required library inputs for offline reopening.
+The example uses 28 GPPOs, an 800-pad interposer, mixed L2/L3 RF artifacts,
+252 native RF ground vias, 140 rule areas and a validated outer boundary. The
+A/B native contract covers all 29 footprints and verifies that 56 signal-pad
+assignments change: 28 connector pads and 28 interposer pads. The complete C
+controller run also adds the nine-pin DC connector, accepts and checks all 800
+optional interposer pad circles, reopens cleanly, and produces a no-op repeat
+preview without warnings.
 
-Independent native inspection confirms A/B preserve all 13 footprint UUIDs,
-pad UUIDs, schematic paths, XY/orientation and all 108 RF via UUIDs/geometry.
-Exactly 24 signal-pad net assignments change: 12 connector and 12 interposer
-pads. These worked outputs both use DXF B, so this proves electrical
-reconciliation, not a full interactive DXF-A-to-B migration.
-
-Native ERC and schematic parity report zero findings in both A and B on the
-selected runtime. Value and MPN are synchronized from the generated BOM onto
-project instances without modifying approved library sources. Four-layer Gerber and Excellon exports
-succeed. All 122 drill operations match native positions, diameters and
-plating at 0.001 mm export precision: 108 RF vias, 12 GPPO signal holes,
-one interposer guide hole and one guide slot. Export success is not complete
-Gerber copper-equivalence or manufacturing validation.
-
-The unrouted example **fails physical DRC**: 12 annular-width findings,
-32 copper-to-edge clearance findings and 108 dangling-via findings, plus
-499 unconnected items. The annular ring and cutout relationships need librarian
-and fabricator review. The example has no completed ground planes or routes;
-neither a qualified Megtron stackup nor 50-ohm impedance is established.
-Constraints were not weakened and findings were not waived.
+The 4.375-inch square fixture deliberately remains unrouted and lacks completed
+ground planes. Physical DRC is therefore expected to report annular-width,
+copper-to-edge, dangling-via, and unconnected-item findings. The annular ring
+and cutout relationships still need librarian and fabricator review; neither a
+qualified stackup nor 50-ohm impedance is established. Constraints are not
+weakened and findings are not waived merely to make the demonstration pass.
 
 ## Open capabilities and improvements
 

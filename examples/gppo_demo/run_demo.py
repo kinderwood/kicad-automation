@@ -70,7 +70,7 @@ def prepare(destination):
                 'library_id': interposer_symbol.library_id,
                 'sha256': interposer_symbol.sha256,
             },
-            pose=[94.95, 94.95, 0],
+            pose=[42.5625, 42.5625, 0],
             pose_accepted=True,
             side='F',
         )
@@ -80,9 +80,10 @@ def prepare(destination):
     for name in ('J101', 'J102'):
         anchor = next(row for row in locations if row['reference'] == name + '-1')
         controller.set_gang(name, {
-            'row_lengths': [3, 3],
-            'pitch_x': 12.7,
-            'pitch_y': 12.7,
+            'row_lengths': [7, 7],
+            'pitch_x': 3.81,
+            'pitch_y': 3.81,
+            'row_offsets': [0, 1.905],
             'rotation': -90,
             'anchor': [anchor['x_mm'], anchor['y_mm']],
             'anchor_accepted': True,
@@ -91,6 +92,11 @@ def prepare(destination):
             'library_id': 'Example:' + footprint.stem,
             'symbol': connector_symbol,
             'connector_rotation': 0 if name == 'J101' else 180,
+            'display_units': {
+                'pitch_x': 'mil',
+                'pitch_y': 'mil',
+                'row_offsets': ['mil', 'mil'],
+            },
         })
 
     dc_path = footprint.with_name('DSub_9_Pins_Vertical.kicad_mod')

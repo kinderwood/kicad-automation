@@ -3,108 +3,252 @@
     "reference": "J101-1",
     "pin": 1,
     "gang": "J101",
-    "x_mm": 46.88709999999998,
-    "y_mm": 95.24999999999999,
-    "uuid": "cda1e61e-e0e5-4294-81c6-88215c92bcfe",
-    "orientation_degrees": -90
+    "x_mm": 18.3729,
+    "y_mm": 44.1325,
+    "uuid": "2f33630a-99a7-5bbe-8227-1e0ee3dcd84b",
+    "orientation_degrees": 0
   },
   {
     "reference": "J101-2",
     "pin": 2,
     "gang": "J101",
-    "x_mm": 46.88709999999998,
-    "y_mm": 107.94999999999999,
-    "uuid": "e156b3f9-1bdb-46c8-a535-49ac5ad9fd47",
-    "orientation_degrees": -90
+    "x_mm": 18.3729,
+    "y_mm": 47.9425,
+    "uuid": "01ab2351-b0b4-5c94-b398-3c4deeee105f",
+    "orientation_degrees": 0
   },
   {
     "reference": "J101-3",
     "pin": 3,
     "gang": "J101",
-    "x_mm": 46.88709999999998,
-    "y_mm": 120.64999999999998,
-    "uuid": "4ee5fe42-8fea-4cdb-b957-963a2f24f919",
-    "orientation_degrees": -90
+    "x_mm": 18.3729,
+    "y_mm": 51.7525,
+    "uuid": "2e731c16-6d9b-5db6-8a5a-5fde44b2f8e3",
+    "orientation_degrees": 0
   },
   {
     "reference": "J101-4",
     "pin": 4,
     "gang": "J101",
-    "x_mm": 34.187099999999994,
-    "y_mm": 95.24999999999999,
-    "uuid": "bf70ebf0-5b90-4c4d-89c5-2162a9cdff1f",
-    "orientation_degrees": -90
+    "x_mm": 18.3729,
+    "y_mm": 55.5625,
+    "uuid": "ea4c1000-88c7-587e-8792-1806795ab675",
+    "orientation_degrees": 0
   },
   {
     "reference": "J101-5",
     "pin": 5,
     "gang": "J101",
-    "x_mm": 34.187099999999994,
-    "y_mm": 107.94999999999999,
-    "uuid": "e824e656-4876-46e7-96ad-173fcf90a6fb",
-    "orientation_degrees": -90
+    "x_mm": 18.3729,
+    "y_mm": 59.3725,
+    "uuid": "080107ea-f070-5f12-97f4-c4cbe2be3a3a",
+    "orientation_degrees": 0
   },
   {
     "reference": "J101-6",
     "pin": 6,
     "gang": "J101",
-    "x_mm": 34.187099999999994,
-    "y_mm": 120.64999999999998,
-    "uuid": "603f6509-ade1-42fa-b3bb-31583b5da490",
-    "orientation_degrees": -90
+    "x_mm": 18.3729,
+    "y_mm": 63.1825,
+    "uuid": "b56fbb41-d46f-52fb-981e-dd8cacd847fd",
+    "orientation_degrees": 0
+  },
+  {
+    "reference": "J101-7",
+    "pin": 7,
+    "gang": "J101",
+    "x_mm": 18.3729,
+    "y_mm": 66.9925,
+    "uuid": "0badb620-096b-50a1-b04f-8df76ac845b6",
+    "orientation_degrees": 0
+  },
+  {
+    "reference": "J101-8",
+    "pin": 8,
+    "gang": "J101",
+    "x_mm": 14.5629,
+    "y_mm": 44.1325,
+    "uuid": "2da58431-4fa1-5d53-a3ca-87451aef73ff",
+    "orientation_degrees": 0
+  },
+  {
+    "reference": "J101-9",
+    "pin": 9,
+    "gang": "J101",
+    "x_mm": 14.5629,
+    "y_mm": 47.9425,
+    "uuid": "8117d5b5-02b3-57a7-90f7-e3991bd2a9d5",
+    "orientation_degrees": 0
+  },
+  {
+    "reference": "J101-10",
+    "pin": 10,
+    "gang": "J101",
+    "x_mm": 14.5629,
+    "y_mm": 51.7525,
+    "uuid": "e39528c4-ee1d-5885-b860-253baa499089",
+    "orientation_degrees": 0
+  },
+  {
+    "reference": "J101-11",
+    "pin": 11,
+    "gang": "J101",
+    "x_mm": 14.5629,
+    "y_mm": 55.5625,
+    "uuid": "90467436-72bf-5354-b488-80050fde753c",
+    "orientation_degrees": 0
+  },
+  {
+    "reference": "J101-12",
+    "pin": 12,
+    "gang": "J101",
+    "x_mm": 14.5629,
+    "y_mm": 59.3725,
+    "uuid": "8e9fb82a-a30b-55ce-bee0-ce1ea635516d",
+    "orientation_degrees": 0
+  },
+  {
+    "reference": "J101-13",
+    "pin": 13,
+    "gang": "J101",
+    "x_mm": 14.5629,
+    "y_mm": 63.1825,
+    "uuid": "b688babe-f2e5-5aaa-8c6e-fa5585692588",
+    "orientation_degrees": 0
+  },
+  {
+    "reference": "J101-14",
+    "pin": 14,
+    "gang": "J101",
+    "x_mm": 14.5629,
+    "y_mm": 66.9925,
+    "uuid": "c6321410-73ce-5f8b-9483-c5ac18e352b4",
+    "orientation_degrees": 0
   },
   {
     "reference": "J102-1",
     "pin": 1,
     "gang": "J102",
-    "x_mm": 181.7129,
-    "y_mm": 95.25000000000003,
-    "uuid": "a31a3960-770a-4e1d-8b36-9ec49169fe57",
-    "orientation_degrees": -90
+    "x_mm": 96.5621,
+    "y_mm": 44.1325,
+    "uuid": "e9e606a5-1f9e-5c45-b017-d362dfee33fc",
+    "orientation_degrees": 180
   },
   {
     "reference": "J102-2",
     "pin": 2,
     "gang": "J102",
-    "x_mm": 181.7129,
-    "y_mm": 107.95000000000002,
-    "uuid": "e27c48f1-544f-4296-9c59-b5cb54549f30",
-    "orientation_degrees": -90
+    "x_mm": 96.5621,
+    "y_mm": 47.9425,
+    "uuid": "a34d936f-dabb-590c-86c2-90ab59032a84",
+    "orientation_degrees": 180
   },
   {
     "reference": "J102-3",
     "pin": 3,
     "gang": "J102",
-    "x_mm": 181.7129,
-    "y_mm": 120.65,
-    "uuid": "41179569-f02d-443c-8605-efd4507621c1",
-    "orientation_degrees": -90
+    "x_mm": 96.5621,
+    "y_mm": 51.7525,
+    "uuid": "46d20595-999c-5617-a2a8-9a760f16f8eb",
+    "orientation_degrees": 180
   },
   {
     "reference": "J102-4",
     "pin": 4,
     "gang": "J102",
-    "x_mm": 169.0129,
-    "y_mm": 95.25000000000003,
-    "uuid": "ac859704-b515-4762-920f-1f18d096d673",
-    "orientation_degrees": -90
+    "x_mm": 96.5621,
+    "y_mm": 55.5625,
+    "uuid": "945a5287-ae85-536a-9dd2-dd292d311f58",
+    "orientation_degrees": 180
   },
   {
     "reference": "J102-5",
     "pin": 5,
     "gang": "J102",
-    "x_mm": 169.0129,
-    "y_mm": 107.95000000000002,
-    "uuid": "babe2fc1-2646-4220-9b66-e7188e89ba3a",
-    "orientation_degrees": -90
+    "x_mm": 96.5621,
+    "y_mm": 59.3725,
+    "uuid": "65989966-8359-5b66-be9f-fb05b00a2471",
+    "orientation_degrees": 180
   },
   {
     "reference": "J102-6",
     "pin": 6,
     "gang": "J102",
-    "x_mm": 169.0129,
-    "y_mm": 120.65,
-    "uuid": "0c217580-1f4a-4d14-93da-bfdd2b4722be",
-    "orientation_degrees": -90
+    "x_mm": 96.5621,
+    "y_mm": 63.1825,
+    "uuid": "c801e1af-5184-5212-859b-037add3d26f1",
+    "orientation_degrees": 180
+  },
+  {
+    "reference": "J102-7",
+    "pin": 7,
+    "gang": "J102",
+    "x_mm": 96.5621,
+    "y_mm": 66.9925,
+    "uuid": "19f767a2-44f3-5362-9c41-f4055504827e",
+    "orientation_degrees": 180
+  },
+  {
+    "reference": "J102-8",
+    "pin": 8,
+    "gang": "J102",
+    "x_mm": 92.7521,
+    "y_mm": 44.1325,
+    "uuid": "850a8d36-c70f-567d-be63-d76d4db35a1a",
+    "orientation_degrees": 180
+  },
+  {
+    "reference": "J102-9",
+    "pin": 9,
+    "gang": "J102",
+    "x_mm": 92.7521,
+    "y_mm": 47.9425,
+    "uuid": "78416c94-2652-5cd4-ac47-a15193543bc6",
+    "orientation_degrees": 180
+  },
+  {
+    "reference": "J102-10",
+    "pin": 10,
+    "gang": "J102",
+    "x_mm": 92.7521,
+    "y_mm": 51.7525,
+    "uuid": "d698a4ee-a7b5-5d65-8a93-60ad8f9b2f58",
+    "orientation_degrees": 180
+  },
+  {
+    "reference": "J102-11",
+    "pin": 11,
+    "gang": "J102",
+    "x_mm": 92.7521,
+    "y_mm": 55.5625,
+    "uuid": "1f3e7cd7-5442-5c73-9443-ec1342ef15a9",
+    "orientation_degrees": 180
+  },
+  {
+    "reference": "J102-12",
+    "pin": 12,
+    "gang": "J102",
+    "x_mm": 92.7521,
+    "y_mm": 59.3725,
+    "uuid": "395d9581-42cb-50a1-8dad-351d174ed545",
+    "orientation_degrees": 180
+  },
+  {
+    "reference": "J102-13",
+    "pin": 13,
+    "gang": "J102",
+    "x_mm": 92.7521,
+    "y_mm": 63.1825,
+    "uuid": "9554acde-1701-5171-b45b-0d32896b1a54",
+    "orientation_degrees": 180
+  },
+  {
+    "reference": "J102-14",
+    "pin": 14,
+    "gang": "J102",
+    "x_mm": 92.7521,
+    "y_mm": 66.9925,
+    "uuid": "311d22dc-ef36-588b-aa06-da6e4aaf603d",
+    "orientation_degrees": 180
   }
 ]

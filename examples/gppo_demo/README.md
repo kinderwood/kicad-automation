@@ -6,9 +6,9 @@ and saved native KiCad mechanical project:
 
 | Revision | RF connector geometry | Electrical / drawing content |
 | --- | --- | --- |
-| A | J101 and J102 are straight six-position columns on 0.325-inch pitch | 12 RF signals; no interposer pad circles |
-| B | Each RF gang is two columns of three positions on 0.500-inch pitch | 12 RF signals with the A/B signal-class remap; no interposer pad circles |
-| C | Same two-by-three RF geometry as B | B's RF signals, one nine-pin DE-9, and a complete 800-circle interposer pad set |
+| A | Each side is one 14-position column on 150 mil pitch | 28 RF signals; no interposer pad circles |
+| B | Each side is a rectangular 7×2 gang on 150 mil row/position pitch | 28 RF signals with the A/B signal-class remap; no interposer pad circles |
+| C | B geometry with the second row staggered 75 mil | B's RF signals, one nine-pin DE-9, and a complete 800-circle interposer pad set |
 
 The matching files are `inputs/netlist-X.csv`, `inputs/netlist-X.xlsx`,
 `inputs/dxf-X-mils.dxf`, `inputs/positions-X.json`, `mechanical-X.kicad_pcb`,
@@ -22,16 +22,24 @@ conventional coaxial presentation, with pin 1 as the center conductor and pin 2
 as the shield. `DSub_9` is a single-unit nine-pin symbol paired with
 `DSub_9_Pins_Vertical`.
 
-The DXFs use mils; saved boards and manifests use millimetres. The round 2.5 mm
-circle on the `INTERPOSER` layer marks the interposer footprint origin at the
-center of its round guide pin, `(94.95, 94.95) mm`. In C, DE-9 pad 1 is the DC
-anchor at `(102.41, 190.00) mm`; all nine `DC_CENTERS` circles must match the
+The DXFs use mils; saved boards and manifests use millimetres. Every revision
+uses the same 4.375-inch (111.125 mm) square outline. The round 2.5 mm circle
+on the `INTERPOSER` layer marks the interposer footprint origin at the center
+of its round guide pin, `(42.5625, 42.5625) mm`. In C, DE-9 pad 1 is the DC
+anchor at `(50.0225, 92.085) mm`; all nine `DC_CENTERS` circles must match the
 transformed footprint pads. C also includes one 12 mil diameter drawing circle
 at each of the 800 transformed interposer pad centers. A and B intentionally
 omit that optional set so the workflow warns and proceeds; C auto-detects the
 complete set and validates it with the same drawing center tolerance used for
 RF and DC features. The DC nets connect to adjacent interposer pads `AK11`
 through `AK19` on `L2`.
+
+The 14 RF signals per side are the largest balanced population that retains a
+complete grounded interposer row between signal rows. Signal rows are `B`, `D`,
+`F`, `H`, `K`, `M`, `P`, `T`, `V`, `Y`, `AB`, `AD`, `AF`, and `AH`; the
+alternating rows and the end rows remain ground. The outer GPPO courtyard is
+0.500 inch from the board edge, while the inner RF row is about 1.007 inches
+from the interposer pin-field edge.
 
 ## Current automated run
 
@@ -44,6 +52,12 @@ Run with a tested KiCad Python environment from the repository checkout:
 The destination must be new or empty. The current script applies the complete C
 fixture to a fresh project and requires a repeated `NOOP`. Results are written
 to `demo-results.json`.
+
+The coupled source fixtures are regenerated deterministically with:
+
+```sh
+/path/to/AppDir/AppRun python3.11 examples/gppo_demo/generate_fixtures.py
+```
 
 Fresh A/B/C coverage and the A → B → C → A round trip are intentionally not
 implemented yet. `tests/test_gppo_demo_revision_matrix.py` is a comment-only
@@ -58,10 +72,10 @@ demonstrated path is a fresh C run using `mechanical-C.kicad_pcb`,
 fixtures as evidence that automated fresh A/B runs or cross-revision updates are
 supported.
 
-A uses six one-position rows at 325 mil pitch. B and C use two three-position
-rows at 500 mil X/Y pitch with a -90-degree pattern rotation; location 1 remains
-the anchor. Connector orientation is independent: J101 is 0 degrees and J102
-is 180 degrees.
+A uses one 14-position row per gang at 150 mil pitch. B and C use two
+seven-position rows at 150 mil X/Y pitch with a -90-degree pattern rotation;
+C offsets the second row by 75 mil and location 1 remains the anchor. Connector
+orientation is independent: J101 is 0 degrees and J102 is 180 degrees.
 
 The source inputs and librarian parts are never overwritten by Apply. Generated
 outputs include the reconciled board, schematic hierarchy, BOM, report, pinned

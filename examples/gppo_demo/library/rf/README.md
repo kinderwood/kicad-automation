@@ -18,9 +18,9 @@ Each includes the complete recipe, source pin, exact declarative payload,
 capabilities and integrity hashes. `manifest.json` indexes the immutable files.
 The source central footprint is unchanged.
 
-`tests/test_gppo_contract.py` reproduces these outputs, checks the shipped
-files, consumes them through Workflow, then saves/reloads actual native boards
-on the selected KiCad runtimes. The fixture covers all 12 GPPOs and the selected
-800-pad interposer, A→B assignment/class changes, an explicit per-connector layer
+`tests/test_connector_interposer_contract.py` reproduces these outputs, checks
+the shipped files, consumes them through Workflow, then saves/reloads actual
+native boards on the selected KiCad runtimes. The fixture covers all 28 GPPOs
+and the selected 800-pad interposer, A→B assignment/class changes, an explicit per-connector layer
 override, native geometry/net/layer projections and no-op preservation. These
 checks do not certify a completed routed board, DRC, fabrication or RF response.
