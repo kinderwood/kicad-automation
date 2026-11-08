@@ -63,9 +63,10 @@ https://kinderwood.github.io/kicad-automation/kicad/repository.json
 
 ## Development
 
-Repository policy, validation commands, and release steps are in
-[`AGENTS.md`](AGENTS.md). The minimal new-tool checklist is in
-[`docs/adding-tools.md`](docs/adding-tools.md).
+Repository policy, validation guidance, and release steps are in
+[`AGENTS.md`](AGENTS.md). Managed runtime details and GUI troubleshooting are in
+[`docs/development-environment.md`](docs/development-environment.md); the minimal
+new-tool checklist is in [`docs/adding-tools.md`](docs/adding-tools.md).
 
 In the managed cloud environment, verify the published toolchain before making
 changes, or run the complete development gate when validating environment
