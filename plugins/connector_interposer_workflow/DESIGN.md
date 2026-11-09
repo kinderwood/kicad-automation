@@ -135,9 +135,11 @@ board-space part origin derived from that drawing. A native notebook separates
 **Imported drawing**, **Interposer**, **RF anchors**, **DC connectors** and
 **Mounting holes** so project-wide association, single-part placement,
 repeatable connector placement and optional board-only parts do not compete in
-one flat form. RF gangs and DC connectors use compact, searchable selection
-lists beside one focused editor, following the stable-selection pattern from
-Define RF gangs.
+one flat form. The notebook and focused editors are width-bounded; linear
+fields use the same compact number-plus-unit control as Define RF gangs, and
+coordinate lists include the saved display unit with each value. RF gangs and
+DC connectors use compact, searchable selection lists beside one focused
+editor, following the stable-selection pattern from Define RF gangs.
 
 Valid position, orientation, side, drawing-layer and label-offset edits update
 the current workflow when their complete value is committed. There are no

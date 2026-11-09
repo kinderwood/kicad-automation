@@ -3856,8 +3856,11 @@ class WorkflowDialog(wx.Dialog):
             'Import the complete DXF to a user layer with KiCad File → Import → Graphics and save the board. Then use its native circles to place the interposer, RF gangs, DC connectors, and mounting holes. Valid edits update the workflow immediately; the board is unchanged until Apply.',
         )
         self.placement_notebook = wx.Notebook(panel)
-        self.placement_notebook.SetMinSize((-1, 445))
-        panel.GetSizer().Add(self.placement_notebook, 1, wx.EXPAND | wx.ALL, 8)
+        self.placement_notebook.SetMinSize((760, 445))
+        self.placement_notebook.SetMaxSize((960, -1))
+        panel.GetSizer().Add(
+            self.placement_notebook, 1, wx.ALIGN_LEFT | wx.ALL, 8,
+        )
 
         drawing_page = wx.Panel(self.placement_notebook)
         drawing_page.SetSizer(wx.BoxSizer(wx.VERTICAL))
@@ -3872,21 +3875,22 @@ class WorkflowDialog(wx.Dialog):
                      'User.Drawings', 'User.Comments'],
             style=wx.CB_DROPDOWN | wx.TE_PROCESS_ENTER,
         )
-        drawing_fields.Add(self.user_layer, 1, wx.EXPAND)
+        self.user_layer.SetMinSize((180, -1))
+        self.user_layer.SetMaxSize((220, -1))
+        drawing_fields.Add(self.user_layer, 0, wx.ALIGN_LEFT)
         drawing_fields.Add(wx.StaticText(drawing_box, label='Label offset X'), 0,
                            wx.ALIGN_CENTER_VERTICAL)
-        self.label_offset_x = DimensionInput(drawing_box, value='0')
-        drawing_fields.Add(self.label_offset_x, 1, wx.EXPAND)
+        self.label_offset_x = DimensionInput(drawing_box, value='0', compact=True)
+        drawing_fields.Add(self.label_offset_x, 0, wx.ALIGN_LEFT)
         drawing_fields.Add(wx.StaticText(drawing_box, label='Label offset Y'), 0,
                            wx.ALIGN_CENTER_VERTICAL)
-        self.label_offset_y = DimensionInput(drawing_box, value='0')
-        drawing_fields.Add(self.label_offset_y, 1, wx.EXPAND)
+        self.label_offset_y = DimensionInput(drawing_box, value='0', compact=True)
+        drawing_fields.Add(self.label_offset_y, 0, wx.ALIGN_LEFT)
         drawing_fields.Add(wx.StaticText(drawing_box, label='Center tolerance'), 0,
                            wx.ALIGN_CENTER_VERTICAL)
-        self.feature_tolerance = DimensionInput(drawing_box, value='0.3')
-        drawing_fields.Add(self.feature_tolerance, 1, wx.EXPAND)
-        drawing_fields.AddGrowableCol(1, 1)
-        drawing.Add(drawing_fields, 0, wx.EXPAND | wx.ALL, 8)
+        self.feature_tolerance = DimensionInput(drawing_box, value='0.3', compact=True)
+        drawing_fields.Add(self.feature_tolerance, 0, wx.ALIGN_LEFT)
+        drawing.Add(drawing_fields, 0, wx.ALL, 8)
         tolerance_help = wx.StaticText(
             drawing_box,
             label=('Maximum center-to-center deviation when matching calculated RF '
@@ -3904,17 +3908,20 @@ class WorkflowDialog(wx.Dialog):
         )
         self._style_status(self.drawing_status, 'warning')
         drawing.Add(self.drawing_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        drawing_page.GetSizer().Add(drawing, 0, wx.EXPAND | wx.ALL, 8)
+        drawing_box.SetMaxSize((660, -1))
+        drawing_page.GetSizer().Add(drawing, 0, wx.ALIGN_LEFT | wx.ALL, 8)
         self.mechanical_list = wx.ListCtrl(
             drawing_page, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 190),
         )
         for column, (heading, width) in enumerate((
-            ('Location', 130), ('X (mm)', 110), ('Y (mm)', 110),
-            ('Circle source', 300), ('Label source', 300),
+            ('Location', 120), ('X', 105), ('Y', 105),
+            ('Circle source', 240), ('Label source', 240),
         )):
             self.mechanical_list.InsertColumn(column, heading, width=width)
+        self.mechanical_list.SetMinSize((814, 190))
+        self.mechanical_list.SetMaxSize((850, 190))
         drawing_page.GetSizer().Add(
-            self.mechanical_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8,
+            self.mechanical_list, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8,
         )
         self.placement_notebook.AddPage(drawing_page, 'Imported drawing')
 
@@ -3927,25 +3934,28 @@ class WorkflowDialog(wx.Dialog):
         interposer_fields = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
         interposer_fields.Add(wx.StaticText(interposer_box, label='Position X'), 0,
                               wx.ALIGN_CENTER_VERTICAL)
-        self.interposer_x = DimensionInput(interposer_box, value='0')
-        interposer_fields.Add(self.interposer_x, 1, wx.EXPAND)
+        self.interposer_x = DimensionInput(interposer_box, value='0', compact=True)
+        interposer_fields.Add(self.interposer_x, 0, wx.ALIGN_LEFT)
         interposer_fields.Add(wx.StaticText(interposer_box, label='Position Y'), 0,
                               wx.ALIGN_CENTER_VERTICAL)
-        self.interposer_y = DimensionInput(interposer_box, value='0')
-        interposer_fields.Add(self.interposer_y, 1, wx.EXPAND)
-        interposer_fields.Add(wx.StaticText(interposer_box, label='Orientation'), 0,
+        self.interposer_y = DimensionInput(interposer_box, value='0', compact=True)
+        interposer_fields.Add(self.interposer_y, 0, wx.ALIGN_LEFT)
+        interposer_fields.Add(wx.StaticText(interposer_box, label='Orientation (degrees)'), 0,
                               wx.ALIGN_CENTER_VERTICAL)
         self.interposer_rotation = wx.TextCtrl(
             interposer_box, value='0', style=wx.TE_PROCESS_ENTER,
         )
-        interposer_fields.Add(self.interposer_rotation, 1, wx.EXPAND)
+        self.interposer_rotation.SetMinSize((180, -1))
+        self.interposer_rotation.SetMaxSize((180, -1))
+        interposer_fields.Add(self.interposer_rotation, 0, wx.ALIGN_LEFT)
         interposer_fields.Add(wx.StaticText(interposer_box, label='Board side'), 0,
                               wx.ALIGN_CENTER_VERTICAL)
         self.interposer_side = wx.Choice(interposer_box, choices=['Front', 'Back'])
         self.interposer_side.SetSelection(0)
-        interposer_fields.Add(self.interposer_side, 1, wx.EXPAND)
-        interposer_fields.AddGrowableCol(1, 1)
-        interposer.Add(interposer_fields, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.interposer_side.SetMinSize((180, -1))
+        self.interposer_side.SetMaxSize((180, -1))
+        interposer_fields.Add(self.interposer_side, 0, wx.ALIGN_LEFT)
+        interposer.Add(interposer_fields, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         interposer.Add(
             self.button(interposer_box, 'Use selected center circle',
                         self.capture_interposer_circle),
@@ -3957,7 +3967,8 @@ class WorkflowDialog(wx.Dialog):
         self._style_status(self.interposer_pose_status, 'warning')
         interposer.Add(self.interposer_pose_status, 0,
                        wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        interposer_page.GetSizer().Add(interposer, 0, wx.EXPAND | wx.ALL, 8)
+        interposer_box.SetMaxSize((430, -1))
+        interposer_page.GetSizer().Add(interposer, 0, wx.ALIGN_LEFT | wx.ALL, 8)
         self.placement_notebook.AddPage(interposer_page, 'Interposer')
 
         rf_page = wx.Panel(self.placement_notebook)
@@ -3974,7 +3985,8 @@ class WorkflowDialog(wx.Dialog):
             (('Gang', 72), ('Location 1', 108), ('Status', 82)),
         ):
             self.anchor_gang_list.InsertColumn(column, heading, width=width)
-        self.anchor_gang_list.SetMinSize((280, 280))
+        self.anchor_gang_list.SetMinSize((270, 280))
+        self.anchor_gang_list.SetMaxSize((280, 280))
         rf_selector.Add(self.anchor_gang_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         rf_page.GetSizer().Add(rf_selector, 0, wx.EXPAND | wx.ALL, 8)
         rf_editor_box = wx.StaticBox(rf_page, label='Select an RF gang')
@@ -3983,14 +3995,13 @@ class WorkflowDialog(wx.Dialog):
         rf_fields = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
         rf_fields.Add(wx.StaticText(rf_editor_box, label='Location 1 X'), 0,
                       wx.ALIGN_CENTER_VERTICAL)
-        self.anchor_x = DimensionInput(rf_editor_box, value='0')
-        rf_fields.Add(self.anchor_x, 1, wx.EXPAND)
+        self.anchor_x = DimensionInput(rf_editor_box, value='0', compact=True)
+        rf_fields.Add(self.anchor_x, 0, wx.ALIGN_LEFT)
         rf_fields.Add(wx.StaticText(rf_editor_box, label='Location 1 Y'), 0,
                       wx.ALIGN_CENTER_VERTICAL)
-        self.anchor_y = DimensionInput(rf_editor_box, value='0')
-        rf_fields.Add(self.anchor_y, 1, wx.EXPAND)
-        rf_fields.AddGrowableCol(1, 1)
-        rf_editor.Add(rf_fields, 0, wx.EXPAND | wx.ALL, 8)
+        self.anchor_y = DimensionInput(rf_editor_box, value='0', compact=True)
+        rf_fields.Add(self.anchor_y, 0, wx.ALIGN_LEFT)
+        rf_editor.Add(rf_fields, 0, wx.ALL, 8)
         rf_editor.Add(
             self.button(rf_editor_box, 'Use selected location 1 circle',
                         self.capture_circle),
@@ -3999,7 +4010,8 @@ class WorkflowDialog(wx.Dialog):
         self.anchor_status = self.status_label(rf_editor_box, 'Select an RF gang.')
         rf_editor.Add(self.anchor_status, 0,
                       wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        rf_page.GetSizer().Add(rf_editor, 1, wx.EXPAND | wx.TOP | wx.RIGHT | wx.BOTTOM, 8)
+        rf_editor_box.SetMaxSize((430, -1))
+        rf_page.GetSizer().Add(rf_editor, 0, wx.EXPAND | wx.TOP | wx.RIGHT | wx.BOTTOM, 8)
         self.placement_notebook.AddPage(rf_page, 'RF anchors')
 
         dc_page = wx.Panel(self.placement_notebook)
@@ -4016,7 +4028,8 @@ class WorkflowDialog(wx.Dialog):
             (('Connector', 88), ('Pin 1', 100), ('Status', 82)),
         ):
             self.dc_anchor_list.InsertColumn(column, heading, width=width)
-        self.dc_anchor_list.SetMinSize((290, 280))
+        self.dc_anchor_list.SetMinSize((280, 280))
+        self.dc_anchor_list.SetMaxSize((290, 280))
         dc_selector.Add(self.dc_anchor_list, 1,
                         wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         dc_page.GetSizer().Add(dc_selector, 0, wx.EXPAND | wx.ALL, 8)
@@ -4024,19 +4037,22 @@ class WorkflowDialog(wx.Dialog):
         dc_editor = wx.StaticBoxSizer(dc_editor_box, wx.VERTICAL)
         self.dc_anchor_title = dc_editor_box
         dc_fields = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
-        dc_fields.Add(wx.StaticText(dc_editor_box, label='Orientation'), 0,
+        dc_fields.Add(wx.StaticText(dc_editor_box, label='Orientation (degrees)'), 0,
                       wx.ALIGN_CENTER_VERTICAL)
         self.dc_anchor_rotation = wx.TextCtrl(
             dc_editor_box, value='0', style=wx.TE_PROCESS_ENTER,
         )
-        dc_fields.Add(self.dc_anchor_rotation, 1, wx.EXPAND)
+        self.dc_anchor_rotation.SetMinSize((180, -1))
+        self.dc_anchor_rotation.SetMaxSize((180, -1))
+        dc_fields.Add(self.dc_anchor_rotation, 0, wx.ALIGN_LEFT)
         dc_fields.Add(wx.StaticText(dc_editor_box, label='Board side'), 0,
                       wx.ALIGN_CENTER_VERTICAL)
         self.dc_anchor_side = wx.Choice(dc_editor_box, choices=['Front', 'Back'])
         self.dc_anchor_side.SetSelection(0)
-        dc_fields.Add(self.dc_anchor_side, 1, wx.EXPAND)
-        dc_fields.AddGrowableCol(1, 1)
-        dc_editor.Add(dc_fields, 0, wx.EXPAND | wx.ALL, 8)
+        self.dc_anchor_side.SetMinSize((180, -1))
+        self.dc_anchor_side.SetMaxSize((180, -1))
+        dc_fields.Add(self.dc_anchor_side, 0, wx.ALIGN_LEFT)
+        dc_editor.Add(dc_fields, 0, wx.ALL, 8)
         dc_editor.Add(
             self.button(dc_editor_box, 'Use selected pin 1 circle',
                         self.capture_dc_circle),
@@ -4045,7 +4061,8 @@ class WorkflowDialog(wx.Dialog):
         self.dc_anchor_status = self.status_label(dc_editor_box, 'Select a DC connector.')
         dc_editor.Add(self.dc_anchor_status, 0,
                       wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        dc_page.GetSizer().Add(dc_editor, 1,
+        dc_editor_box.SetMaxSize((430, -1))
+        dc_page.GetSizer().Add(dc_editor, 0,
                               wx.EXPAND | wx.TOP | wx.RIGHT | wx.BOTTOM, 8)
         self.placement_notebook.AddPage(dc_page, 'DC connectors')
 
@@ -4071,14 +4088,13 @@ class WorkflowDialog(wx.Dialog):
         hole_fields = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
         hole_fields.Add(wx.StaticText(hole_box, label='Position X'), 0,
                         wx.ALIGN_CENTER_VERTICAL)
-        self.hole_x = DimensionInput(hole_box, value='0')
-        hole_fields.Add(self.hole_x, 1, wx.EXPAND)
+        self.hole_x = DimensionInput(hole_box, value='0', compact=True)
+        hole_fields.Add(self.hole_x, 0, wx.ALIGN_LEFT)
         hole_fields.Add(wx.StaticText(hole_box, label='Position Y'), 0,
                         wx.ALIGN_CENTER_VERTICAL)
-        self.hole_y = DimensionInput(hole_box, value='0')
-        hole_fields.Add(self.hole_y, 1, wx.EXPAND)
-        hole_fields.AddGrowableCol(1, 1)
-        hole_editor.Add(hole_fields, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.hole_y = DimensionInput(hole_box, value='0', compact=True)
+        hole_fields.Add(self.hole_y, 0, wx.ALIGN_LEFT)
+        hole_editor.Add(hole_fields, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         hole_actions = wx.BoxSizer(wx.HORIZONTAL)
         hole_actions.Add(
             self.button(hole_box, 'Use selected circle', self.capture_hole_circle),
@@ -4091,7 +4107,8 @@ class WorkflowDialog(wx.Dialog):
         )
         hole_editor.Add(self.hole_status, 0,
                         wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        holes_page.GetSizer().Add(hole_editor, 1, wx.EXPAND | wx.ALL, 8)
+        hole_box.SetMaxSize((430, -1))
+        holes_page.GetSizer().Add(hole_editor, 0, wx.EXPAND | wx.ALL, 8)
         holes_list_box = wx.StaticBox(holes_page, label='Placed mounting holes')
         holes_list = wx.StaticBoxSizer(holes_list_box, wx.VERTICAL)
         self.hole_list = wx.ListCtrl(
@@ -4102,12 +4119,13 @@ class WorkflowDialog(wx.Dialog):
         ):
             self.hole_list.InsertColumn(column, heading, width=width)
         self.hole_list.SetMinSize((500, 250))
+        self.hole_list.SetMaxSize((500, 250))
         holes_list.Add(self.hole_list, 1, wx.EXPAND | wx.ALL, 8)
         holes_list.Add(
             self.button(holes_list_box, 'Remove selected', self.remove_hole),
             0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8,
         )
-        holes_page.GetSizer().Add(holes_list, 1,
+        holes_page.GetSizer().Add(holes_list, 0,
                                   wx.EXPAND | wx.TOP | wx.RIGHT | wx.BOTTOM, 8)
         self.placement_notebook.AddPage(holes_page, 'Mounting holes')
 
@@ -4132,10 +4150,14 @@ class WorkflowDialog(wx.Dialog):
         self.dc_anchor_side.Bind(wx.EVT_CHOICE, self._dc_placement_changed)
 
     @staticmethod
-    def _coordinate_text(values):
+    def _coordinate_text(values, units=None):
         if not values or len(values) != 2:
             return '—'
-        return f'{float(values[0]):.4g}, {float(values[1]):.4g}'
+        units = units or ('mil', 'mil')
+        return ', '.join(
+            f'{dimension_text(float(value), unit)} {unit}'
+            for value, unit in zip(values, units)
+        )
 
     @staticmethod
     def _skip_event(event):
@@ -4358,7 +4380,13 @@ class WorkflowDialog(wx.Dialog):
                     self.anchor_gang_list.GetItemCount(), name,
                 )
                 self.anchor_gang_list.SetItem(
-                    index, 1, self._coordinate_text(settings.get('anchor')),
+                    index, 1, self._coordinate_text(
+                        settings.get('anchor'),
+                        (
+                            settings.get('display_units', {}).get('anchor_x', 'mil'),
+                            settings.get('display_units', {}).get('anchor_y', 'mil'),
+                        ),
+                    ),
                 )
                 self.anchor_gang_list.SetItem(
                     index, 2, 'Placed' if settings.get('anchor_accepted') else 'Not placed',
@@ -4582,7 +4610,13 @@ class WorkflowDialog(wx.Dialog):
             self.mechanical_list.DeleteAllItems()
             for location in result['locations']:
                 row = self.mechanical_list.InsertItem(self.mechanical_list.GetItemCount(), location['key'])
-                for col, value in enumerate((*location['center'], location['circle_uuid'], location['text_uuid']), 1): self.mechanical_list.SetItem(row, col, str(value))
+                values = (
+                    f'{dimension_text(float(location["center"][0]), "mil")} mil',
+                    f'{dimension_text(float(location["center"][1]), "mil")} mil',
+                    location['circle_uuid'], location['text_uuid'],
+                )
+                for col, value in enumerate(values, 1):
+                    self.mechanical_list.SetItem(row, col, str(value))
             errors = list(result.get('errors', []))
             if self.controller.table:
                 from .core.geometry import validate_mechanical_population
@@ -4614,8 +4648,10 @@ class WorkflowDialog(wx.Dialog):
             'Drawing layer recorded from the selected circle. Inspect the saved drawing to verify associations.'
         )
         self._style_status(self.drawing_status, 'warning')
+        hole_units = (self.hole_x.selected_unit(), self.hole_y.selected_unit())
         self.hole_status.SetLabel(
-            f'New mounting hole positioned at {self._coordinate_text(center)}.'
+            f'New mounting hole positioned at '
+            f'{self._coordinate_text(center, hole_units)}.'
         )
         self._style_status(self.hole_status, 'warning')
 
@@ -4647,12 +4683,17 @@ class WorkflowDialog(wx.Dialog):
         self.hole_list.DeleteAllItems()
         for hole in self.controller.config.get('mounting_holes', []):
             pose = hole.get('pose', [0, 0, 0])
+            units = hole.get('pose_units', ['mil', 'mil'])
             index = self.hole_list.InsertItem(
                 self.hole_list.GetItemCount(), str(hole.get('reference', '')),
             )
             self.hole_list.SetItem(index, 1, str(hole.get('library_id', '')))
-            self.hole_list.SetItem(index, 2, f'{float(pose[0]):.6g}')
-            self.hole_list.SetItem(index, 3, f'{float(pose[1]):.6g}')
+            self.hole_list.SetItem(
+                index, 2, f'{dimension_text(float(pose[0]), units[0])} {units[0]}',
+            )
+            self.hole_list.SetItem(
+                index, 3, f'{dimension_text(float(pose[1]), units[1])} {units[1]}',
+            )
 
     def remove_hole(self, event):
         index = self.hole_list.GetFirstSelected()

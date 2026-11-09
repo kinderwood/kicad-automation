@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.5.2**, testing release. The package targets KiCad 10.0.0 through
+Version **0.5.3**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -175,7 +175,9 @@ an already-open source board does not update the output copy.
    and configured limit; ambiguous matches remain blocking. Mounting holes have independent position inputs,
    selected-circle capture and a removable placed-hole list. They use approved
    footprints from the loaded KiCad libraries and are board-only, excluded from
-   BOM and position files.
+   BOM and position files. Linear entry boxes use the same compact number and
+   independent unit selector as Define RF gangs. Coordinate lists include units
+   in each value instead of assuming a fixed display unit.
 9. **Interposer microvias:** optionally choose one eligible predefined Board
    Setup via size for all interposer locations. The workflow creates native,
    locked, adjacent-layer microvias coincident with the placed interposer pads.

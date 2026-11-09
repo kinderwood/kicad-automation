@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.5.2 and the
+are authorized. Connector to Interposer Workflow is version 0.5.3 and the
 separate GPPO RF Transition Designer is version 0.1.2; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The BGA
 Interposer Wizard remains an independent package at version 0.16.1.
@@ -337,6 +337,12 @@ C of the worked fixture contains all 800 pad circles, while A and B exercise the
 warning-and-proceed path. Worker completion now avoids unsafe pcbnew native
 teardown after its result is durably written and reports subprocess exit codes
 when analysis fails.
+
+Version 0.5.3 bounds the Mechanical placement notebook and its focused editors,
+uses the same compact unit-aware linear controls as Define RF gangs, and shows
+the applicable display unit directly in coordinate lists. Angular inputs are
+explicitly labelled in degrees. Native layout checks prevent the step from
+introducing horizontal page overflow.
 
 The complete 161-test native/CLI suite and all three packaged PCM loader checks
 pass on both KiCad 10.0.0 and 10.0.8. The 14-test native dialog suite passes on

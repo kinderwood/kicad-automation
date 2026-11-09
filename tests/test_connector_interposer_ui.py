@@ -455,6 +455,28 @@ class NativeDialogTests(unittest.TestCase):
         self.assertFalse(dialog.microvia_enable.IsEnabled())
         self.assertEqual(dialog.microvia_status.GetLabel(), 'Assign an interposer footprint first')
         self.assertIsNotNone(self.wx.FindWindowByLabel('Board side', dialog.pages[7]))
+        self.assertIsNotNone(
+            self.wx.FindWindowByLabel('Orientation (degrees)', dialog.pages[7]),
+        )
+        for control in (
+            dialog.label_offset_x, dialog.label_offset_y, dialog.feature_tolerance,
+            dialog.interposer_x, dialog.interposer_y, dialog.anchor_x, dialog.anchor_y,
+            dialog.hole_x, dialog.hole_y,
+        ):
+            self.assertEqual(control.units.GetStringSelection(), 'mil')
+            self.assertLessEqual(control.text.GetMaxSize().width, 110)
+        dialog.select_page(7)
+        self.app.Yield()
+        self.assertLessEqual(dialog.placement_notebook.GetSize().width, 960)
+        self.assertLessEqual(
+            dialog.pages[7].GetVirtualSize().width,
+            dialog.pages[7].GetClientSize().width,
+        )
+        self.assertEqual(dialog.mechanical_list.GetColumnWidth(1), 105)
+        self.assertEqual(dialog.mechanical_list.GetColumnWidth(2), 105)
+        self.assertEqual(dialog.mechanical_list.GetColumnCount(), 5)
+        self.assertEqual(dialog.mechanical_list.GetColumn(1).GetText(), 'X')
+        self.assertEqual(dialog.mechanical_list.GetColumn(2).GetText(), 'Y')
         self.assertIsNone(self.wx.FindWindowByLabel('Per-location RF assignments…', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Accept library selections', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Project BOM MPN override (if absent)', dialog))
@@ -1459,6 +1481,14 @@ class NativeDialogTests(unittest.TestCase):
             self.assertEqual(
                 dialog.controller.config['mechanical']['feature_tolerance_unit'], 'mil',
             )
+            dialog.controller.config['mounting_holes'] = [{
+                'reference': 'H1', 'library_id': 'Example:Hole',
+                'pose': [25.4, 2.54, 0], 'pose_units': ['inch', 'mil'],
+            }]
+            dialog.refresh_mounting_holes()
+            self.assertEqual(dialog.hole_list.GetItemText(0, 2), '1 inch')
+            self.assertEqual(dialog.hole_list.GetItemText(0, 3), '100 mil')
+            self.assertEqual(dialog._coordinate_text([25.4, 2.54]), '1000 mil, 100 mil')
             failure = (
                 'J101-1: center deviation from its drawing circle is '
                 '0.01 mm (0.393701 mil); limit is 0.00762 mm (0.3 mil)'
