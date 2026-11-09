@@ -461,26 +461,18 @@ class NativeBackend:
                 spec = instances.get(reference)
                 if not spec or spec.get("connector_type") != "DC":
                     raise BackendError(f"{reference}: DC anchor has no matching connector instance")
-                holder, fp = self._placed_approved(spec)
-                for pad in fp.Pads():
-                    if not pad.GetNumber():
-                        continue
-                    center = [value / 1e6 for value in _xy(pad.GetPosition())]
+                for pad_number, center, _attribute in self._placed_pad_centers(spec):
                     self._matching_circle(
-                        f"{reference} pad {pad.GetNumber()}", center,
+                        f"{reference} pad {pad_number}", center,
                         native["circles"], claimed, tolerance,
                     )
             for reference, spec in instances.items():
                 if spec.get("kind") != "interposer":
                     continue
-                holder, fp = self._placed_approved(spec)
-                pads = [pad for pad in fp.Pads()
-                        if pad.GetNumber() and
-                        pad.GetAttribute() != self.p.PAD_ATTRIB_NPTH]
                 expected = [
-                    (f"{reference} pad {pad.GetNumber()}",
-                     [value / 1e6 for value in _xy(pad.GetPosition())])
-                    for pad in pads
+                    (f"{reference} pad {pad_number}", center)
+                    for pad_number, center, attribute in self._placed_pad_centers(spec)
+                    if attribute != self.p.PAD_ATTRIB_NPTH
                 ]
                 available = [circle for circle in native["circles"]
                              if circle["uuid"] not in claimed]
@@ -803,6 +795,29 @@ class NativeBackend:
         self._place_footprint(fp, spec)
         return holder, fp
 
+    def _placed_pad_centers(self, spec):
+        """Transform library-relative pad centers without a temporary board."""
+        fp = self._approved(spec["footprint"])
+        x_origin, y_origin, rotation = spec["pose"]
+        angle = math.radians(rotation)
+        cosine, sine = math.cos(angle), math.sin(angle)
+        bottom = spec.get("side", "F") == "B"
+        pads = []
+        for pad in fp.Pads():
+            if not pad.GetNumber():
+                continue
+            relative = pad.GetFPRelativePosition()
+            x, y = relative.x / 1e6, relative.y / 1e6
+            if bottom:
+                y = -y
+            pads.append((
+                pad.GetNumber(),
+                [x_origin + x * cosine + y * sine,
+                 y_origin - x * sine + y * cosine],
+                pad.GetAttribute(),
+            ))
+        return pads
+
     def _resolve_anchor_poses(self, desired):
         """Resolve pad-centre anchors with this exact KiCad runtime."""
         p = self.p
@@ -818,15 +833,24 @@ class NativeBackend:
             angle = float(spec.get("pose", [0, 0, 0])[2])
             spec["pose"] = [0, 0, angle]
             holder, fp = self._placed_approved(spec)
-            pads = [pad for pad in fp.Pads() if pad.GetNumber() == pad_number]
+            pads = [
+                [value for value in _xy(pad.GetPosition())]
+                for pad in fp.Pads() if pad.GetNumber() == pad_number
+            ]
             if len(pads) != 1:
                 raise BackendError(f"{key}: anchor pad {pad_number} must occur exactly once")
-            offset = _xy(pads[0].GetPosition())
+            offset = pads[0]
             spec["pose"] = [at[0] - offset[0] / 1e6,
                             at[1] - offset[1] / 1e6, angle]
             self._place_footprint(fp, spec)
-            if _xy(pads[0].GetPosition()) != [round(at[0] * 1e6), round(at[1] * 1e6)]:
+            placed = [
+                _xy(pad.GetPosition()) for pad in fp.Pads()
+                if pad.GetNumber() == pad_number
+            ]
+            if placed != [[round(at[0] * 1e6), round(at[1] * 1e6)]]:
                 raise BackendError(f"{key}: KiCad could not place anchor pad {pad_number} at the selected circle")
+            del fp
+            del holder
 
     def _group(self, board, name, old=None, parent=None):
         group = board_items(board).get(old) if old else None

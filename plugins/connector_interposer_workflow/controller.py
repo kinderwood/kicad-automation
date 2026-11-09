@@ -971,7 +971,8 @@ raise SystemExit(0 if payload["ok"] else 3)
         request['operation'] = operation
         request['expected_kicad_version'] = self.expected_version
         package_dir = Path(__file__).resolve().parent
-        script = '''import importlib.util, json, pathlib, sys
+        script = '''import faulthandler, importlib.util, json, pathlib, sys
+faulthandler.enable()
 root=pathlib.Path(sys.argv[1])
 spec=importlib.util.spec_from_file_location("connector_interposer_worker",root/"__init__.py",submodule_search_locations=[str(root)])
 module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
