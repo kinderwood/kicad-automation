@@ -34,7 +34,23 @@ jobs:
       - name: Run KiCad integration tests
         env:
           KICAD_USE_SYSTEM: "1"
-        run: scripts/test_kicad.sh
+        run: |
+          set +e
+          set -o pipefail
+          scripts/test_kicad.sh 2>&1 | tee /tmp/kicad-integration.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            python3 - <<'PY'
+          from pathlib import Path
+
+          lines = Path('/tmp/kicad-integration.log').read_text(
+          tail = '\n'.join(lines.splitlines()[-100:])[-12000:]
+          escaped = tail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print(f'::error title=KiCad integration failure::{escaped}')
+          PY
+          fi
+          exit "$status"
 
   deploy:
     needs: test
