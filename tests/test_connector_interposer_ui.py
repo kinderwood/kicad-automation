@@ -458,13 +458,11 @@ class NativeDialogTests(unittest.TestCase):
         self.assertIsNotNone(
             self.wx.FindWindowByLabel('Orientation (degrees)', dialog.pages[7]),
         )
-        for control in (
-            dialog.label_offset_x, dialog.label_offset_y, dialog.feature_tolerance,
-            dialog.interposer_x, dialog.interposer_y, dialog.anchor_x, dialog.anchor_y,
-            dialog.hole_x, dialog.hole_y,
-        ):
+        for control in (dialog.feature_tolerance,):
             self.assertEqual(control.units.GetStringSelection(), 'mil')
             self.assertLessEqual(control.text.GetMaxSize().width, 110)
+        self.assertIsNone(self.wx.FindWindowByLabel('Label offset X', dialog.pages[7]))
+        self.assertIsNone(self.wx.FindWindowByLabel('Position X', dialog.pages[7]))
         dialog.select_page(7)
         self.app.Yield()
         self.assertLessEqual(dialog.placement_notebook.GetSize().width, 960)
@@ -1448,29 +1446,22 @@ class NativeDialogTests(unittest.TestCase):
             )))
             dialog.controller.set_netclass_type('CLOCK', 'RF')
             dialog.controller.config['interposers']['E1'] = {'symbol': {'path': 'selected'}}
-            dialog.interposer_x.ChangeValue('1 inch')
-            dialog.interposer_y.ChangeValue('25000um')
+            dialog.controller.config['interposers']['E1']['pose_circle'] = {
+                'uuid': 'center-circle', 'center': [25.4, 25.0],
+            }
             dialog.interposer_side.SetSelection(1)
             dialog._interposer_placement_changed()
             selection = dialog.controller.config['interposers']['E1']
             self.assertEqual(selection['pose'][:2], [25.4, 25.0])
-            self.assertEqual(selection['pose_units'], ['inch', 'um'])
             self.assertEqual(selection['side'], 'B')
 
-            dialog.label_offset_x.ChangeValue('10 mm')
-            event = self.wx.CommandEvent()
-            dialog.label_offset_x._normalize(event)
-            self.assertEqual(dialog.label_offset_x.GetValue(), '10')
-            self.assertEqual(dialog.label_offset_x.units.GetStringSelection(), 'mm')
-            dialog.label_offset_y.ChangeValue('100 mil')
-            self.assertEqual(dialog.label_offset_y.value_mm(), 2.54)
             self.assertEqual(dialog.feature_tolerance.GetValue(), '0.3')
             dialog.feature_tolerance.ChangeValue('0.4 mil')
 
             dialog.refresh_gangs()
-            dialog.anchor_x.ChangeValue('2 mm')
-            dialog.anchor_y.ChangeValue('100 mil')
-            dialog._rf_anchor_changed()
+            dialog._rf_anchor_changed(source_circle={
+                'uuid': 'rf-circle', 'center': [2.0, 2.54],
+            })
             gang = dialog.controller.gang('J101')
             self.assertEqual(gang['anchor'], [2.0, 2.54])
             self.assertTrue(gang['anchor_accepted'])
@@ -1527,6 +1518,7 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             records, gang_parts, interposer_parts = fixture(library, 3)
             path = source/'demo.kicad_pcb'
             board = self.p.BOARD()
+            circle_ids = {}
             for index, record in enumerate(records):
                 center = self.p.VECTOR2I((20+index*4)*1000000, 30*1000000)
                 circle = self.p.PCB_SHAPE(board)
@@ -1536,11 +1528,19 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                 circle.SetEnd(self.p.VECTOR2I(center.x+1000000, center.y))
                 circle.SetWidth(50000)
                 board.Add(circle)
+                circle_ids[record.key] = circle.m_Uuid.AsString()
                 label = self.p.PCB_TEXT(board)
                 label.SetText(record.key)
                 label.SetLayer(self.p.Dwgs_User)
                 label.SetPosition(self.p.VECTOR2I(center.x-2540000, center.y-2540000))
                 board.Add(label)
+            interposer_circle = self.p.PCB_SHAPE(board)
+            interposer_circle.SetShape(self.p.SHAPE_T_CIRCLE)
+            interposer_circle.SetLayer(self.p.Dwgs_User)
+            interposer_circle.SetCenter(self.p.VECTOR2I(70000000, 60000000))
+            interposer_circle.SetEnd(self.p.VECTOR2I(70500000, 60000000))
+            board.Add(interposer_circle)
+            interposer_circle_uuid = interposer_circle.m_Uuid.AsString()
             self.p.SaveBoard(str(path), board)
             (source/'demo.kicad_pro').write_text('{"board":{"designer_setting":42}}')
             workbook = root/'signals.csv'
@@ -1558,16 +1558,17 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                                        'part_sha256': gang_parts['J101'].footprint.sha256,
                                        'symbol': {'path': str(symbol), 'library_id': 'Approved:GPPO', 'sha256': symbol_sha},
                                        'row_lengths': [3], 'pitch_x': 4, 'anchor': [20, 30],
+                                       'anchor_circle': {'uuid': circle_ids['J101-1'],
+                                                         'center': [20, 30]},
                                        'anchor_accepted': True, 'defined': True})
             part = interposer_parts['E1'].footprint
             controller.config['interposers']['E1'] = dict(
                 part.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True, side='F',
+                pose_circle={'uuid': interposer_circle_uuid, 'center': [70, 60]},
                 symbol={'path': str(symbol), 'library_id': 'Approved:Interposer', 'sha256': symbol_sha},
             )
             controller.config['mechanical'] = {
                 'layer': 'Dwgs.User', 'accepted': True,
-                'label_offset': [-2.54, -2.54],
-                'label_offset_units': ['mil', 'mil'],
                 'feature_tolerance_mm': .00762,
                 'feature_tolerance_unit': 'mil',
             }
@@ -1649,14 +1650,20 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             )
             board = self.p.BOARD()
             pin1_uuid = None
+            rf_pin1_uuid = None
+            interposer_center_uuid = None
             for x, y, label in ((20, 30, 'J101-1'), (50, 50, ''),
-                                (52, 50, ''), (54, 50, '')):
+                                (52, 50, ''), (54, 50, ''), (70, 60, '')):
                 center = self.p.VECTOR2I(x * 1000000, y * 1000000)
                 circle = self.p.PCB_SHAPE(board); circle.SetShape(self.p.SHAPE_T_CIRCLE)
                 circle.SetLayer(self.p.Dwgs_User); circle.SetCenter(center)
                 circle.SetEnd(self.p.VECTOR2I(center.x + 500000, center.y)); board.Add(circle)
                 if x == 50:
                     pin1_uuid = circle.m_Uuid.AsString()
+                elif x == 20:
+                    rf_pin1_uuid = circle.m_Uuid.AsString()
+                elif x == 70:
+                    interposer_center_uuid = circle.m_Uuid.AsString()
                 if label:
                     text = self.p.PCB_TEXT(board); text.SetText(label); text.SetLayer(self.p.Dwgs_User)
                     text.SetPosition(center); board.Add(text)
@@ -1685,6 +1692,7 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                 'symbol': {'path': str(approved_symbols), 'library_id': 'Approved:GPPO',
                            'sha256': approved_sha},
                 'row_lengths': [1], 'anchor': [20, 30], 'anchor_accepted': True,
+                'anchor_circle': {'uuid': rf_pin1_uuid, 'center': [20, 30]},
                 'defined': True,
             })
             transition = write_transition(
@@ -1705,12 +1713,12 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             interposer = interposer_parts['E1'].footprint
             controller.config['interposers']['E1'] = dict(
                 interposer.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True, side='F',
+                pose_circle={'uuid': interposer_center_uuid, 'center': [70, 60]},
                 symbol={'path': str(approved_symbols), 'library_id': 'Approved:Interposer',
                         'sha256': approved_sha},
             )
             controller.config['mechanical'] = {
-                'layer': 'Dwgs.User', 'accepted': True, 'label_offset': [0, 0],
-                'label_offset_units': ['mil', 'mil'],
+                'layer': 'Dwgs.User', 'accepted': True,
                 'feature_tolerance_mm': .00762,
                 'feature_tolerance_unit': 'mil',
             }

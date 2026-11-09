@@ -43,8 +43,6 @@ def prepare(destination):
     controller.config['mechanical'] = {
         'layer': 'User.Drawings',
         'accepted': True,
-        'label_offset': [-2.54, -2.54],
-        'label_offset_units': ['mil', 'mil'],
         'feature_tolerance_mm': .00762,
         'feature_tolerance_unit': 'mil',
     }
@@ -86,6 +84,10 @@ def prepare(destination):
             'row_offsets': [0, 1.905],
             'rotation': -90,
             'anchor': [anchor['x_mm'], anchor['y_mm']],
+            'anchor_circle': {
+                'uuid': anchor['uuid'],
+                'center': [anchor['x_mm'], anchor['y_mm']],
+            },
             'anchor_accepted': True,
             'defined': True,
             'part_id': str(footprint),
@@ -134,10 +136,15 @@ def prepare(destination):
         'inspect',
         board_path=str(board),
         source_layer='User.Drawings',
-        label_offset=[-2.54, -2.54],
     )
-    if native.get('errors'):
-        raise ValueError('; '.join(native['errors']))
+    interposer_circle = next(
+        circle for circle in native['circles']
+        if circle['center'] == [42.5625, 42.5625]
+    )
+    controller.config['interposers']['E1']['pose_circle'] = {
+        'uuid': interposer_circle['uuid'],
+        'center': interposer_circle['center'],
+    }
     segments = native['segments']
     points = [point for segment in segments for point in (segment['start'], segment['end'])]
     minx, maxx = min(point[0] for point in points), max(point[0] for point in points)

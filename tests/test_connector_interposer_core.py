@@ -14,6 +14,7 @@ from connector_interposer_workflow.core import *
 from connector_interposer_workflow.core.outline import Segment, validate_outline
 from connector_interposer_workflow.core.geometry import (
     DEFAULT_FEATURE_TOLERANCE_MM, feature_deviation_message, feature_tolerance,
+    match_circle_features,
 )
 from connector_interposer_workflow.core.sexpr import loads, dumps, children
 
@@ -267,6 +268,27 @@ class GeometryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_dimension('10 parsecs')
 
+    def test_circle_features_match_without_labels_and_ignore_unclaimed_geometry(self):
+        circles = [
+            {'uuid': 'one', 'center': [10, 20]},
+            {'uuid': 'two', 'center': [12.54, 20]},
+            {'uuid': 'extra', 'center': [90, 90]},
+        ]
+        matches = match_circle_features(
+            [('J101-1', [10, 20]), ('J101-2', [12.54, 20])],
+            circles, .00762, required={'J101-1': 'one'},
+        )
+        self.assertEqual([match['circle_uuid'] for match in matches], ['one', 'two'])
+        with self.assertRaisesRegex(ValueError, '2 drawing circles match'):
+            match_circle_features(
+                [('J101-1', [10, 20])],
+                circles + [{'uuid': 'duplicate', 'center': [10.001, 20]}], .00762,
+            )
+        with self.assertRaisesRegex(ValueError, 'same drawing circle'):
+            match_circle_features(
+                [('J101-1', [10, 20]), ('J102-1', [10, 20])], circles, .00762,
+            )
+
     def test_custom_numbering_location_one_anchor_and_independence(self):
         g=GangDefinition('J1',(2,2),2,3,row_offsets=(0,1),numbering=(3,4,1,2),rotation=90,anchor=(10,20))
         points=g.positions()
@@ -283,8 +305,6 @@ class GeometryTests(unittest.TestCase):
     def test_serpentine_and_population(self):
         points=GangDefinition('J1',(3,2),2,2,traversal='serpentine').positions()
         self.assertEqual(points['4'],(2,2))
-        row=SignalRecord('S','RF','E1','A1','J1','1','L1')
-        with self.assertRaises(ValueError):validate_mechanical_population([row],['J1-1','J1-1'])
 
     def test_outline_strict_topology_intent(self):
         self.assertEqual(len(validate_outline(rectangle(0,0,20,20),[rectangle(5,5,3,3)])),2)

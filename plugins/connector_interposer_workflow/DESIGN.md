@@ -133,7 +133,7 @@ dense patterns and multi-digit identifiers legible inside the available canvas.
 Mechanical placement owns the imported-drawing source settings and every
 board-space part origin derived from that drawing. A native notebook separates
 **Imported drawing**, **Interposer**, **RF anchors**, **DC connectors** and
-**Mounting holes** so project-wide association, single-part placement,
+**Mounting holes** so project-wide inventory, single-part placement,
 repeatable connector placement and optional board-only parts do not compete in
 one flat form. The notebook and focused editors are width-bounded; linear
 fields use the same compact number-plus-unit control as Define RF gangs, and
@@ -141,20 +141,19 @@ coordinate lists include the saved display unit with each value. RF gangs and
 DC connectors use compact, searchable selection lists beside one focused
 editor, following the stable-selection pattern from Define RF gangs.
 
-Valid position, orientation, side, drawing-layer and label-offset edits update
+Valid orientation, side, drawing-layer and center-tolerance edits update
 the current workflow when their complete value is committed. There are no
 separate interposer, RF-anchor or DC-placement acceptance buttons. Capturing a
 selected native circle is an explicit canvas action and applies its center
 immediately. The interposer has its own center-circle action; RF uses location
-1 and DC uses footprint pad 1. Numeric RF coordinates remain available when a
-drawing does not provide a selectable location-1 circle. Group-local status
-identifies whether the placement came from a selected circle or entered
-coordinates.
+1 and DC uses footprint pad 1. Imported text is contextual inventory only and
+never supplies identity or placement. Group-local status identifies the selected
+circle and current placement state.
 
 Saved-board inspection remains explicit because it launches bounded native
 analysis rather than changing an in-memory field. Mounting-hole creation also
-remains explicit because it adds a new project item; its independent X/Y fields
-and selected-circle action must never reuse the active RF anchor implicitly.
+remains explicit because it adds a new project item; its selected-circle action
+must never reuse the active RF anchor implicitly.
 The placed-hole list supports removal before Review changes. All source
 geometry is revalidated during Review and Apply; live UI updates do not weaken
 that boundary.

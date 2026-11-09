@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.5.3**, testing release. The package targets KiCad 10.0.0 through
+Version **0.5.4**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -152,17 +152,15 @@ an already-open source board does not update the output copy.
    Transition Designer…** is a disabled placeholder in this release.
 8. **Mechanical placement:** import the complete mechanical drawing through
    KiCad's native **File → Import → Graphics**, select its user layer, and
-   save the board. Five native tabs separate drawing association, interposer,
+   save the board. Five native tabs separate drawing inventory, interposer,
    RF anchor, DC connector and mounting-hole work. The bounded drawing
-   association accepts one full `gang-pin` text label per native circle. If
-   labels have a drafting offset, enter the label X/Y offset from the circle;
-   association remains one-to-one and is inspected against the saved board.
-   Missing, extra, duplicate or ambiguous circles block Review.
-   Select the interposer center circle or enter its position, orientation and
-   Front/Back mounting side.
+   inventory lists saved circles, lines/arcs and optional text. Text is
+   shown only as drawing context and is never parsed for identity or placement.
+   Select the interposer center circle, orientation and Front/Back mounting
+   side.
    Select RF gangs and DC connectors from compact lists; a selected location-1
    or pin-1 circle is applied immediately. Valid numeric, orientation, side,
-   source-layer, offset and center-tolerance edits also update the current workflow on commit,
+   source-layer and center-tolerance edits also update the current workflow on commit,
    with no separate acceptance buttons. The native backend measures the
    footprint's transformed pad-1 offset and places that pad at the circle center
    regardless of library origin. The drawing-wide center tolerance defaults to
@@ -171,8 +169,9 @@ an already-open source board does not update the output copy.
    a complete interposer pad-circle set. Interposer pad circles are detected
    automatically: an absent or partial set produces a Review warning and does
    not block Apply, while a complete set receives the same one-to-one center
-   validation as DC pads. Failed checks report the measured center deviation
-   and configured limit; ambiguous matches remain blocking. Mounting holes have independent position inputs,
+   validation as DC pads. Unmatched extra circles are ignored. Missing RF or DC
+   feature circles and duplicate or ambiguous matches block Review. Failed checks report the measured center deviation
+   and configured limit; ambiguous matches remain blocking. Mounting holes use
    selected-circle capture and a removable placed-hole list. They use approved
    footprints from the loaded KiCad libraries and are board-only, excluded from
    BOM and position files. Linear entry boxes use the same compact number and
@@ -251,9 +250,9 @@ a tool-owned split interposer signal/ground
 organization. The selected interposer symbol supplies the pin, filter and BOM
 metadata contract and is pinned for provenance; its graphical body is not copied
 into the generated split presentation. A fully explicit presentation is a
-future direction. DXF labels split into separate
-gang-only and pin-only texts require unambiguous full identity labels before
-use. DC support is limited to single-unit symbols. RF objects stop at
+future direction. DXF text is retained only for visual context; circle identity
+comes from explicit center, RF location-1, DC pin-1 and mounting-hole selections
+plus geometric matching. DC support is limited to single-unit symbols. RF objects stop at
 the signal via; no signal route is generated beyond the handoff. Interposer
 microvia generation does not prove plane connectivity, stackup manufacturability
 or production acceptance. Saved geometry and native round trips do not establish

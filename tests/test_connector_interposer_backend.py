@@ -252,8 +252,8 @@ class BackendTests(unittest.TestCase):
                            'circle_uuid': circle_ids['pin1']},
                 'pads': {'1': 'GND'},
             }}, 'mechanical': {
-                'source_layer': 'Dwgs.User', 'label_offset': [0, 0],
-                'locations': [], 'rf_keys': [],
+                'source_layer': 'Dwgs.User', 'rf_matches': [], 'rf_keys': [],
+                'rf_anchors': {}, 'interposer_anchors': {},
                 'dc_anchors': {'J1': {'circle_uuid': circle_ids['pin1'],
                                       'center': [20, 20]}},
                 'feature_tolerance_mm': 0.00762,
@@ -293,9 +293,8 @@ class BackendTests(unittest.TestCase):
                 'pads': {'1': 'CLOCK', '2': 'GND'},
             }},
             'mechanical': {
-                'source_layer': 'Dwgs.User', 'label_offset': [0, 0],
-                'locations': [], 'rf_keys': [], 'allowed_location_keys': [],
-                'dc_anchors': {}, 'interposer_anchors': {},
+                'source_layer': 'Dwgs.User', 'rf_matches': [], 'rf_keys': [],
+                'rf_anchors': {}, 'dc_anchors': {}, 'interposer_anchors': {},
                 'feature_tolerance_mm': 0.00762,
             },
         }
@@ -539,7 +538,7 @@ class BackendTests(unittest.TestCase):
             with self.assertRaisesRegex(BackendError, "changed while copying"):
                 self.backend.apply(preview, self.root/"race")
 
-    def test_mechanical_explicit_offset_and_population_guard(self):
+    def test_mechanical_circle_matching_ignores_labels_and_extra_circles(self):
         board = p.LoadBoard(str(self.board_path))
         circle = p.PCB_SHAPE(board)
         circle.SetShape(p.SHAPE_T_CIRCLE)
@@ -553,15 +552,30 @@ class BackendTests(unittest.TestCase):
         label.SetPosition(p.VECTOR2I(17460000,17460000))
         label.SetLayer(p.Dwgs_User)
         board.Add(label)
+        extra = p.PCB_SHAPE(board)
+        extra.SetShape(p.SHAPE_T_CIRCLE)
+        extra.SetStart(p.VECTOR2I(90000000, 90000000))
+        extra.SetEnd(p.VECTOR2I(91000000, 90000000))
+        extra.SetLayer(p.Dwgs_User)
+        board.Add(extra)
         p.SaveBoard(str(self.board_path), board)
-        self.assertTrue(self.backend.inspect_graphics(self.board_path)["errors"])
-        accepted = self.backend.inspect_graphics(self.board_path, "Dwgs.User", [-2.54,-2.54])
-        self.assertEqual([], accepted["errors"])
+        accepted = self.backend.inspect_graphics(self.board_path, "Dwgs.User")
+        self.assertEqual(2, len(accepted["circles"]))
+        self.assertEqual(1, len(accepted["texts"]))
         desired = copy.deepcopy(self.desired)
-        desired["mechanical"] = {name: accepted[name] for name in ("source_layer", "label_offset", "locations")}
-        desired["mechanical"]["rf_keys"] = ["J101-1"]
-        desired["mechanical"]["dc_anchors"] = {}
-        desired["mechanical"]["feature_tolerance_mm"] = 0.00762
+        desired["mechanical"] = {
+            "source_layer": accepted["source_layer"],
+            "rf_matches": [{
+                "key": "J101-1", "center": [20, 20],
+                "circle_uuid": uuid_of(circle),
+            }],
+            "rf_keys": ["J101-1"],
+            "rf_anchors": {"J101": {
+                "circle_uuid": uuid_of(circle), "center": [20, 20],
+            }},
+            "dc_anchors": {}, "interposer_anchors": {},
+            "feature_tolerance_mm": 0.00762,
+        }
         self.assertEqual("PREVIEW", self.backend.preview(self.board_path, desired)["status"])
         shifted = copy.deepcopy(desired)
         shifted["instances"]["J101-1"]["pose"][0] += .01

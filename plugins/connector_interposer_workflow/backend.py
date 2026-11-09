@@ -16,7 +16,7 @@ from pathlib import Path
 from .artifacts import canonical, sha256, validate_artifact
 from .core.geometry import (
     MAX_FEATURE_TOLERANCE_MM, distance_text, feature_deviation_message,
-    feature_tolerance,
+    feature_tolerance, match_circle_features,
 )
 from .recovery import apply_files, file_hash, require_closed
 
@@ -153,16 +153,12 @@ class NativeBackend:
         return [board.GetLayerName(p.F_Cu)] + [board.GetLayerName(getattr(p, "In%d_Cu" % i))
                 for i in range(1, count - 1)] + [board.GetLayerName(p.B_Cu)]
 
-    def inspect_graphics(self, board_path, source_layer="Dwgs.User", label_offset=None):
-        """Capture already imported native geometry; never guess a DXF parser."""
+    def inspect_graphics(self, board_path, source_layer="Dwgs.User"):
+        """Inventory already imported native geometry; never guess a DXF parser."""
         board = self._load(board_path)
         layer = self._layer(board, source_layer)
         result = {"source_layer": source_layer, "source_sha256": file_hash(board_path),
-                  "circles": [], "texts": [], "segments": [], "locations": [], "errors": []}
-        offset = label_offset if label_offset is not None else [0, 0]
-        if len(offset) != 2 or any(not math.isfinite(v) for v in offset):
-            raise BackendError("Mechanical label offset must be two finite millimetre values")
-        result["label_offset"] = list(offset)
+                  "circles": [], "texts": [], "segments": []}
         for item in board.GetDrawings():
             if item.GetLayer() != layer:
                 continue
@@ -180,32 +176,6 @@ class NativeBackend:
                     if item.GetShape() == self.p.SHAPE_T_ARC:
                         segment["mid"] = [v/1e6 for v in _xy(item.GetArcMid())]
                     result["segments"].append(segment)
-        # Only explicit complete mechanical keys inside exactly one circle are
-        # accepted. Gang-only/pin-only drafts require an explicit UI association.
-        import re
-        seen = set()
-        used_texts = set()
-        for circle in result["circles"]:
-            labels = [t for t in result["texts"] if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*", t["text"].strip()) and
-                      math.dist([t["at"][i]-offset[i] for i in range(2)], circle["center"]) <= circle["radius"]]
-            if not labels:
-                # Unlabelled circles may be DC connector pad locations. Their
-                # selected pin-1 anchor and full footprint geometry are checked
-                # later; they are not guessed into RF identities here.
-                continue
-            if len(labels) != 1:
-                result["errors"].append("Circle " + circle["uuid"] + " needs one explicit gang-pin label")
-                continue
-            key = labels[0]["text"].strip()
-            if key in seen or labels[0]["uuid"] in used_texts:
-                result["errors"].append("Duplicate mechanical identity " + key)
-            seen.add(key)
-            used_texts.add(labels[0]["uuid"])
-            result["locations"].append({"key": key, "center": circle["center"],
-                                        "circle_uuid": circle["uuid"], "text_uuid": labels[0]["uuid"]})
-        for text in result["texts"]:
-            if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*", text["text"].strip()) and text["uuid"] not in used_texts:
-                result["errors"].append("Mechanical key has no matching circle: " + text["text"])
         return result
 
     def _normalize_outline(self, board, desired):
@@ -415,43 +385,75 @@ class NativeBackend:
         instances = desired.get("instances", {})
         if desired.get("mechanical"):
             mechanical = desired["mechanical"]
-            native = self.inspect_graphics(board.GetFileName(), mechanical["source_layer"], mechanical.get("label_offset"))
-            if native["errors"]:
-                raise BackendError("Unresolved native mechanical associations: " + "; ".join(native["errors"]))
-            rf_keys = set(mechanical.get("rf_keys", []))
-            physical = {x["key"] for x in native["locations"] if x["key"] in rf_keys}
-            installed = {key for key, spec in instances.items()
-                         if spec.get("kind", "connector") == "connector" and
-                         spec.get("connector_type", "RF") == "RF"}
-            if physical != installed:
-                raise BackendError("Workbook and complete native mechanical populations differ")
-            accepted_locations = [x for x in native["locations"] if x["key"] in rf_keys]
-            if sorted(accepted_locations, key=lambda x: x["key"]) != sorted(mechanical["locations"], key=lambda x: x["key"]):
-                raise BackendError("Accepted mechanical source geometry or identities changed")
+            native = self.inspect_graphics(
+                board.GetFileName(), mechanical["source_layer"],
+            )
             try:
                 tolerance = feature_tolerance(mechanical["feature_tolerance_mm"])
             except (KeyError, TypeError, ValueError) as error:
                 raise BackendError("Invalid drawing feature tolerance: " + str(error)) from error
-            for location in accepted_locations:
-                instance = instances.get(location["key"])
-                if instance is None:
-                    continue
-                deviation = math.dist(instance.get("pose", ())[:2], location["center"])
-                if deviation > tolerance:
-                    raise BackendError(feature_deviation_message(
-                        location["key"], deviation, tolerance,
-                    ))
-            allowed_location_keys = set(mechanical.get("allowed_location_keys", rf_keys))
-            unexpected = sorted({x["key"] for x in native["locations"]} - allowed_location_keys)
-            if unexpected:
-                raise BackendError(f"Unexpected labelled mechanical locations: {unexpected}")
             circles = {circle["uuid"]: circle for circle in native["circles"]}
-            claimed = {location["circle_uuid"] for location in accepted_locations}
-            claimed.update(
-                anchor.get("circle_uuid") for anchor in
-                mechanical.get("interposer_anchors", {}).values()
-                if anchor.get("circle_uuid")
-            )
+            claimed = set()
+            for reference, accepted in mechanical.get("interposer_anchors", {}).items():
+                circle = circles.get(accepted.get("circle_uuid"))
+                if circle is None or circle["center"] != accepted.get("center"):
+                    raise BackendError(
+                        f"{reference}: accepted interposer center circle changed or is missing"
+                    )
+                claimed.add(circle["uuid"])
+                spec = instances.get(reference)
+                if not spec or list(spec.get("pose", ())[:2]) != list(circle["center"]):
+                    raise BackendError(
+                        f"{reference}: interposer position differs from its accepted center circle"
+                    )
+            for reference, accepted in mechanical.get("mounting_hole_anchors", {}).items():
+                circle = circles.get(accepted.get("circle_uuid"))
+                if circle is None or circle["center"] != accepted.get("center"):
+                    raise BackendError(
+                        f"{reference}: accepted mounting-hole circle changed or is missing"
+                    )
+                spec = instances.get(reference)
+                if not spec or spec.get("kind") != "mounting-hole":
+                    raise BackendError(
+                        f"{reference}: mounting-hole anchor has no matching instance"
+                    )
+                if list(spec.get("pose", ())[:2]) != list(circle["center"]):
+                    raise BackendError(
+                        f"{reference}: mounting-hole position differs from its accepted circle"
+                    )
+                if circle["uuid"] in claimed:
+                    raise BackendError(
+                        f"{reference}: accepted circle is already used by another anchor"
+                    )
+                claimed.add(circle["uuid"])
+
+            rf_keys = set(mechanical.get("rf_keys", []))
+            installed = {key for key, spec in instances.items()
+                         if spec.get("kind", "connector") == "connector" and
+                         spec.get("connector_type", "RF") == "RF"}
+            if rf_keys != installed:
+                raise BackendError("Workbook and complete native mechanical populations differ")
+            rf_features = [
+                (key, instances[key].get("pose", ())[:2]) for key in sorted(installed)
+            ]
+            required = {
+                gang + "-1": accepted.get("circle_uuid", "")
+                for gang, accepted in mechanical.get("rf_anchors", {}).items()
+            }
+            try:
+                rf_matches = match_circle_features(
+                    rf_features, native["circles"], tolerance,
+                    claimed=claimed, required=required,
+                )
+            except ValueError as error:
+                raise BackendError(str(error)) from error
+            accepted_matches = [
+                {name: match[name] for name in ("key", "center", "circle_uuid")}
+                for match in rf_matches
+            ]
+            if accepted_matches != mechanical.get("rf_matches", []):
+                raise BackendError("Accepted RF drawing circles changed or are missing")
+            claimed.update(match["circle_uuid"] for match in rf_matches)
             for reference, accepted in mechanical.get("dc_anchors", {}).items():
                 circle = circles.get(accepted.get("circle_uuid"))
                 if circle is None or circle["center"] != accepted.get("center"):

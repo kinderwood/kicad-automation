@@ -581,10 +581,10 @@ class WorkflowController:
                 if (gang.get('symbol_mpn') and gang.get('footprint_mpn') and
                         gang['symbol_mpn'] != gang['footprint_mpn']):
                     issues.append(Issue('mpn_conflict', f'{name}: symbol and footprint MPN metadata disagree'))
-                if not gang.get('anchor_accepted'):
+                if not gang.get('anchor_accepted') or not gang.get('anchor_circle', {}).get('uuid'):
                     issues.append(Issue(
                         'anchor_missing',
-                        f'{name}: set the RF location 1 anchor in Mechanical placement',
+                        f'{name}: select the RF location 1 circle in Mechanical placement',
                     ))
                 try:
                     pins = set(self.pattern(name))
@@ -638,7 +638,8 @@ class WorkflowController:
                                             f'{name}: symbol is missing workbook pins {sorted(used-available)}'))
                 except (KeyError, OSError, ValueError):
                     pass
-                if not selection.get('anchor_accepted'):
+                if (not selection.get('anchor_accepted') or
+                        not selection.get('anchor_circle', {}).get('uuid')):
                     issues.append(Issue('anchor_missing',
                                         f'{name}: select the DC pin 1 circle in Mechanical placement'))
                 if not selection.get('symbol_mpn') and not selection.get('footprint_mpn'):
@@ -686,10 +687,11 @@ class WorkflowController:
                         ))
                 except (KeyError, OSError, ValueError):
                     pass
-                if not selection.get('pose_accepted'):
+                if (not selection.get('pose_accepted') or
+                        not selection.get('pose_circle', {}).get('uuid')):
                     issues.append(Issue(
                         'interposer_pose_missing',
-                        f'{reference}: set the interposer position in Mechanical placement',
+                        f'{reference}: select the interposer center circle in Mechanical placement',
                     ))
                 if selection.get('pose_accepted') and selection.get('side') not in ('F', 'B'):
                     issues.append(Issue(
@@ -701,6 +703,12 @@ class WorkflowController:
                 if (selection.get('symbol_mpn') and selection.get('footprint_mpn') and
                         selection['symbol_mpn'] != selection['footprint_mpn']):
                     issues.append(Issue('mpn_conflict', f'{reference}: symbol and footprint MPN metadata disagree'))
+            for hole in self.config.get('mounting_holes', []):
+                if not hole.get('pose_circle', {}).get('uuid'):
+                    issues.append(Issue(
+                        'mounting_hole_anchor_missing',
+                        f'{hole.get("reference", "Mounting hole")}: select its drawing circle again',
+                    ))
             microvias = self.config.get('microvias', {})
             if microvias.get('enabled'):
                 reference = self.interposer_reference()
@@ -1003,8 +1011,7 @@ __import__("os")._exit(0)
         from .core.libraries import read_footprint, read_symbol, footprint_matches_filters
         from .core.model import validate_records
         from .core.geometry import (
-            feature_deviation_message, feature_tolerance,
-            validate_mechanical_population,
+            feature_tolerance, match_circle_features,
         )
         from .schematic import PartSelection, generate_schematic, merge_library_table
         if not controller.board_path or not controller.board_path.exists():
@@ -1099,35 +1106,78 @@ __import__("os")._exit(0)
         mechanical = cfg['mechanical']
         if not mechanical.get('accepted'):
             raise ValueError('Set the imported drawing layer and placement anchors first')
-        native = self.call('inspect', board_path=str(controller.board_path), source_layer=mechanical.get('layer', 'Dwgs.User'), label_offset=mechanical.get('label_offset', [0, 0]))
-        if native.get('errors'): raise ValueError('; '.join(str(i) for i in native['errors']))
-        if 'locations' not in native: raise RuntimeError('Native inspector returned no mechanical association data')
+        native = self.call(
+            'inspect', board_path=str(controller.board_path),
+            source_layer=mechanical.get('layer', 'Dwgs.User'),
+        )
+        if 'circles' not in native:
+            raise RuntimeError('Native inspector returned no mechanical circle inventory')
         rf_records = tuple(record for record in records
                            if controller.connector_type(record.connector) == 'RF')
         rf_keys = {record.key for record in rf_records}
-        dc_location_keys = {
-            reference + '-' + pad
-            for reference, part in dc_parts.items()
-            for pad in part.footprint.pad_numbers
-        }
-        unexpected_locations = sorted(
-            {location['key'] for location in native['locations']} - rf_keys - dc_location_keys
-        )
-        if unexpected_locations:
-            raise ValueError(f'Unexpected labelled mechanical locations: {unexpected_locations}')
-        rf_locations = [location for location in native['locations']
-                        if location['key'] in rf_keys]
-        validate_mechanical_population(rf_records, [p['key'] for p in rf_locations])
-        actual_locations = {location['key']: tuple(location['center'])
-                            for location in rf_locations}
         tolerance = feature_tolerance(mechanical['feature_tolerance_mm'])
-        import math
+        circle_by_uuid = {circle['uuid']: circle for circle in native['circles']}
+        claimed = set()
+        interposer_anchors = {}
+        for reference, selection in cfg['interposers'].items():
+            accepted = selection.get('pose_circle', {})
+            circle = circle_by_uuid.get(accepted.get('uuid'))
+            if circle is None or circle['center'] != accepted.get('center'):
+                raise ValueError(
+                    f'{reference}: selected interposer center circle changed or is missing'
+                )
+            if list(selection.get('pose', ())[:2]) != list(circle['center']):
+                raise ValueError(
+                    f'{reference}: interposer position no longer matches its selected center circle'
+                )
+            claimed.add(circle['uuid'])
+            interposer_anchors[reference] = {
+                'circle_uuid': circle['uuid'], 'center': list(circle['center']),
+            }
+        mounting_hole_anchors = {}
+        for hole in cfg.get('mounting_holes', []):
+            reference = hole['reference']
+            accepted = hole.get('pose_circle', {})
+            circle = circle_by_uuid.get(accepted.get('uuid'))
+            if circle is None or circle['center'] != accepted.get('center'):
+                raise ValueError(
+                    f'{reference}: selected mounting-hole circle changed or is missing'
+                )
+            if list(hole.get('pose', ())[:2]) != list(circle['center']):
+                raise ValueError(
+                    f'{reference}: mounting-hole position no longer matches its selected circle'
+                )
+            if circle['uuid'] in claimed:
+                raise ValueError(f'{reference}: selected circle is already used by another anchor')
+            claimed.add(circle['uuid'])
+            mounting_hole_anchors[reference] = {
+                'circle_uuid': circle['uuid'], 'center': list(circle['center']),
+            }
+        rf_features = []
+        required_rf_circles = {}
+        rf_anchors = {}
         for gang in controller.gang_names():
+            settings = controller.gang(gang)
+            accepted = settings.get('anchor_circle', {})
+            circle = circle_by_uuid.get(accepted.get('uuid'))
+            if circle is None or circle['center'] != accepted.get('center'):
+                raise ValueError(
+                    f'{gang}: selected location 1 circle changed or is missing'
+                )
+            required_rf_circles[gang + '-1'] = circle['uuid']
+            rf_anchors[gang] = {
+                'circle_uuid': circle['uuid'], 'center': list(circle['center']),
+            }
             for pin, position in controller.pattern(gang).items():
-                key = gang + '-' + str(pin)
-                deviation = math.dist(position, actual_locations[key])
-                if deviation > tolerance:
-                    raise ValueError(feature_deviation_message(key, deviation, tolerance))
+                rf_features.append((gang + '-' + str(pin), position))
+        rf_matches = match_circle_features(
+            sorted(rf_features), native['circles'], tolerance,
+            claimed=claimed, required=required_rf_circles,
+        )
+        rf_locations = [
+            {name: match[name] for name in ('key', 'center', 'circle_uuid')}
+            for match in rf_matches
+        ]
         name = controller.board_path.stem
         bundle = generate_schematic(records, gang_parts, interposer_parts, cfg['project_id'],
                                     project_name=name, dc_parts=dc_parts)
@@ -1212,10 +1262,9 @@ __import__("os")._exit(0)
         desired = {'instances': instances, 'outline': outline, 'project_files': project_files, 'project_file_merges': [name + '.kicad_pro', 'sym-lib-table', 'fp-lib-table'],
                    'mechanical': {
                        'source_layer': mechanical.get('layer', 'Dwgs.User'),
-                       'label_offset': mechanical.get('label_offset', [0, 0]),
-                       'locations': rf_locations,
+                       'rf_matches': rf_locations,
                        'rf_keys': sorted(rf_keys),
-                       'allowed_location_keys': sorted(rf_keys | dc_location_keys),
+                       'rf_anchors': rf_anchors,
                        'dc_anchors': {
                            reference: {
                                'circle_uuid': controller.dc_connector(reference).get('anchor_circle', {}).get('uuid', ''),
@@ -1223,13 +1272,8 @@ __import__("os")._exit(0)
                            }
                            for reference in controller.dc_connector_names()
                        },
-                       'interposer_anchors': {
-                           reference: {
-                               'circle_uuid': selection.get('pose_circle', {}).get('uuid', ''),
-                               'center': selection.get('pose_circle', {}).get('center', []),
-                           }
-                           for reference, selection in cfg['interposers'].items()
-                       },
+                       'interposer_anchors': interposer_anchors,
+                       'mounting_hole_anchors': mounting_hole_anchors,
                        'feature_tolerance_mm': tolerance,
                    }}
         if cfg.get('microvias', {}).get('enabled'):

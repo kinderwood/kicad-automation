@@ -2,17 +2,15 @@
 from dataclasses import asdict, dataclass, field
 import uuid
 from .identities import canonical_json
-from .geometry import DEFAULT_FEATURE_TOLERANCE_MM, feature_tolerance, finite
+from .geometry import DEFAULT_FEATURE_TOLERANCE_MM, feature_tolerance
 from .units import DIMENSION_UNITS
 
-CONFIG_VERSION = 7
+CONFIG_VERSION = 8
 
 
 def _mechanical_defaults():
     return {
         'layer': 'Dwgs.User',
-        'label_offset': [0, 0],
-        'label_offset_units': ['mil', 'mil'],
         'feature_tolerance_mm': DEFAULT_FEATURE_TOLERANCE_MM,
         'feature_tolerance_unit': 'mil',
         'accepted': False,
@@ -64,18 +62,12 @@ class ProjectConfig:
             raise ValueError('Unsupported presentation or invalid output directory')
         try:
             layer = result.mechanical['layer']
-            offset = result.mechanical['label_offset']
-            offset_units = result.mechanical['label_offset_units']
             accepted = result.mechanical['accepted']
             feature_tolerance(result.mechanical['feature_tolerance_mm'])
             tolerance_unit = result.mechanical['feature_tolerance_unit']
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError('Mechanical settings are incomplete or invalid') from error
         if (not isinstance(layer, str) or not layer or
-                not isinstance(offset, list) or len(offset) != 2 or
-                not all(finite(value) for value in offset) or
-                not isinstance(offset_units, list) or len(offset_units) != 2 or
-                any(unit not in DIMENSION_UNITS for unit in offset_units) or
                 type(accepted) is not bool or tolerance_unit not in DIMENSION_UNITS):
             raise ValueError('Mechanical settings are incomplete or invalid')
         return result

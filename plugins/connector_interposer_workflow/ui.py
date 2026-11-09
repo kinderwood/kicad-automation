@@ -2914,18 +2914,15 @@ class WorkflowDialog(wx.Dialog):
         if hasattr(self, 'anchor_interposer_ref'):
             self.anchor_interposer_ref.SetLabel('Reference: ' + (reference or '—'))
             pose = interposer.get('pose', [0, 0, 0])
-            pose_units = interposer.get('pose_units', ['mil', 'mil'])
             self._loading_placement = True
             try:
-                self.interposer_x.set_mm(pose[0], pose_units[0])
-                self.interposer_y.set_mm(pose[1], pose_units[1])
                 self.interposer_rotation.ChangeValue(str(pose[2]))
                 self.interposer_side.SetSelection(1 if interposer.get('side') == 'B' else 0)
             finally:
                 self._loading_placement = False
             self.interposer_pose_status.SetLabel(
                 f'{reference} placement is ready.' if reference and interposer.get('pose_accepted')
-                else 'Set the interposer position or select its center circle.'
+                else 'Select the interposer center circle.'
             )
             self._style_status(
                 self.interposer_pose_status,
@@ -3864,7 +3861,7 @@ class WorkflowDialog(wx.Dialog):
 
         drawing_page = wx.Panel(self.placement_notebook)
         drawing_page.SetSizer(wx.BoxSizer(wx.VERTICAL))
-        drawing_box = wx.StaticBox(drawing_page, label='Imported drawing association')
+        drawing_box = wx.StaticBox(drawing_page, label='Imported drawing inventory')
         drawing = wx.StaticBoxSizer(drawing_box, wx.VERTICAL)
         drawing_fields = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
         drawing_fields.Add(wx.StaticText(drawing_box, label='Source layer'), 0,
@@ -3878,14 +3875,6 @@ class WorkflowDialog(wx.Dialog):
         self.user_layer.SetMinSize((180, -1))
         self.user_layer.SetMaxSize((220, -1))
         drawing_fields.Add(self.user_layer, 0, wx.ALIGN_LEFT)
-        drawing_fields.Add(wx.StaticText(drawing_box, label='Label offset X'), 0,
-                           wx.ALIGN_CENTER_VERTICAL)
-        self.label_offset_x = DimensionInput(drawing_box, value='0', compact=True)
-        drawing_fields.Add(self.label_offset_x, 0, wx.ALIGN_LEFT)
-        drawing_fields.Add(wx.StaticText(drawing_box, label='Label offset Y'), 0,
-                           wx.ALIGN_CENTER_VERTICAL)
-        self.label_offset_y = DimensionInput(drawing_box, value='0', compact=True)
-        drawing_fields.Add(self.label_offset_y, 0, wx.ALIGN_LEFT)
         drawing_fields.Add(wx.StaticText(drawing_box, label='Center tolerance'), 0,
                            wx.ALIGN_CENTER_VERTICAL)
         self.feature_tolerance = DimensionInput(drawing_box, value='0.3', compact=True)
@@ -3894,7 +3883,7 @@ class WorkflowDialog(wx.Dialog):
         tolerance_help = wx.StaticText(
             drawing_box,
             label=('Maximum center-to-center deviation when matching calculated RF '
-                   'locations and DC pads to drawing circles.'),
+                   'locations, DC pads, and complete interposer pad sets to drawing circles.'),
         )
         tolerance_help.Wrap(620)
         drawing.Add(tolerance_help, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -3914,8 +3903,8 @@ class WorkflowDialog(wx.Dialog):
             drawing_page, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 190),
         )
         for column, (heading, width) in enumerate((
-            ('Location', 120), ('X', 105), ('Y', 105),
-            ('Circle source', 240), ('Label source', 240),
+            ('Circle', 70), ('X', 105), ('Y', 105),
+            ('Radius', 105), ('Source UUID', 350),
         )):
             self.mechanical_list.InsertColumn(column, heading, width=width)
         self.mechanical_list.SetMinSize((814, 190))
@@ -3932,14 +3921,6 @@ class WorkflowDialog(wx.Dialog):
         self.anchor_interposer_ref = wx.StaticText(interposer_box, label='Reference: —')
         interposer.Add(self.anchor_interposer_ref, 0, wx.ALL, 8)
         interposer_fields = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
-        interposer_fields.Add(wx.StaticText(interposer_box, label='Position X'), 0,
-                              wx.ALIGN_CENTER_VERTICAL)
-        self.interposer_x = DimensionInput(interposer_box, value='0', compact=True)
-        interposer_fields.Add(self.interposer_x, 0, wx.ALIGN_LEFT)
-        interposer_fields.Add(wx.StaticText(interposer_box, label='Position Y'), 0,
-                              wx.ALIGN_CENTER_VERTICAL)
-        self.interposer_y = DimensionInput(interposer_box, value='0', compact=True)
-        interposer_fields.Add(self.interposer_y, 0, wx.ALIGN_LEFT)
         interposer_fields.Add(wx.StaticText(interposer_box, label='Orientation (degrees)'), 0,
                               wx.ALIGN_CENTER_VERTICAL)
         self.interposer_rotation = wx.TextCtrl(
@@ -3962,7 +3943,7 @@ class WorkflowDialog(wx.Dialog):
             0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8,
         )
         self.interposer_pose_status = self.status_label(
-            interposer_box, 'Set the interposer position or select its center circle.'
+            interposer_box, 'Select the interposer center circle.'
         )
         self._style_status(self.interposer_pose_status, 'warning')
         interposer.Add(self.interposer_pose_status, 0,
@@ -3992,16 +3973,6 @@ class WorkflowDialog(wx.Dialog):
         rf_editor_box = wx.StaticBox(rf_page, label='Select an RF gang')
         rf_editor = wx.StaticBoxSizer(rf_editor_box, wx.VERTICAL)
         self.anchor_gang_title = rf_editor_box
-        rf_fields = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
-        rf_fields.Add(wx.StaticText(rf_editor_box, label='Location 1 X'), 0,
-                      wx.ALIGN_CENTER_VERTICAL)
-        self.anchor_x = DimensionInput(rf_editor_box, value='0', compact=True)
-        rf_fields.Add(self.anchor_x, 0, wx.ALIGN_LEFT)
-        rf_fields.Add(wx.StaticText(rf_editor_box, label='Location 1 Y'), 0,
-                      wx.ALIGN_CENTER_VERTICAL)
-        self.anchor_y = DimensionInput(rf_editor_box, value='0', compact=True)
-        rf_fields.Add(self.anchor_y, 0, wx.ALIGN_LEFT)
-        rf_editor.Add(rf_fields, 0, wx.ALL, 8)
         rf_editor.Add(
             self.button(rf_editor_box, 'Use selected location 1 circle',
                         self.capture_circle),
@@ -4085,16 +4056,7 @@ class WorkflowDialog(wx.Dialog):
         self.hole_ref = wx.TextCtrl(hole_box, value='H1')
         hole_ref_row.Add(self.hole_ref, 1, wx.EXPAND)
         hole_editor.Add(hole_ref_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        hole_fields = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
-        hole_fields.Add(wx.StaticText(hole_box, label='Position X'), 0,
-                        wx.ALIGN_CENTER_VERTICAL)
-        self.hole_x = DimensionInput(hole_box, value='0', compact=True)
-        hole_fields.Add(self.hole_x, 0, wx.ALIGN_LEFT)
-        hole_fields.Add(wx.StaticText(hole_box, label='Position Y'), 0,
-                        wx.ALIGN_CENTER_VERTICAL)
-        self.hole_y = DimensionInput(hole_box, value='0', compact=True)
-        hole_fields.Add(self.hole_y, 0, wx.ALIGN_LEFT)
-        hole_editor.Add(hole_fields, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.pending_hole_circle = None
         hole_actions = wx.BoxSizer(wx.HORIZONTAL)
         hole_actions.Add(
             self.button(hole_box, 'Use selected circle', self.capture_hole_circle),
@@ -4131,16 +4093,10 @@ class WorkflowDialog(wx.Dialog):
 
         self.user_layer.Bind(wx.EVT_COMBOBOX, self._mechanical_source_changed)
         self.user_layer.Bind(wx.EVT_TEXT_ENTER, self._mechanical_source_changed)
-        self.label_offset_x.bind_changed(self._mechanical_source_changed)
-        self.label_offset_y.bind_changed(self._mechanical_source_changed)
         self.feature_tolerance.bind_changed(self._mechanical_source_changed)
-        self.interposer_x.bind_changed(self._interposer_placement_changed)
-        self.interposer_y.bind_changed(self._interposer_placement_changed)
         self.interposer_rotation.Bind(wx.EVT_TEXT_ENTER, self._interposer_placement_changed)
         self.interposer_rotation.Bind(wx.EVT_KILL_FOCUS, self._interposer_placement_changed)
         self.interposer_side.Bind(wx.EVT_CHOICE, self._interposer_placement_changed)
-        self.anchor_x.bind_changed(self._rf_anchor_changed)
-        self.anchor_y.bind_changed(self._rf_anchor_changed)
         self.anchor_gang_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_anchor_gangs())
         self.anchor_gang_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.select_anchor_gang)
         self.dc_anchor_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_dc_anchors())
@@ -4168,17 +4124,10 @@ class WorkflowDialog(wx.Dialog):
         layer = self.user_layer.GetValue().strip()
         if not layer:
             raise ValueError('Choose the user layer that contains the imported drawing')
-        offset = [self.label_offset_x.value_mm(), self.label_offset_y.value_mm()]
-        if not all(math.isfinite(value) for value in offset):
-            raise ValueError('Drawing label offsets must be finite numbers')
         from .core.geometry import feature_tolerance
         tolerance = feature_tolerance(self.feature_tolerance.value_mm())
         mechanical = self.controller.config['mechanical']
         mechanical['layer'] = layer
-        mechanical['label_offset'] = offset
-        mechanical['label_offset_units'] = [
-            self.label_offset_x.selected_unit(), self.label_offset_y.selected_unit(),
-        ]
         mechanical['feature_tolerance_mm'] = tolerance
         mechanical['feature_tolerance_unit'] = self.feature_tolerance.selected_unit()
         mechanical['accepted'] = True
@@ -4195,7 +4144,7 @@ class WorkflowDialog(wx.Dialog):
             self._style_status(self.drawing_status, 'error')
         else:
             self.drawing_status.SetLabel(
-                'Drawing settings updated. Inspect the saved drawing to verify associations.'
+                'Drawing settings updated. Inspect the saved drawing to refresh its inventory.'
             )
             self._style_status(self.drawing_status, 'warning')
         self._skip_event(event)
@@ -4230,31 +4179,28 @@ class WorkflowDialog(wx.Dialog):
             self._style_status(self.interposer_pose_status, 'warning')
             self._skip_event(event)
             return
+        circle = source_circle or selection.get('pose_circle', {})
         try:
-            pose = [self.interposer_x.value_mm(), self.interposer_y.value_mm(),
-                    float(self.interposer_rotation.GetValue())]
-            if not all(math.isfinite(value) for value in pose):
+            rotation = float(self.interposer_rotation.GetValue())
+            center = list(circle.get('center', ()))
+            if (not math.isfinite(rotation) or len(center) != 2 or
+                    not all(math.isfinite(value) for value in center)):
                 raise ValueError
         except ValueError:
             self.interposer_pose_status.SetLabel(
-                'Needs input — position and orientation must be finite numbers.'
+                'Needs input — select the center circle and enter a finite orientation.'
             )
             self._style_status(self.interposer_pose_status, 'error')
             self._skip_event(event)
             return
-        circle = source_circle or selection.get('pose_circle', {})
-        if circle and source_circle is None and list(circle.get('center', ())) != pose[:2]:
-            circle = {}
-        selection['pose'] = pose
-        selection['pose_units'] = [
-            self.interposer_x.selected_unit(), self.interposer_y.selected_unit(),
-        ]
+        selection['pose'] = [center[0], center[1], rotation]
         selection['pose_circle'] = circle
         selection['side'] = 'B' if self.interposer_side.GetSelection() == 1 else 'F'
         selection['pose_accepted'] = True
         self.controller.changed()
-        source = 'selected center circle' if circle else 'entered coordinates'
-        self.interposer_pose_status.SetLabel(f'{reference} placed from {source}.')
+        self.interposer_pose_status.SetLabel(
+            f'{reference} placed from its selected center circle.'
+        )
         self._style_status(self.interposer_pose_status, 'success')
         self._skip_event(event)
 
@@ -4350,11 +4296,9 @@ class WorkflowDialog(wx.Dialog):
 
     def capture_interposer_circle(self, event):
         circle, center = self._selected_mechanical_circle('interposer center')
-        self.interposer_x.set_mm(center[0])
-        self.interposer_y.set_mm(center[1])
         self._store_mechanical_source()
         self.drawing_status.SetLabel(
-            'Drawing layer recorded from the selected circle. Inspect the saved drawing to verify associations.'
+            'Drawing layer recorded from the selected circle. Inspect the saved drawing to refresh its inventory.'
         )
         self._style_status(self.drawing_status, 'warning')
         self._interposer_placement_changed(source_circle={
@@ -4415,20 +4359,11 @@ class WorkflowDialog(wx.Dialog):
             self._skip_event(event)
             return
         settings = self.controller.gang(gang)
-        anchor = settings.get('anchor', [0, 0])
-        units = settings.get('display_units', {})
-        self._loading_placement = True
-        try:
-            self.anchor_x.set_mm(anchor[0], units.get('anchor_x', 'mil'))
-            self.anchor_y.set_mm(anchor[1], units.get('anchor_y', 'mil'))
-        finally:
-            self._loading_placement = False
         self.anchor_gang_title.SetLabel(f'{gang} location 1 anchor')
-        accepted = bool(settings.get('anchor_accepted'))
-        source = 'selected circle' if settings.get('anchor_circle') else 'coordinates'
+        accepted = bool(settings.get('anchor_circle', {}).get('uuid'))
         self.anchor_status.SetLabel(
-            f'{gang} placed from {source}.' if accepted
-            else f'{gang} needs a location 1 anchor.'
+            f'{gang} placed from its selected location 1 circle.' if accepted
+            else f'{gang} needs a selected location 1 circle.'
         )
         self._style_status(self.anchor_status, 'success' if accepted else 'warning')
         self._skip_event(event)
@@ -4441,37 +4376,24 @@ class WorkflowDialog(wx.Dialog):
         if not gang:
             self._skip_event(event)
             return
-        try:
-            anchor = [self.anchor_x.value_mm(), self.anchor_y.value_mm()]
-            if not all(math.isfinite(value) for value in anchor):
-                raise ValueError
-        except ValueError:
-            self.anchor_status.SetLabel('Needs input — location 1 must use finite coordinates.')
+        circle = source_circle or {}
+        anchor = list(circle.get('center', ()))
+        if len(anchor) != 2 or not all(math.isfinite(value) for value in anchor):
+            self.anchor_status.SetLabel('Needs input — select the location 1 circle.')
             self._style_status(self.anchor_status, 'error')
             self._skip_event(event)
             return
-        settings = self.controller.gang(gang)
-        display_units = dict(settings.get('display_units', {}))
-        display_units['anchor_x'] = self.anchor_x.selected_unit()
-        display_units['anchor_y'] = self.anchor_y.selected_unit()
-        circle = source_circle or settings.get('anchor_circle', {})
-        if circle and source_circle is None and list(circle.get('center', ())) != anchor:
-            circle = {}
         self.controller.set_gang(gang, {
-            'anchor': anchor, 'display_units': display_units,
-            'anchor_circle': circle, 'anchor_accepted': True,
+            'anchor': anchor, 'anchor_circle': circle, 'anchor_accepted': True,
         })
         self._store_mechanical_source()
-        source = 'selected location 1 circle' if circle else 'entered coordinates'
-        self.anchor_status.SetLabel(f'{gang} placed from {source}.')
+        self.anchor_status.SetLabel(f'{gang} placed from its selected location 1 circle.')
         self._style_status(self.anchor_status, 'success')
         self.refresh_anchor_gangs()
         self._skip_event(event)
 
     def capture_circle(self, event):
         circle, center = self._selected_mechanical_circle('RF location 1')
-        self.anchor_x.set_mm(center[0])
-        self.anchor_y.set_mm(center[1])
         self._rf_anchor_changed(source_circle={
             'uuid': circle.m_Uuid.AsString(), 'center': center,
         })
@@ -4604,54 +4526,50 @@ class WorkflowDialog(wx.Dialog):
         backend = self.controller.backend
         if backend is None or not hasattr(backend, 'call'): raise ValueError('KiCad native backend is unavailable')
         layer = self.user_layer.GetValue()
-        offset = [self.label_offset_x.value_mm(), self.label_offset_y.value_mm()]
         def complete(result):
             if self._closing: return
             self.mechanical_list.DeleteAllItems()
-            for location in result['locations']:
-                row = self.mechanical_list.InsertItem(self.mechanical_list.GetItemCount(), location['key'])
+            for number, circle in enumerate(result['circles'], 1):
+                row = self.mechanical_list.InsertItem(
+                    self.mechanical_list.GetItemCount(), str(number),
+                )
                 values = (
-                    f'{dimension_text(float(location["center"][0]), "mil")} mil',
-                    f'{dimension_text(float(location["center"][1]), "mil")} mil',
-                    location['circle_uuid'], location['text_uuid'],
+                    f'{dimension_text(float(circle["center"][0]), "mil")} mil',
+                    f'{dimension_text(float(circle["center"][1]), "mil")} mil',
+                    f'{dimension_text(float(circle["radius"]), "mil")} mil',
+                    circle['uuid'],
                 )
                 for col, value in enumerate(values, 1):
                     self.mechanical_list.SetItem(row, col, str(value))
-            errors = list(result.get('errors', []))
-            if self.controller.table:
-                from .core.geometry import validate_mechanical_population
-                rf_records = tuple(record for record in self.controller.table.records
-                                   if self.controller.connector_type(record.connector) == 'RF')
-                rf_keys = {record.key for record in rf_records}
-                try: validate_mechanical_population(
-                    rf_records, [p['key'] for p in result['locations'] if p['key'] in rf_keys],
-                )
-                except ValueError as error: errors.append(str(error))
-            if errors:
-                self.drawing_status.SetLabel('Blocked — ' + '; '.join(errors))
-                self._style_status(self.drawing_status, 'error')
-            else:
-                self.drawing_status.SetLabel(
-                    f"{len(result['locations'])} drawing locations matched their circles and labels."
-                )
-                self._style_status(self.drawing_status, 'success')
+            self.drawing_status.SetLabel(
+                f"Drawing inventory: {len(result['circles'])} circles, "
+                f"{len(result['segments'])} segments/arcs, and "
+                f"{len(result['texts'])} text items. Text is not used for matching."
+            )
+            self._style_status(self.drawing_status, 'success')
             self.refresh()
-        self.controller.run_async(lambda: backend.call('inspect', board_path=str(self.controller.board_path), source_layer=layer, label_offset=offset), complete, self.failed)
+        self.controller.run_async(
+            lambda: backend.call(
+                'inspect', board_path=str(self.controller.board_path),
+                source_layer=layer,
+            ),
+            complete, self.failed,
+        )
         self.refresh()
 
     def capture_hole_circle(self, event):
-        _circle, center = self._selected_mechanical_circle('mounting hole')
-        self.hole_x.set_mm(center[0])
-        self.hole_y.set_mm(center[1])
+        circle, center = self._selected_mechanical_circle('mounting hole')
+        self.pending_hole_circle = {
+            'uuid': circle.m_Uuid.AsString(), 'center': center,
+        }
         self._store_mechanical_source()
         self.drawing_status.SetLabel(
-            'Drawing layer recorded from the selected circle. Inspect the saved drawing to verify associations.'
+            'Drawing layer recorded from the selected circle. Inspect the saved drawing to refresh its inventory.'
         )
         self._style_status(self.drawing_status, 'warning')
-        hole_units = (self.hole_x.selected_unit(), self.hole_y.selected_unit())
         self.hole_status.SetLabel(
             f'New mounting hole positioned at '
-            f'{self._coordinate_text(center, hole_units)}.'
+            f'{self._coordinate_text(center)}.'
         )
         self._style_status(self.hole_status, 'warning')
 
@@ -4661,6 +4579,8 @@ class WorkflowDialog(wx.Dialog):
         selection = self.hole_path.GetSelectionSpec()
         if not path or not selection.get('library_id'):
             raise ValueError('Select a mounting-hole footprint from KiCad libraries')
+        if self.pending_hole_circle is None:
+            raise ValueError('Select the mounting-hole circle')
         part = read_footprint(path, selection['library_id'], selection.get('sha256'), allow_mechanical=True)
         reference = self.hole_ref.GetValue().strip()
         if not reference: raise ValueError('Mounting-hole reference is required')
@@ -4668,8 +4588,10 @@ class WorkflowDialog(wx.Dialog):
         if any(h['reference'] == reference for h in holes): raise ValueError('Mounting-hole reference already exists')
         holes.append({'reference': reference, 'path': str(Path(path).resolve()), 'sha256': part.sha256,
                       'library_id': part.library_id,
-                      'pose': [self.hole_x.value_mm(), self.hole_y.value_mm(), 0],
-                      'pose_units': [self.hole_x.selected_unit(), self.hole_y.selected_unit()]})
+                      'pose': [*self.pending_hole_circle['center'], 0],
+                      'pose_circle': dict(self.pending_hole_circle),
+                      'pose_units': ['mil', 'mil']})
+        self.pending_hole_circle = None
         self.controller.changed()
         self.hole_status.SetLabel(
             f'{reference} added as board-only and excluded from BOM and position files.'
@@ -5016,12 +4938,6 @@ class WorkflowDialog(wx.Dialog):
                 (self.output_dir, ''), (self.journal, ''),
             ):
                 control.ChangeValue(value)
-            for control in (
-                self.interposer_x, self.interposer_y, self.label_offset_x,
-                self.label_offset_y, self.anchor_x, self.anchor_y,
-                self.hole_x, self.hole_y,
-            ):
-                control.set_mm(0, 'mil')
             from .core.geometry import DEFAULT_FEATURE_TOLERANCE_MM
             self.feature_tolerance.set_mm(DEFAULT_FEATURE_TOLERANCE_MM, 'mil')
             self.dc_anchor_side.SetSelection(0)
@@ -5032,12 +4948,13 @@ class WorkflowDialog(wx.Dialog):
         self.microvia_size.Set([])
         self._microvia_choice_pairs = []
         self.hole_path.set_selection({})
+        self.pending_hole_circle = None
         self.drawing_status.SetLabel(
             'Choose the imported drawing layer, then inspect the saved board.'
         )
         self._style_status(self.drawing_status, 'warning')
         self.interposer_pose_status.SetLabel(
-            'Set the interposer position or select its center circle.'
+            'Select the interposer center circle.'
         )
         self._style_status(self.interposer_pose_status, 'warning')
         self.anchor_status.SetLabel('Select an RF gang.')
@@ -5102,11 +5019,8 @@ class WorkflowDialog(wx.Dialog):
         if cfg.get('interposers'):
             ref, part = next(iter(cfg['interposers'].items()))
             pose = part.get('pose', [0, 0, 0])
-            pose_units = part.get('pose_units', ['mil', 'mil'])
             self._loading_placement = True
             try:
-                self.interposer_x.set_mm(pose[0], pose_units[0])
-                self.interposer_y.set_mm(pose[1], pose_units[1])
                 self.interposer_rotation.ChangeValue(str(pose[2]))
                 self.interposer_side.SetSelection(1 if part.get('side') == 'B' else 0)
             finally:
@@ -5120,10 +5034,6 @@ class WorkflowDialog(wx.Dialog):
         self.outline_view.show(cfg['outline'].get('source_preview', {}))
         self._loading_placement = True
         self.user_layer.ChangeValue(cfg['mechanical']['layer'])
-        offset = cfg['mechanical']['label_offset']
-        offset_units = cfg['mechanical']['label_offset_units']
-        self.label_offset_x.set_mm(offset[0], offset_units[0])
-        self.label_offset_y.set_mm(offset[1], offset_units[1])
         self.feature_tolerance.set_mm(
             cfg['mechanical']['feature_tolerance_mm'],
             cfg['mechanical']['feature_tolerance_unit'],
@@ -5131,7 +5041,7 @@ class WorkflowDialog(wx.Dialog):
         self._loading_placement = False
         if cfg['mechanical'].get('accepted'):
             self.drawing_status.SetLabel(
-                'Drawing settings restored. Inspect the saved drawing to verify associations.'
+                'Drawing settings restored. Inspect the saved drawing to refresh its inventory.'
             )
             self._style_status(self.drawing_status, 'warning')
         self.refresh_layers()

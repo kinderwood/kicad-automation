@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.5.3 and the
+are authorized. Connector to Interposer Workflow is version 0.5.4 and the
 separate GPPO RF Transition Designer is version 0.1.2; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The BGA
 Interposer Wizard remains an independent package at version 0.16.1.
@@ -299,7 +299,7 @@ until selected. Clear assignment also removes the stored interposer, RF, DC or
 bulk footprint mapping.
 
 Version 0.4.22 replaces the flat Connector placement form with **Mechanical
-placement** and five native tabs for imported drawing association, interposer,
+placement** and five native tabs for imported drawing inventory, interposer,
 RF anchors, DC connectors and mounting holes. RF and DC targets use the stable
 selector-plus-editor pattern established by Define RF gangs. Complete numeric,
 orientation, side, layer and offset values update the workflow when committed;
@@ -344,7 +344,16 @@ the applicable display unit directly in coordinate lists. Angular inputs are
 explicitly labelled in degrees. Native layout checks prevent the step from
 introducing horizontal page overflow.
 
-The complete 161-test native/CLI suite and all three packaged PCM loader checks
+Version 0.5.4 removes text-label association and manually entered placement
+coordinates from Mechanical placement. Saved drawing text remains visible only
+as inventory. Explicit interposer-center, RF location-1, DC pin-1 and
+mounting-hole circle selections establish identity; complete RF and DC feature
+sets are then matched geometrically one-to-one within the configured tolerance.
+Unmatched extra circles are ignored, while missing, duplicate and ambiguous
+required matches block Review. Optional interposer pad circles retain the
+complete-set warning behavior introduced in 0.5.2.
+
+The complete 163-test native/CLI suite and all three packaged PCM loader checks
 pass on both KiCad 10.0.0 and 10.0.8. The 14-test native dialog suite passes on
 10.0.8 under both Adwaita light and dark themes.
 

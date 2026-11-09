@@ -97,12 +97,55 @@ class GangDefinition:
         return True
 
 
-def validate_mechanical_population(records, locations):
-    """Locations is a sequence of physical keys; duplicates remain visible."""
-    expected = {r.key for r in records}
-    actual = list(locations)
-    duplicate = sorted({key for key in actual if actual.count(key) > 1})
-    missing, extra = sorted(expected-set(actual)), sorted(set(actual)-expected)
-    if duplicate or missing or extra:
-        raise ValueError(f"Mechanical population mismatch: missing {missing}, extra {extra}, duplicate {duplicate}")
-    return True
+def match_circle_features(features, circles, tolerance, claimed=(), required=None):
+    """Match named expected centers to unique drawing circles within tolerance."""
+    tolerance = feature_tolerance(tolerance)
+    required = required or {}
+    unavailable = set(claimed)
+    by_uuid = {circle['uuid']: circle for circle in circles}
+    matches = []
+    for feature, center in features:
+        required_uuid = required.get(feature)
+        if required_uuid:
+            circle = by_uuid.get(required_uuid)
+            if circle is None:
+                raise ValueError(f'{feature}: selected drawing circle is missing')
+            candidates = [circle] if required_uuid not in unavailable else []
+        else:
+            candidates = [circle for circle in circles
+                          if circle['uuid'] not in unavailable]
+        distances = [(circle, math.dist(circle['center'], center))
+                     for circle in candidates]
+        within = [(circle, deviation) for circle, deviation in distances
+                  if deviation <= tolerance]
+        if not within:
+            if distances:
+                closest = min(deviation for _circle, deviation in distances)
+                raise ValueError(feature_deviation_message(feature, closest, tolerance))
+            raise ValueError(
+                f'{feature}: no drawing circles remain to match; limit is '
+                f'{distance_text(tolerance)}'
+            )
+        if len(within) != 1:
+            deviations = ', '.join(distance_text(deviation)
+                                   for _circle, deviation in within)
+            raise ValueError(
+                f'{feature}: {len(within)} drawing circles match at center '
+                f'deviations {deviations}; limit is {distance_text(tolerance)}'
+            )
+        circle, deviation = within[0]
+        matches.append({
+            'key': feature,
+            'center': list(circle['center']),
+            'circle_uuid': circle['uuid'],
+            'deviation_mm': deviation,
+        })
+    used = {}
+    for match in matches:
+        prior = used.get(match['circle_uuid'])
+        if prior:
+            raise ValueError(
+                f'{prior} and {match["key"]} match the same drawing circle'
+            )
+        used[match['circle_uuid']] = match['key']
+    return matches
