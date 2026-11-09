@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.5.5**, testing release. The package targets KiCad 10.0.0 through
+Version **0.6.0**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -32,14 +32,15 @@ removes that saved sidecar while leaving the current dialog entries open.
 preserving the project identity, detected stackup and any saved sidecar. None of
 these settings actions updates the PCB or schematic. Layer assignments take effect
 in the current workflow as soon as they are selected. **Apply** is the separate,
-review-gated operation that creates the output project copy.
+review-gated operation that updates the open project.
 
-Apply operates on a new, separate output project directory. The source project
-is read-only to the native backend. Save source edits before comparison: native
-mechanical inspection and reconciliation use the saved PCB, not unsaved canvas
-state. Do not open the output project in another editor during application or
-recovery. After Apply, open the output project explicitly; continuing to save
-an already-open source board does not update the output copy.
+Compare auto-saves the open PCB. Apply verifies a complete candidate update
+without changing the project, then reconciles the active board and publishes the staged
+project files. Close Schematic Editor before applying; PCB Editor remains open.
+Native mechanical inspection and comparison use the saved PCB, not unsaved
+canvas state. A persistent journal records exact before/after files. Recovery
+requires all KiCad editors for the project to be closed and refuses to overwrite
+files changed after the transaction.
 
 1. **Netlist source:** choose `.xlsx`, UTF-8 `.csv`, or delimited UTF-8 `.txt`.
    The workbook opens automatically, with the worksheet deliberately left blank
@@ -152,7 +153,15 @@ an already-open source board does not update the output copy.
    Transition Designer…** is a disabled placeholder in this release.
 8. **Mechanical placement:** import the complete mechanical drawing through
    KiCad's native **File → Import → Graphics**, select its user layer, and
-   save the board. Five native tabs separate drawing inventory, interposer,
+   save the board. Click **Inspect saved drawing** before selecting anchors.
+   Inspection fingerprints the complete imported layer, including native object
+   UUIDs. Every selected circle is accepted only for that exact drawing revision.
+   When KiCad exposes a different transient UUID for the selected live graphic,
+   the explicit click is resolved uniquely to the current inspected saved circle
+   and stores that saved UUID.
+   Reimporting or replacing a DXF therefore requires a new inspection and explicit
+   reselection, even when its visible geometry is identical. A unique geometry
+   match may be shown as a suggestion but is never silently accepted. Five native tabs separate drawing inventory, interposer,
    RF anchor, DC connector and mounting-hole work. The bounded drawing
    inventory lists saved circles, lines/arcs and optional text. Text is
    shown only as drawing context and is never parsed for identity or placement.
@@ -193,14 +202,18 @@ an already-open source board does not update the output copy.
    separately. Review validates exact closure, intersections and ownership.
    Only managed outline objects are replaced; designer Edge.Cuts stay intact.
 11. **Review changes:** compare the full desired population, review additions,
-   removals, placement/electrical/RF changes and conflicts, and choose an empty
-   output directory outside the source project tree. Accept the current change
-   list before Apply. Input changes make the preview stale. Affected designer
-   routing and ownership conflicts block application.
-12. **Apply / results:** inspect the saved board, generated schematic hierarchy,
-   individual-component BOM, registry, report and recovery journal in the output
-   copy. Recovery requires a closed output project and matching expected file
-   hashes; later edits are not silently overwritten.
+   removals, placement/electrical/RF changes and conflicts. Accept the current
+   change list before Apply. Input changes make the preview stale. Physical or
+   topology changes affecting designer copper block application. An unchanged,
+   isolated exact-endpoint designer track/via component may retain its UUID and
+   geometry when all boundary pads move together to one new net; the reviewed
+   comparison shows that net-only retag. Zones, net-bearing shapes and ambiguous
+   routes remain blocking.
+12. **Apply / results:** inspect the updated open board, managed schematic
+   hierarchy, individual-component BOM, registry, report and recovery journal.
+   The complete file transaction is staged before the live board changes. If
+   publication fails after in-memory reconciliation, close PCB Editor without
+   saving and recover the named journal with the project closed.
 
 The source `.connector-interposer-workflow.json` sidecar stores project identity
 and workflow settings,
@@ -215,9 +228,23 @@ symbols and RF artifacts remain pinned under `.connector-interposer-pinned`.
 Generated project-local footprint
 aliases avoid taking over designer library-table entries. Generated-file ownership,
 instance UUIDs and immutable artifact pins are stored separately in the project.
-Existing unowned schematics or conflicting library-table aliases are blocking
+The project root schematic remains designer-owned. The workflow maintains one
+stable root-sheet entry and writes its generated sheets and symbol libraries
+under `.connector-interposer-managed/`; unrelated root sheets and symbols survive
+reruns. Manual changes to the managed root-sheet entry or generated child files
+are ownership conflicts rather than being overwritten. Conflicting library-table aliases are blocking
 conflicts. Native annotation must preserve existing tool references; resetting
 annotation can change mechanical identities and is not an accepted update path.
+
+This ownership model follows KiCad's documented
+[hierarchical schematic](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics)
+structure. KiCad documents
+[Update PCB from Schematic](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#update-pcb-from-schematic)
+as the normal schematic-to-board transfer; the workflow instead performs its
+bounded, reviewed native reconciliation so designer PCB content can be verified
+object by object. DXF remains a user-driven native
+[vector graphics import](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#importing_vector_graphics)
+before inspection.
 
 The library picker displays `LibraryNickname:PartName` identities and resolves
 KiCad 10 global, project and nested library tables using KiCad's own path
@@ -242,9 +269,9 @@ validated by the same probe.
 
 ## Limits of this testing release
 
-The controlled project-copy apply/recovery boundary is intentional. Transparent
-live-editor transactions and a generic magnetic point picker have not passed
-interaction/recovery validation. The initial schematic presentation uses stable
+Apply is a staged live-project transaction, not a native KiCad Undo unit. Close
+Schematic Editor for Apply and close all project editors for recovery. A generic
+magnetic point picker has not passed interaction validation. The initial schematic presentation uses stable
 label-based RF gang sheets, one selected-symbol instance per DC connector, and
 a tool-owned split interposer signal/ground
 organization. The selected interposer symbol supplies the pin, filter and BOM

@@ -34,6 +34,7 @@ LAYER_MAP = {"L2": "In1.Cu", "L3": "In2.Cu"}
 BOARD_MM = 111.125
 INTERPOSER_POSE = (42.5625, 42.5625)
 RF_COUNT = 28
+PROJECT_ID = '6bb2ad73-7210-4a29-a3e1-91e8f65f59af'
 
 
 def demo_artifacts():
@@ -128,7 +129,7 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
                           "approved": True, "library_id": "Example:" + INTERPOSER.stem},
             "pose": [*INTERPOSER_POSE, 0], "pads": pads,
         }
-        return {"instances": instances}
+        return {"project_id": PROJECT_ID, "instances": instances}
 
     def assert_native_contract(self, result, desired):
         board = p.LoadBoard(result["board_path"])

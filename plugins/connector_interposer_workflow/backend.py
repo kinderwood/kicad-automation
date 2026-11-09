@@ -1,9 +1,9 @@
-"""Native PCB placement and reconciliation on reviewable saved project copies.
+"""Native PCB placement and staged reconciliation for the open project.
 
 Importing this module requires neither KiCad nor a footprint/RF authoring plugin.
-``NativeBackend`` loads pcbnew lazily. Apply always writes a different project
-directory, verifies its saved board and journals the board/registry/report set.
-It never mutates the editor's live BOARD or uses native Undo for recovery.
+``NativeBackend`` loads pcbnew lazily. Apply first verifies a temporary complete
+candidate and prepares a persistent journal, then reconciles the active BOARD
+before publishing the staged project files. Recovery does not rely on native Undo.
 """
 import copy
 import hashlib
@@ -16,9 +16,17 @@ from pathlib import Path
 from .artifacts import canonical, sha256, validate_artifact
 from .core.geometry import (
     MAX_FEATURE_TOLERANCE_MM, distance_text, feature_deviation_message,
-    feature_tolerance, match_circle_features, match_selected_circle,
+    drawing_revision, feature_tolerance, match_circle_features,
+    match_selected_circle,
 )
-from .recovery import apply_files, file_hash, require_closed
+from .core.identities import stable_uuid
+from .recovery import (
+    apply_files, commit_prepared, file_hash, prepare_files, require_closed,
+    require_schematic_closed,
+)
+
+
+REGISTRY_SCHEMA = 'connector-interposer.instances/2.0'
 
 
 def _project_hashes(root):
@@ -141,6 +149,40 @@ def board_state(board, p):
     return state
 
 
+def board_content_state(board, p):
+    """UUID-insensitive projection for comparing the live canvas to its save.
+
+    KiCad can expose a different live KIID for newly imported graphics than the
+    KIID serialized by SaveBoard.  Content still has to match exactly; only
+    object and pad identity keys are normalized here.
+    """
+    state = board_state(board, p)
+    group_names = {
+        uid: value.get('name', '') for uid, value in state.items()
+        if value.get('type') == 'PCB_GROUP'
+    }
+    def group_path(uid):
+        result = []
+        seen = set()
+        while uid and uid not in seen:
+            seen.add(uid)
+            value = state.get(uid, {})
+            result.append(group_names.get(uid, ''))
+            uid = value.get('group')
+        return result
+    normalized = []
+    for value in state.values():
+        item = copy.deepcopy(value)
+        item['group'] = group_path(item.get('group'))
+        if isinstance(item.get('pads'), dict):
+            item['pads'] = sorted(
+                item['pads'].values(),
+                key=lambda pad: json.dumps(pad, sort_keys=True),
+            )
+        normalized.append(json.dumps(item, sort_keys=True, separators=(',', ':')))
+    return tuple(sorted(normalized))
+
+
 class NativeBackend:
     def __init__(self, pcbnew_module=None):
         if pcbnew_module is None:
@@ -176,6 +218,8 @@ class NativeBackend:
                     if item.GetShape() == self.p.SHAPE_T_ARC:
                         segment["mid"] = [v/1e6 for v in _xy(item.GetArcMid())]
                     result["segments"].append(segment)
+        result['revision'] = drawing_revision(result)
+        result['geometry_revision'] = drawing_revision(result, include_uuids=False)
         return result
 
     def _normalize_outline(self, board, desired):
@@ -388,6 +432,11 @@ class NativeBackend:
             native = self.inspect_graphics(
                 board.GetFileName(), mechanical["source_layer"],
             )
+            if (not mechanical.get('drawing_revision') or
+                    native.get('revision') != mechanical['drawing_revision']):
+                raise BackendError(
+                    'Imported drawing revision changed after explicit association'
+                )
             try:
                 tolerance = feature_tolerance(mechanical["feature_tolerance_mm"])
             except (KeyError, TypeError, ValueError) as error:
@@ -641,7 +690,11 @@ class NativeBackend:
         if registry is None:
             ledger = path.with_suffix(".connector-interposer-instances.json")
             registry = json.loads(ledger.read_text()) if ledger.is_file() else None
-        registry = copy.deepcopy(registry or {"schema": "connector-interposer.instances/1.0", "instances": {}, "expected": {}})
+        registry = copy.deepcopy(registry or {
+            'schema': REGISTRY_SCHEMA, 'instances': {}, 'expected': {},
+        })
+        if registry.get('schema') != REGISTRY_SCHEMA:
+            raise BackendError('Unsupported connector-interposer ownership registry')
         desired = json.loads(canonical(desired))
         for spec in desired.get("instances", {}).values():
             selection = spec["footprint"]
@@ -714,20 +767,11 @@ class NativeBackend:
                             "nets": value.get("nets"), "layers": value.get("layers")}
                 detail["rf"] = {"before": summary(before_spec.get("rf")), "after": summary(after_spec.get("rf"))}
             changes.append(detail)
-            affected = {v for k, v in previous_pads.items() if next_pads.get(k) != v}
-            # Mechanical/RF changes also affect attached hand-routing.
-            if key in old and (key not in new or old[key]["spec"].get("pose") != new[key].get("pose") or
-                               old[key]["spec"].get("side", "F") != new[key].get("side", "F") or
-                               _spec_identity({"footprint": old[key]["spec"].get("footprint", {})}) != _spec_identity({"footprint": new[key].get("footprint", {})}) or
-                               old[key]["spec"].get("rf") != new[key].get("rf")):
-                affected.update(previous_pads.values())
-            owned = set(registry.get("expected", {}))
-            routed = [uid for uid, x in board_items(board).items() if uid not in owned and
-                      isinstance(x, (self.p.PCB_TRACK, self.p.PCB_SHAPE, self.p.ZONE)) and
-                      hasattr(x, "GetNetname") and x.GetNetname() in affected]
-            if routed:
-                conflicts.append({"kind": "routed-net-change", "key": key, "uuids": routed,
-                                  "message": "Affected designer copper requires an explicit external routing decision"})
+        route_retags, route_conflicts = self._designer_route_plan(
+            board, old, new, set(registry.get('expected', {})),
+        )
+        desired['route_retags'] = route_retags
+        conflicts.extend(route_conflicts)
         if registry.get("outline_spec") != desired.get("outline"):
             if registry.get("outline_spec") or desired.get("outline"):
                 changes.append({"key": "board-outline", "kind": "outline"})
@@ -739,6 +783,9 @@ class NativeBackend:
                 'kind': ('add' if after_microvias and not before_microvias else
                          'remove' if before_microvias and not after_microvias else 'update'),
             })
+        managed_files = set(desired.get('managed_files', ()))
+        if not managed_files <= set(desired.get('project_files', {})):
+            raise BackendError('Managed project files must be included in desired project files')
         for name, content in sorted(desired.get("project_files", {}).items()):
             if file_hash(path.parent / name) != hashlib.sha256(content.encode("utf-8")).hexdigest():
                 changes.append({"key": name, "kind": "project-file"})
@@ -746,7 +793,7 @@ class NativeBackend:
                     if not self._safe_project_merge(path.parent/name, content, desired):
                         conflicts.append({"kind": "unowned-file", "key": name,
                                           "message": "Generated output collides with a designer-owned project file"})
-        for name in sorted(set(registry.get("generated_files", {})) - set(desired.get("project_files", {}))):
+        for name in sorted(set(registry.get("generated_files", {})) - managed_files):
             changes.append({"key": name, "kind": "remove-project-file"})
         if changes and not conflicts and (desired.get("outline") or {}).get("enabled"):
             # Validate the actual placed approved footprint cutouts against the
@@ -759,6 +806,157 @@ class NativeBackend:
         payload["token"] = sha256(payload)
         payload["status"] = "BLOCKED" if conflicts else ("PREVIEW" if changes else "NOOP")
         return payload
+
+    @staticmethod
+    def _routing_shape(spec):
+        """The physical endpoint contract; electrical names are excluded."""
+        value = copy.deepcopy(spec)
+        value.pop('pads', None)
+        value.pop('netclass', None)
+        value.pop('signal_layer', None)
+        if value.get('rf'):
+            value['rf'].pop('nets', None)
+        return _spec_identity(value)
+
+    def _designer_route_plan(self, board, old, new, owned):
+        """Plan exact-endpoint net retags for isolated designer tracks/vias."""
+        board.BuildConnectivity()
+        connectivity = board.GetConnectivity()
+        changes = {}
+        topology_conflicts = []
+        current = board_items(board)
+        for key in sorted(set(old) | set(new)):
+            before = old.get(key, {}).get('spec')
+            after = new.get(key)
+            if not before:
+                continue
+            changed_nets = {
+                pad: (net, after.get('pads', {}).get(pad) if after else None)
+                for pad, net in before.get('pads', {}).items()
+                if (after or {}).get('pads', {}).get(pad) != net
+            }
+            physical_change = (not after or
+                               self._routing_shape(before) != self._routing_shape(after))
+            affected = set(before.get('pads', {}).values()) if physical_change else {
+                value[0] for value in changed_nets.values()
+            }
+            routed = [
+                uid for uid, item in current.items()
+                if uid not in owned and isinstance(
+                    item, (self.p.PCB_TRACK, self.p.PCB_SHAPE, self.p.ZONE)
+                ) and hasattr(item, 'GetNetname') and
+                item.GetNetname() in affected
+            ]
+            if physical_change and routed:
+                topology_conflicts.append({
+                    'kind': 'routed-net-change', 'key': key, 'uuids': routed,
+                    'message': 'Footprint or route topology changed; designer copper cannot be preserved automatically',
+                })
+                continue
+            if not changed_nets:
+                continue
+            footprint = current.get(old[key].get('base'))
+            if not isinstance(footprint, self.p.FOOTPRINT):
+                continue
+            by_number = {}
+            for pad in footprint.Pads():
+                by_number.setdefault(pad.GetNumber(), []).append(pad)
+            for number, (before_net, after_net) in changed_nets.items():
+                pads = by_number.get(number, ())
+                for pad in pads:
+                    changes[uuid_of(pad)] = {
+                        'key': key, 'point': tuple(_xy(pad.GetPosition())),
+                        'before': before_net, 'after': after_net,
+                    }
+        retags = {}
+        conflicts = list(topology_conflicts)
+        tracks = [item for uid, item in current.items()
+                  if uid not in owned and isinstance(item, self.p.PCB_TRACK)]
+        by_net = {}
+        for item in tracks:
+            by_net.setdefault(item.GetNetname(), []).append(item)
+        changed_nets = {value['before'] for value in changes.values()}
+        non_tracks = [
+            item for uid, item in current.items()
+            if uid not in owned and isinstance(item, (self.p.PCB_SHAPE, self.p.ZONE))
+            and hasattr(item, 'GetNetname') and item.GetNetname() in changed_nets
+        ]
+        non_tracks_by_net = {}
+        for item in non_tracks:
+            non_tracks_by_net.setdefault(item.GetNetname(), []).append(item)
+        for net_name, items in sorted(non_tracks_by_net.items()):
+            keys = sorted({value['key'] for value in changes.values()
+                           if value['before'] == net_name})
+            conflicts.append({
+                'kind': 'routed-net-change', 'key': keys[0],
+                'uuids': sorted(uuid_of(item) for item in items),
+                'message': 'Designer copper shape or zone cannot be retagged automatically',
+            })
+        pad_changes = {value['point']: value for value in changes.values()}
+        pads = [pad for footprint in board.GetFootprints() for pad in footprint.Pads()
+                if pad.GetNumber()]
+        for net_name, items in by_net.items():
+            remaining = set(range(len(items)))
+            while remaining:
+                component = {remaining.pop()}
+                points = set()
+                expanded = True
+                while expanded:
+                    expanded = False
+                    points = set()
+                    for index in component:
+                        item = items[index]
+                        if isinstance(item, self.p.PCB_VIA):
+                            points.add(tuple(_xy(item.GetPosition())))
+                        else:
+                            points.update((tuple(_xy(item.GetStart())),
+                                           tuple(_xy(item.GetEnd()))))
+                    for index in list(remaining):
+                        item = items[index]
+                        candidate = ({tuple(_xy(item.GetPosition()))}
+                                     if isinstance(item, self.p.PCB_VIA) else
+                                     {tuple(_xy(item.GetStart())),
+                                      tuple(_xy(item.GetEnd()))})
+                        if points & candidate:
+                            component.add(index)
+                            remaining.remove(index)
+                            expanded = True
+                touched = [value for point, value in pad_changes.items()
+                           if value['before'] == net_name and point in points]
+                if not touched:
+                    continue
+                boundary = [pad for pad in pads if pad.GetNetname() == net_name and
+                            tuple(_xy(pad.GetPosition())) in points]
+                targets = {
+                    changes[uuid_of(pad)]['after'] for pad in boundary
+                    if uuid_of(pad) in changes
+                }
+                safe = (len(boundary) >= 2 and len(targets) == 1 and
+                        all(targets) and
+                        all(uuid_of(pad) in changes for pad in boundary) and
+                        net_name not in non_tracks_by_net)
+                uuids = [uuid_of(items[index]) for index in sorted(component)]
+                endpoint_ids = set(uuids)
+                connected_ids = {
+                    uuid_of(connected)
+                    for index in component
+                    for connected in connectivity.GetConnectedItems(items[index])
+                    if (uuid_of(connected) not in owned and
+                        isinstance(connected, self.p.PCB_TRACK) and
+                        connected.GetNetname() == net_name)
+                }
+                safe = safe and connected_ids <= endpoint_ids
+                key = sorted({value['key'] for value in touched})[0]
+                if not safe:
+                    conflicts.append({
+                        'kind': 'routed-net-change', 'key': key, 'uuids': uuids,
+                        'message': 'Designer route is not an isolated exact-endpoint net swap',
+                    })
+                    continue
+                target = next(iter(targets))
+                for uid in uuids:
+                    retags[uid] = {'before': net_name, 'after': target}
+        return retags, conflicts
 
     def _safe_project_merge(self, path, content, desired):
         """Only explicitly reviewed settings/library-table merges may touch unowned files."""
@@ -773,6 +971,18 @@ class NativeBackend:
             from .core.sexpr import loads
             before, after = loads(path.read_text()), loads(content)
             return before[0] == after[0] and all(entry in after for entry in before[1:])
+        if path.suffix == '.kicad_sch':
+            from .core.sexpr import child, children, loads
+            sheet_uuid = desired.get('schematic_root', {}).get('sheet_uuid')
+            if not sheet_uuid:
+                return False
+            def without_managed(text):
+                root = loads(text)
+                return [item for item in root if not (
+                    isinstance(item, list) and item and item[0] == 'sheet' and
+                    child(item, 'uuid') and child(item, 'uuid')[1] == sheet_uuid
+                )]
+            return without_managed(path.read_text(encoding='utf-8-sig')) == without_managed(content)
         return False
 
     def _point(self, point, pose, rf=False):
@@ -866,10 +1076,15 @@ class NativeBackend:
             del fp
             del holder
 
-    def _group(self, board, name, old=None, parent=None):
+    def _group(self, board, name, old=None, parent=None, identity=None):
         group = board_items(board).get(old) if old else None
         if group is None:
             group = self.p.PCB_GROUP(board)
+            if identity:
+                existing = board_items(board).get(identity)
+                if existing is not None:
+                    raise BackendError('Managed UUID collides with an existing board item')
+                _set_uuid(group, identity, self.p)
             group.SetName(name)
             board.Add(group)
             if parent:
@@ -967,9 +1182,16 @@ class NativeBackend:
 
     def _materialize(self, board, desired, registry):
         p = self.p
+        project_id = desired.get('project_id')
+        try:
+            stable_uuid(project_id, 'pcb/registry')
+        except (TypeError, ValueError) as error:
+            raise BackendError('Desired state has no valid project identity') from error
+        identity = lambda key: stable_uuid(project_id, 'pcb/' + key)
         old = registry.get("instances", {})
-        result = {"schema": "connector-interposer.instances/1.0", "instances": {}, "groups": {},
-                  "expected": {}, "tombstones": copy.deepcopy(registry.get("tombstones", {}))}
+        result = {"schema": REGISTRY_SCHEMA, "instances": {}, "groups": {},
+                  "expected": {}, "tombstones": copy.deepcopy(registry.get("tombstones", {})),
+                  'project_id': project_id}
         owned = set(registry.get("expected", {}))
         for key in sorted(set(old) - set(desired.get("instances", {}))):
             entry = old[key]
@@ -988,9 +1210,15 @@ class NativeBackend:
             entry = old.get(key, {})
             gang = spec.get("gang", key)
             gang_old = result["groups"].get(gang) or registry.get("groups", {}).get(gang)
-            parent = self._group(board, "Workflow:" + gang, gang_old)
+            parent = self._group(
+                board, "Workflow:" + gang, gang_old,
+                identity=identity('gang/' + gang),
+            )
             result["groups"][gang] = uuid_of(parent)
-            group = self._group(board, key, entry.get("group"), parent)
+            group = self._group(
+                board, key, entry.get("group"), parent,
+                identity=identity('instance/' + key + '/group'),
+            )
             fp = board_items(board).get(entry.get("base"))
             previous = entry.get("spec", {})
             if fp is None or _spec_identity({"footprint": previous.get("footprint", {})}) != _spec_identity({"footprint": spec["footprint"]}):
@@ -1004,6 +1232,23 @@ class NativeBackend:
                         if pad_ids.get(pad.GetNumber()):
                             _set_uuid(pad, pad_ids[pad.GetNumber()].pop(0), p)
                     self._remove(board, fp)
+                else:
+                    footprint_id = identity('instance/' + key + '/footprint')
+                    if board_items(board).get(footprint_id) is not None:
+                        raise BackendError('Managed footprint UUID collides with designer content')
+                    _set_uuid(replacement, footprint_id, p)
+                    occurrences = {}
+                    for pad in replacement.Pads():
+                        number = pad.GetNumber()
+                        occurrence = occurrences.get(number, 0)
+                        occurrences[number] = occurrence + 1
+                        _set_uuid(
+                            pad,
+                            identity(
+                                'instance/' + key + '/pad/' + number + '/' +
+                                str(occurrence)
+                            ), p,
+                        )
                 fp = replacement
                 board.Add(fp)
                 group.AddItem(fp)
@@ -1063,6 +1308,13 @@ class NativeBackend:
                         if obj:
                             _set_uuid(replacement, uuid_of(obj), p)
                             self._remove(board, obj)
+                        else:
+                            object_id = identity(
+                                'instance/' + key + '/object/' + local,
+                            )
+                            if board_items(board).get(object_id) is not None:
+                                raise BackendError('Managed RF UUID collides with designer content')
+                            _set_uuid(replacement, object_id, p)
                         obj = replacement
                         board.Add(obj)
                         group.AddItem(obj)
@@ -1082,6 +1334,15 @@ class NativeBackend:
                 if group and not list(group.GetItems()):
                     self._remove(board, group)
         self._outline(board, desired, registry, result)
+        current_items = board_items(board)
+        owned_ids = set(registry.get('expected', {}))
+        for uid, change in desired.get('route_retags', {}).items():
+            item = current_items.get(uid)
+            if (uid in owned_ids or not isinstance(item, p.PCB_TRACK) or
+                    item.GetNetname() != change.get('before') or
+                    not change.get('after')):
+                raise BackendError('Reviewed designer route no longer matches its net-swap plan')
+            item.SetNet(self._net(board, change['after']))
         state = board_state(board, p)
         for entry in result["instances"].values():
             for uid in [entry["base"], entry["group"], *entry["objects"].values()]:
@@ -1115,6 +1376,9 @@ class NativeBackend:
         footprint = footprints[0]
         group = self._group(
             board, 'Workflow:Interposer Microvias:' + reference, old_group,
+            identity=stable_uuid(
+                desired['project_id'], 'pcb/interposer-microvias/' + reference + '/group',
+            ),
         )
         group.SetLocked(True)
         result['microvia_group'] = uuid_of(group)
@@ -1166,6 +1430,14 @@ class NativeBackend:
                 if obj:
                     _set_uuid(replacement, uuid_of(obj), self.p)
                     self._remove(board, obj)
+                else:
+                    object_id = stable_uuid(
+                        desired['project_id'],
+                        'pcb/interposer-microvias/' + reference + '/' + local,
+                    )
+                    if board_items(board).get(object_id) is not None:
+                        raise BackendError('Managed microvia UUID collides with designer content')
+                    _set_uuid(replacement, object_id, self.p)
                 obj = replacement
                 board.Add(obj)
                 group.AddItem(obj)
@@ -1194,7 +1466,10 @@ class NativeBackend:
             if group and not list(group.GetItems()):
                 self._remove(board, group)
             return
-        group = self._group(board, "Workflow:Board Outline", old.get("outline_group"))
+        group = self._group(
+            board, "Workflow:Board Outline", old.get("outline_group"),
+            identity=stable_uuid(desired['project_id'], 'pcb/outline/group'),
+        )
         group.SetLocked(True)
         objects = []
         contours = [outline["outer"], *outline.get("cutouts", [])]
@@ -1246,6 +1521,7 @@ class NativeBackend:
             validate_outline(convert(outline["outer"]), [convert(c) for c in selected_cutouts] + extra_cutouts)
         except ValueError as exc:
             raise BackendError("Native footprint cutout conflicts with managed outline: " + str(exc)) from exc
+        segment_index = 0
         for contour in contours:
             for segment in contour:
                 # Existing footprint-owned cutout edges stay with their footprint.
@@ -1266,6 +1542,13 @@ class NativeBackend:
                 obj.SetLayer(self.p.Edge_Cuts)
                 obj.SetWidth(50000)
                 obj.SetLocked(True)
+                object_id = stable_uuid(
+                    desired['project_id'], 'pcb/outline/segment/' + str(segment_index),
+                )
+                segment_index += 1
+                if board_items(board).get(object_id) is not None:
+                    raise BackendError('Managed outline UUID collides with designer content')
+                _set_uuid(obj, object_id, self.p)
                 board.Add(obj)
                 group.AddItem(obj)
                 objects.append(uuid_of(obj))
@@ -1296,7 +1579,11 @@ class NativeBackend:
         before = board_state(board, self.p)
         registry = self._materialize(board, preview["desired"], preview["registry"])
         expected = registry["expected"]
-        foreign = {k: v for k, v in before.items() if k not in preview["registry"].get("expected", {})}
+        retag_ids = set(preview['desired'].get('route_retags', {}))
+        foreign = {k: v for k, v in before.items()
+                   if k not in preview["registry"].get("expected", {}) and
+                   k not in retag_ids}
+        route_before = {uid: before[uid] for uid in retag_ids if uid in before}
         with tempfile.TemporaryDirectory(prefix="connector-interposer-native-") as temporary:
             candidate = Path(temporary) / source.name
             # Native clearance/fill/class evaluation must use the reviewed
@@ -1346,9 +1633,23 @@ class NativeBackend:
                 )
             if any(actual.get(k) != v for k, v in foreign.items()):
                 raise BackendError("Native reconciliation changed designer-owned content")
+            for uid, prior in route_before.items():
+                after = actual.get(uid)
+                expected_route = dict(prior)
+                expected_route['net'] = preview['desired']['route_retags'][uid]['after']
+                if after != expected_route:
+                    raise BackendError('Native reconciliation changed designer routing beyond its reviewed net')
             registry["serialized"] = _serialized(candidate, expected)
-            registry["generated_files"] = {name: hashlib.sha256(content.encode("utf-8")).hexdigest()
-                                            for name, content in preview["desired"].get("project_files", {}).items()}
+            managed_files = set(preview['desired'].get('managed_files', ()))
+            registry["generated_files"] = {
+                name: hashlib.sha256(
+                    preview['desired']['project_files'][name].encode('utf-8')
+                ).hexdigest()
+                for name in managed_files
+            }
+            registry['schematic_root'] = copy.deepcopy(
+                preview['desired'].get('schematic_root', {}),
+            )
             if _project_hashes(source.parent) != preview["source_project"]:
                 raise BackendError("Source project changed while staging; nothing applied")
             # Read source files only; do not copy live lock files or prior recovery.
@@ -1366,7 +1667,10 @@ class NativeBackend:
             report_name = source.stem + ".connector-interposer-report.json"
             files = {source.name: candidate.read_bytes(), ledger: canonical(registry), report_name: canonical(report)}
             files.update({name: content.encode("utf-8") for name, content in preview["desired"].get("project_files", {}).items()})
-            files.update({name: None for name in set(preview["registry"].get("generated_files", {})) - set(preview["desired"].get("project_files", {}))})
+            files.update({
+                name: None for name in
+                set(preview["registry"].get("generated_files", {})) - managed_files
+            })
             # Exact immutable selections travel with the project copy.
             for spec in preview["desired"].get("instances", {}).values():
                 selection = spec["footprint"]
@@ -1388,3 +1692,107 @@ class NativeBackend:
         return {"status": "APPLIED", "board_path": str(target / source.name),
                 "registry_path": str(target / ledger), "report_path": str(target / report_name),
                 "registry": registry, "journal": transaction["journal"]}
+
+    def prepare_live(self, preview):
+        """Stage a verified same-project transaction without touching live files."""
+        source = Path(preview.get('source', '')).resolve()
+        require_schematic_closed(source.parent)
+        with tempfile.TemporaryDirectory(
+                prefix='connector-interposer-live-stage-') as temporary:
+            target = Path(temporary) / 'candidate'
+            result = self.apply(preview, target, closed_project=True)
+            if result['status'] == 'NOOP':
+                return result
+            candidate_journal = json.loads(Path(result['journal']).read_text())
+            names = sorted(candidate_journal['files'])
+            files = {
+                name: ((target / name).read_bytes()
+                       if (target / name).is_file() else None)
+                for name in names
+            }
+            expected = {name: file_hash(source.parent / name) for name in names}
+            if _project_hashes(source.parent) != preview['source_project']:
+                raise BackendError('Source project changed while preparing live publication')
+            transaction = prepare_files(
+                source.parent, files, expected, live_project=True,
+            )
+            if _project_hashes(source.parent) != preview['source_project']:
+                raise BackendError('Source project changed while preparing live publication')
+        return {
+            'status': 'PREPARED', 'board_path': str(source),
+            'registry_path': str(source.with_suffix(
+                '.connector-interposer-instances.json')),
+            'report_path': str(source.with_suffix(
+                '.connector-interposer-report.json')),
+            'registry': result['registry'], 'journal': transaction['journal'],
+            'token': preview['token'],
+        }
+
+    def publish_live(self, live_board, preview, prepared):
+        """Reconcile the active BOARD, then atomically publish staged files."""
+        if prepared.get('status') == 'NOOP':
+            return prepared
+        if (prepared.get('status') != 'PREPARED' or
+                prepared.get('token') != preview.get('token')):
+            raise BackendError('Prepared live transaction does not match the reviewed preview')
+        source = Path(preview['source']).resolve()
+        if Path(live_board.GetFileName()).resolve() != source:
+            raise BackendError('The active PCB is not the reviewed Workflow board')
+        disk_board = self._load(source)
+        before = board_state(live_board, self.p)
+        if board_content_state(live_board, self.p) != board_content_state(disk_board, self.p):
+            raise BackendError('The live PCB differs from its saved file; save and compare again')
+        missing_owned = set(preview['registry'].get('expected', {})) - set(before)
+        if missing_owned:
+            raise BackendError(
+                'The live PCB does not contain the reviewed managed identities; '
+                'reload the board and compare again'
+            )
+        old_owned = set(preview['registry'].get('expected', {}))
+        retag_ids = set(preview['desired'].get('route_retags', {}))
+        foreign = {uid: value for uid, value in before.items()
+                   if uid not in old_owned and uid not in retag_ids}
+        try:
+            result = self._materialize(
+                live_board, preview['desired'], preview['registry'],
+            )
+            live_board.SynchronizeNetsAndNetClasses(False)
+            live_board.BuildConnectivity()
+            if any(not zone.GetIsRuleArea() for zone in live_board.Zones()):
+                self.p.ZONE_FILLER(live_board).Fill(live_board.Zones())
+            actual = board_state(live_board, self.p)
+            if any(actual.get(uid) != state for uid, state in result['expected'].items()):
+                raise BackendError('Live PCB managed-object verification failed')
+            if any(actual.get(uid) != state for uid, state in foreign.items()):
+                raise BackendError('Live PCB reconciliation changed designer-owned content')
+            for uid in retag_ids:
+                prior = before.get(uid)
+                after = actual.get(uid)
+                if prior is None:
+                    raise BackendError('Reviewed designer route disappeared before publication')
+                expected_route = dict(prior)
+                expected_route['net'] = preview['desired']['route_retags'][uid]['after']
+                if after != expected_route:
+                    raise BackendError(
+                        'Live PCB reconciliation changed designer routing beyond its reviewed net'
+                    )
+            staged = prepared['registry']
+            for field in ('instances', 'groups', 'expected', 'microvia_objects',
+                          'microvia_group', 'outline_objects', 'outline_group'):
+                if result.get(field) != staged.get(field):
+                    raise BackendError('Live PCB identities differ from the staged transaction')
+            committed = commit_prepared(
+                prepared['journal'], live_project=True,
+            )
+        except Exception as error:
+            raise BackendError(
+                'Live publication failed after in-memory reconciliation; close '
+                'the project without saving and recover the prepared journal: ' +
+                prepared['journal']
+            ) from error
+        return {
+            'status': 'APPLIED', 'board_path': str(source),
+            'registry_path': prepared['registry_path'],
+            'report_path': prepared['report_path'],
+            'registry': prepared['registry'], 'journal': committed['journal'],
+        }

@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.5.5 and the
+are authorized. Connector to Interposer Workflow is version 0.6.0 and the
 separate GPPO RF Transition Designer is version 0.1.2; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The BGA
 Interposer Wizard remains an independent package at version 0.16.1.
@@ -359,8 +359,39 @@ Explicit circle selections survive KiCad UUID differences between the live
 canvas and saved board when exactly one saved circle matches the recorded
 center within tolerance; missing and ambiguous geometry remain blocking.
 
-The complete 164-test native/CLI suite and all three packaged PCM loader checks
-pass on both KiCad 10.0.0 and 10.0.8. The 14-test native dialog suite passes on
+Version 0.6.0 replaces copy-only output with a staged live-project transaction.
+Compare first saves the open PCB so the accepted preview has one exact native
+source.
+The verified candidate and persistent before/after journal are complete before
+the active PCB is reconciled; project files are published only after managed and
+designer-owned board state passes exact verification. Schematic Editor must be
+closed during Apply, and all project editors must be closed for journal recovery.
+The project root schematic stays designer-owned while one deterministic sheet
+entry points to generated children beneath `.connector-interposer-managed/`.
+Unrelated root content survives reruns, and edits to the managed fragment block
+instead of being overwritten. Stable project-derived UUIDs restore the same
+managed identities after removal and reintroduction. Isolated exact-endpoint
+designer tracks and vias can survive a netlist-only reassignment as a reviewed
+net retag; topology changes, zones, net-bearing shapes and ambiguous routing
+remain conflicts. Imported-drawing selections are now bound to a fingerprint of
+the complete native layer and its UUIDs. Geometry can suggest a likely selection
+after a DXF reimport but cannot silently accept it. At selection time only, an
+explicit live-canvas click is resolved uniquely to the current inspected saved
+circle, addressing KiCad live/saved UUID differences without carrying an
+association across drawing revisions.
+
+These boundaries align with KiCad 10's documented
+[hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
+its normal
+[Update PCB from Schematic](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#update-pcb-from-schematic)
+forward-annotation flow, and PCB Editor's native
+[vector graphics import](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#importing_vector_graphics).
+The workflow deliberately uses a narrower reviewed native reconciliation rather
+than invoking a wholesale schematic-to-PCB update, so it can prove preservation
+of designer-owned board objects across reruns.
+
+The complete 172-test native/CLI suite and all three packaged PCM loader checks
+pass on both KiCad 10.0.0 and 10.0.8. The native dialog suite passes on
 10.0.8 under both Adwaita light and dark themes.
 
 Additional actual PCB Editor checks use the selected 10.0.8 AppImage: normal
@@ -415,7 +446,7 @@ weakened and findings are not waived merely to make the demonstration pass.
 |---|---|---|
 | General magnetic point picker | Selected native circle and numeric coordinates | Supported accept/cancel, cleanup and Undo semantics |
 | KiCad 10 group Undo | Do not rely on native Undo for complete recovery | Recovery preserving electrical state and memberships |
-| Live editor transactions | Stage and verify project copies; guard file replacement | Editor reload coordination, concurrent writes and cancellation |
+| Live editor transactions | Stage complete update, reconcile active PCB, then publish journaled files; Schematic Editor closed | Native cross-editor reload coordination and cancellation |
 | Recovery durability | Hash-checked journal and backup restoration | Power-loss durability and concurrent-writer guarantees |
 | Cross-platform UI | Linux native wx validation first | Windows/macOS focus, keyboard and accessibility |
 | Large-count interaction | Virtual parsed table and stable gang sheets | Full workflow latency, sorting and selection retention |
@@ -425,8 +456,8 @@ weakened and findings are not waived merely to make the demonstration pass.
 | Automatic RF selection | Explicit approved artifact selection | Reviewed rules by connector, netclass, layer and stackup |
 | Git checkpoints | Deferred | Project Git integration and recovery policy |
 | Example manufacturing rules | Annular-ring and cutout-clearance failures remain | Librarian-approved revised parts and fabricator rules; rerun DRC |
-| Full mechanical A/B demonstration | Both DXFs supplied; worked controller run starts from native DXF B | Interactive import/reassociation and review of the A-to-B layout change |
-| Full explicit schematic presentation | Stable labelled gang and paginated interposer sheets | Readability review with actual high-count designs |
+| Full mechanical A/B demonstration | Both DXFs supplied; worked controller run starts from native DXF B | Interactive import, explicit revision reselection and review of the A-to-B layout change |
+| Full explicit schematic presentation | Designer root plus stable managed labelled gang and paginated interposer sheets | Readability review with actual high-count designs |
 | RF authoring ergonomics | Native recipe JSON editor and preview | Typed controls for common parameters and librarian usability review |
 | Via treatment | Interposer microvias explicitly use no tenting, covering, plugging, filling or capping | Native support and fabrication export for filled/capped requirements |
 

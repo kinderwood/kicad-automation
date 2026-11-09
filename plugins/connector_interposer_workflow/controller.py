@@ -523,6 +523,21 @@ class WorkflowController:
         if self.table:
             from .core.connector_types import (VALID_TYPES, reference_type,
                                                suggest_netclass_types)
+            drawing_revision = self.config.get('mechanical', {}).get(
+                'inspected_revision', '',
+            )
+            if not drawing_revision:
+                issues.append(Issue(
+                    'drawing_not_inspected',
+                    'Inspect the saved imported drawing before Review changes',
+                ))
+            def stale_circle(feature, accepted):
+                if (accepted and drawing_revision and
+                        accepted.get('revision') != drawing_revision):
+                    issues.append(Issue(
+                        'drawing_association_stale',
+                        f'{feature}: select the circle again for the inspected drawing revision',
+                    ))
             encountered = sorted({record.netclass for record in self.table.records})
             _suggestions, inference_conflicts, _unresolved = suggest_netclass_types(self.table.records)
             for netclass in encountered:
@@ -587,6 +602,10 @@ class WorkflowController:
                         'anchor_missing',
                         f'{name}: select the RF location 1 circle in Mechanical placement',
                     ))
+                else:
+                    stale_circle(
+                        f'{name} RF location 1', gang.get('anchor_circle', {}),
+                    )
                 try:
                     pins = set(self.pattern(name))
                     expected = {r.connector_pin for r in self.table.records if r.connector == name}
@@ -643,6 +662,10 @@ class WorkflowController:
                         not selection.get('anchor_circle', {}).get('uuid')):
                     issues.append(Issue('anchor_missing',
                                         f'{name}: select the DC pin 1 circle in Mechanical placement'))
+                else:
+                    stale_circle(
+                        f'{name} DC pin 1', selection.get('anchor_circle', {}),
+                    )
                 if not selection.get('symbol_mpn') and not selection.get('footprint_mpn'):
                     issues.append(Issue('mpn_missing',
                                         f'{name}: selected library parts have no MPN metadata',
@@ -694,6 +717,11 @@ class WorkflowController:
                         'interposer_pose_missing',
                         f'{reference}: select the interposer origin circle in Mechanical placement',
                     ))
+                else:
+                    stale_circle(
+                        f'{reference} interposer origin',
+                        selection.get('pose_circle', {}),
+                    )
                 if selection.get('pose_accepted') and selection.get('side') not in ('F', 'B'):
                     issues.append(Issue(
                         'interposer_side_missing',
@@ -710,6 +738,11 @@ class WorkflowController:
                         'mounting_hole_anchor_missing',
                         f'{hole.get("reference", "Mounting hole")}: select its drawing circle again',
                     ))
+                else:
+                    stale_circle(
+                        f'{hole.get("reference", "Mounting hole")} mounting hole',
+                        hole.get('pose_circle', {}),
+                    )
             microvias = self.config.get('microvias', {})
             if microvias.get('enabled'):
                 reference = self.interposer_reference()
@@ -766,8 +799,7 @@ class WorkflowController:
         return str(candidate)
 
     def token(self):
-        relevant = {k: v for k, v in self.config.items() if k != 'output_dir'}
-        digest = hashlib.sha256(json.dumps(relevant, sort_keys=True).encode())
+        digest = hashlib.sha256(json.dumps(self.config, sort_keys=True).encode())
         paths = [self.board_path, Path(self.config['workbook'].get('path', ''))]
         if self.board_path:
             paths.extend(self.board_path.with_suffix(suffix) for suffix in ('.kicad_pro', '.connector-interposer-instances.json'))
@@ -829,6 +861,18 @@ class WorkflowController:
             self.preview = None
             raise ValueError('Preview is stale; compare changes again')
         result = self.backend.apply(self, self.preview)
+        return result
+
+    def publish(self, prepared, pcbnew_module):
+        if self.preview is None or self.preview_token != self.token():
+            raise ValueError('Preview became stale before live publication')
+        try:
+            result = self.backend.publish_live(
+                self, self.preview, prepared, pcbnew_module,
+            )
+        except Exception:
+            self.preview = self.preview_token = None
+            raise
         self.preview = self.preview_token = None
         self.save()
         return result
@@ -985,6 +1029,7 @@ expected=request.pop("expected_kicad_version",None)
 if expected and backend.p.Version()!=expected: raise RuntimeError("Worker KiCad version differs from active editor")
 if operation=="preview": result=backend.preview(**request)
 elif operation=="apply": result=backend.apply(**request)
+elif operation=="prepare_live": result=backend.prepare_live(**request)
 elif operation=="inspect": result=backend.inspect_graphics(**request)
 else: raise ValueError("Unknown worker operation")
 pathlib.Path(sys.argv[3]).write_text(json.dumps(result))
@@ -1014,7 +1059,7 @@ __import__("os")._exit(0)
         from .core.model import validate_records
         from .core.geometry import (
             feature_deviation_message, feature_tolerance, match_circle_features,
-            match_selected_circle,
+            match_selected_circle, suggest_selected_circle,
         )
         from .schematic import PartSelection, generate_schematic, merge_library_table
         if not controller.board_path or not controller.board_path.exists():
@@ -1115,17 +1160,38 @@ __import__("os")._exit(0)
         )
         if 'circles' not in native:
             raise RuntimeError('Native inspector returned no mechanical circle inventory')
+        inspected_revision = mechanical.get('inspected_revision', '')
+        if not inspected_revision:
+            raise ValueError('Inspect the saved imported drawing before comparing changes')
+        if native.get('revision') != inspected_revision:
+            raise ValueError(
+                'The saved imported drawing changed after inspection; inspect it '
+                'again and explicitly reselect its mechanical circles'
+            )
         rf_records = tuple(record for record in records
                            if controller.connector_type(record.connector) == 'RF')
         rf_keys = {record.key for record in rf_records}
         tolerance = feature_tolerance(mechanical['feature_tolerance_mm'])
         claimed = set()
+        def selected_circle(feature, accepted):
+            if accepted.get('revision') != inspected_revision:
+                suggestion = suggest_selected_circle(
+                    feature, accepted, native['circles'], tolerance, claimed,
+                )
+                detail = (f' Suggested circle: {suggestion["uuid"]} at '
+                          f'{suggestion["center"]}.' if suggestion else '')
+                raise ValueError(
+                    f'{feature}: association belongs to another drawing revision.'
+                    f'{detail} Select the circle again to confirm it.'
+                )
+            return match_selected_circle(
+                feature, accepted, native['circles'], tolerance, claimed,
+            )
         interposer_anchors = {}
         for reference, selection in cfg['interposers'].items():
             accepted = selection.get('pose_circle', {})
-            circle = match_selected_circle(
+            circle = selected_circle(
                 f'{reference} interposer origin circle', accepted,
-                native['circles'], tolerance, claimed,
             )
             position = selection.get('pose', ())[:2]
             if len(position) != 2:
@@ -1143,9 +1209,8 @@ __import__("os")._exit(0)
         for hole in cfg.get('mounting_holes', []):
             reference = hole['reference']
             accepted = hole.get('pose_circle', {})
-            circle = match_selected_circle(
+            circle = selected_circle(
                 f'{reference} mounting-hole circle', accepted,
-                native['circles'], tolerance, claimed,
             )
             position = hole.get('pose', ())[:2]
             if len(position) != 2:
@@ -1165,10 +1230,7 @@ __import__("os")._exit(0)
         for gang in controller.gang_names():
             settings = controller.gang(gang)
             accepted = settings.get('anchor_circle', {})
-            circle = match_selected_circle(
-                f'{gang} location 1 circle', accepted,
-                native['circles'], tolerance, claimed,
-            )
+            circle = selected_circle(f'{gang} location 1 circle', accepted)
             required_rf_circles[gang + '-1'] = circle['uuid']
             rf_anchors[gang] = {
                 'circle_uuid': circle['uuid'], 'center': list(circle['center']),
@@ -1187,9 +1249,8 @@ __import__("os")._exit(0)
         dc_anchors = {}
         for reference in controller.dc_connector_names():
             selection = controller.dc_connector(reference)
-            circle = match_selected_circle(
+            circle = selected_circle(
                 f'{reference} pin 1 circle', selection.get('anchor_circle', {}),
-                native['circles'], tolerance, claimed,
             )
             position = selection.get('anchor', ())
             if len(position) != 2:
@@ -1204,8 +1265,19 @@ __import__("os")._exit(0)
                 'circle_uuid': circle['uuid'], 'center': list(circle['center']),
             }
         name = controller.board_path.stem
-        bundle = generate_schematic(records, gang_parts, interposer_parts, cfg['project_id'],
-                                    project_name=name, dc_parts=dc_parts)
+        ledger_path = controller.board_path.with_suffix(
+            '.connector-interposer-instances.json',
+        )
+        current_registry = (json.loads(ledger_path.read_text())
+                            if ledger_path.is_file() else {})
+        root_path = controller.board_path.with_suffix('.kicad_sch')
+        bundle = generate_schematic(
+            records, gang_parts, interposer_parts, cfg['project_id'],
+            project_name=name, dc_parts=dc_parts,
+            root_schematic=(root_path.read_text(encoding='utf-8-sig')
+                            if root_path.is_file() else None),
+            expected_root_sheet=current_registry.get('schematic_root'),
+        )
         bom_by_reference = {row['Reference']: row for row in bundle.bom}
         symbol_fields = lambda reference: {name: bom_by_reference[reference][name] for name in ('Value', 'MPN')}
         instances = {}
@@ -1277,14 +1349,23 @@ __import__("os")._exit(0)
                 table_path = controller.board_path.parent / table_name
                 project_files[table_name] = dumps(loads(merge_library_table(table_path.read_text() if table_path.exists() else None, project_files[table_name]))) + '\n'
         project_files[name + '-connector-bom.csv'] = bundle.bom_csv()
+        managed_files = set(bundle.managed_files)
+        managed_files.add(name + '-connector-bom.csv')
         for checksum, path in selected_symbols.items():
-            project_files['.connector-interposer-pinned/symbols/' + checksum + '.kicad_sym'] = Path(path).read_text()
+            pinned_name = '.connector-interposer-pinned/symbols/' + checksum + '.kicad_sym'
+            project_files[pinned_name] = Path(path).read_text()
+            managed_files.add(pinned_name)
         from .core.project import merge_project_settings
         project_path = controller.board_path.with_suffix('.kicad_pro')
         project = json.loads(project_path.read_text()) if project_path.exists() else {}
         project = merge_project_settings(project, records)
         project_files[name + '.kicad_pro'] = json.dumps(project, sort_keys=True, indent=2) + '\n'
-        desired = {'instances': instances, 'outline': outline, 'project_files': project_files, 'project_file_merges': [name + '.kicad_pro', 'sym-lib-table', 'fp-lib-table'],
+        desired = {'project_id': cfg['project_id'], 'instances': instances,
+                   'outline': outline, 'project_files': project_files,
+                   'managed_files': sorted(managed_files),
+                   'schematic_root': bundle.schematic_root,
+                   'project_file_merges': [name + '.kicad_pro', name + '.kicad_sch',
+                                           'sym-lib-table', 'fp-lib-table'],
                    'mechanical': {
                        'source_layer': mechanical.get('layer', 'Dwgs.User'),
                        'rf_matches': rf_locations,
@@ -1294,6 +1375,7 @@ __import__("os")._exit(0)
                        'interposer_anchors': interposer_anchors,
                        'mounting_hole_anchors': mounting_hole_anchors,
                        'feature_tolerance_mm': tolerance,
+                       'drawing_revision': inspected_revision,
                    }}
         if cfg.get('microvias', {}).get('enabled'):
             reference = controller.interposer_reference()
@@ -1322,7 +1404,16 @@ __import__("os")._exit(0)
         return self.call('preview', board_path=str(controller.board_path), desired=desired)
 
     def apply(self, controller, preview):
-        output = controller.config.get('output_dir', '')
-        if not output: raise ValueError('Choose a new output project directory')
         if controller.cancelled.is_set(): raise RuntimeError('Apply cancelled before starting')
-        return self.call('apply', preview=preview, output_dir=str(Path(output).resolve()), closed_project=True)
+        return self.call('prepare_live', preview=preview)
+
+    def publish_live(self, controller, preview, prepared, pcbnew_module):
+        from .backend import NativeBackend
+        if controller.cancelled.is_set():
+            raise RuntimeError('Apply cancelled before live publication')
+        board = pcbnew_module.GetBoard()
+        if board is None:
+            raise RuntimeError('The reviewed PCB is no longer open')
+        return NativeBackend(pcbnew_module).publish_live(
+            board, preview, prepared,
+        )

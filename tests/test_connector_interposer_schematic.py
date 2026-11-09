@@ -15,8 +15,10 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'plugins'))
 from connector_interposer_workflow.core import SignalRecord, read_footprint, read_symbol
-from connector_interposer_workflow.core.sexpr import loads, children, child
-from connector_interposer_workflow.schematic import PartSelection, generate_schematic, merge_library_table
+from connector_interposer_workflow.core.sexpr import loads, dumps, children, child
+from connector_interposer_workflow.schematic import (
+    MANAGED_ROOT, PartSelection, generate_schematic, merge_library_table,
+)
 from connector_interposer_workflow.core.project import merge_project_settings
 
 NATIVE_CLI = ([os.environ['KICAD_TEST_APP_RUN'], 'kicad-cli'] if os.environ.get('KICAD_TEST_APP_RUN') else ([shutil.which('kicad-cli')] if shutil.which('kicad-cli') else None))
@@ -60,6 +62,37 @@ def fixture(directory, count=70):
 
 
 class SchematicTests(unittest.TestCase):
+    def test_designer_root_survives_managed_subtree_regeneration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            records, parts, interposers = fixture(tmp, 4)
+            first = generate_schematic(records[:1], parts, interposers, PROJECT_ID,
+                                       project_name='demo')
+            root = loads(first.files['demo.kicad_sch'])
+            root.insert(-2, loads(
+                '(text "Designer note" (exclude_from_sim no) (at 100 100 0) '
+                '(effects (font (size 1 1))) '
+                '(uuid "550e8400-e29b-41d4-a716-446655440000"))'
+            ))
+            designer = dumps(root) + '\n'
+            second = generate_schematic(
+                records[:2], parts, interposers, PROJECT_ID,
+                project_name='demo', root_schematic=designer,
+                expected_root_sheet=first.schematic_root,
+            )
+            self.assertIn('Designer note', second.files['demo.kicad_sch'])
+            self.assertEqual(first.schematic_root, second.schematic_root)
+            self.assertIn(MANAGED_ROOT, second.managed_files)
+            self.assertNotIn('demo.kicad_sch', second.managed_files)
+            edited = second.files['demo.kicad_sch'].replace(
+                'Connector Interposer Workflow', 'Edited managed sheet',
+            )
+            with self.assertRaisesRegex(ValueError, 'Managed schematic'):
+                generate_schematic(
+                    records[:2], parts, interposers, PROJECT_ID,
+                    project_name='demo', root_schematic=edited,
+                    expected_root_sheet=second.schematic_root,
+                )
+
     def test_dc_connector_is_one_selected_part_with_explicit_nc_pin(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
@@ -97,7 +130,7 @@ class SchematicTests(unittest.TestCase):
             self.assertIn('J1', bundle.paths)
             self.assertEqual([row['Reference'] for row in bundle.bom].count('J1'), 1)
             dc_sheet = next(text for name, text in bundle.files.items()
-                            if name.startswith('dc_'))
+                            if Path(name).name.startswith('dc_'))
             parsed = loads(dc_sheet)
             self.assertEqual(len(children(parsed, 'no_connect')), 1)
             self.assertIn('APPROVED-DSUB', bundle.bom_csv())
@@ -114,10 +147,12 @@ class SchematicTests(unittest.TestCase):
             removed=generate_schematic(records[:-1],gp,ip,PROJECT_ID)
             self.assertEqual(bundle.paths['J101-1'],removed.paths['J101-1'])
             self.assertEqual(before,{p.name:p.read_bytes() for p in Path(tmp).iterdir()})
-            self.assertEqual(len([n for n in bundle.files if n.startswith('gang_')]),2)
+            self.assertEqual(len([n for n in bundle.files
+                                  if Path(n).name.startswith('gang_')]), 2)
             for text in bundle.files.values():loads(text)
             for filename in removed.files:
-                if filename.startswith('gang_') and filename.endswith('_1.kicad_sch'):
+                if (Path(filename).name.startswith('gang_') and
+                        filename.endswith('_1.kicad_sch')):
                     self.assertEqual(bundle.files[filename],removed.files[filename])
             changed=generate_schematic((dataclasses.replace(records[0],signal='CHANGED'),*records[1:]),gp,ip,PROJECT_ID)
             self.assertEqual(bundle.paths,changed.paths)
@@ -128,7 +163,8 @@ class SchematicTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             records,gp,ip=fixture(tmp,4)
             bundle=generate_schematic(records[:1],gp,ip,PROJECT_ID)
-            sheet=next(v for k,v in bundle.files.items() if k.startswith('interposer_'))
+            sheet=next(v for k,v in bundle.files.items()
+                       if Path(k).name.startswith('interposer_'))
             node=loads(sheet)
             self.assertEqual([l[1] for l in children(node,'global_label')].count('GND'),3)
             with self.assertRaises(ValueError):generate_schematic(records,{},ip,PROJECT_ID)
@@ -185,7 +221,10 @@ assert classes['RF']==(0,-1),classes
             directory=Path(tmp)
             records,gp,ip=fixture(directory)
             bundle=generate_schematic(records,gp,ip,PROJECT_ID,'native')
-            for name,text in bundle.files.items():(directory/name).write_text(text)
+            for name, text in bundle.files.items():
+                path = directory / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text)
             (directory/'native.kicad_pro').write_text(json.dumps(bundle.project_settings))
             cli=NATIVE_CLI
             for args in (['sch','export','netlist','--format','kicadxml','-o',str(directory/'net.xml')],['sch','erc','--format','json','-o',str(directory/'erc.json')]):

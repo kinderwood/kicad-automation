@@ -9,12 +9,18 @@ import io
 import json
 import math
 import re
+import hashlib
 from dataclasses import dataclass, field
 from .core.identities import stable_uuid
 from .core.project import merge_project_settings
 from .core.libraries import ApprovedFootprint, ApprovedSymbol, natural_key
 from .core.model import validate_records
 from .core.sexpr import dumps, loads, children, child
+
+
+MANAGED_DIRECTORY = '.connector-interposer-managed'
+MANAGED_ROOT = MANAGED_DIRECTORY + '/workflow.kicad_sch'
+MANAGED_SHEET_NAME = 'Connector Interposer Workflow'
 
 
 def q(value):
@@ -42,6 +48,8 @@ class SchematicBundle:
     bom: tuple
     project_settings: dict
     identities: dict = field(default_factory=dict)
+    managed_files: tuple = ()
+    schematic_root: dict = field(default_factory=dict)
 
     def bom_csv(self):
         stream = io.StringIO(newline='')
@@ -70,10 +78,11 @@ def _no_connect(x, y, uid):
     return f'(no_connect (at {x:g} {y:g}) (uuid {q(uid)}))'
 
 
-def _instance(ref, lib_id, value, part, x, y, unit, root_id, sheet_id, symbol_id, pins, project_name, uid):
+def _instance(ref, lib_id, value, part, x, y, unit, instance_path,
+              symbol_id, pins, project_name, uid):
     props = ''.join(f'(property {q(k)} {q(v)} (at {x:g} {yy:g} 0) {effects(1) if k in ("Reference", "Value") else "(effects (font (size 1 1)) (hide yes))"})' for k, v, yy in [('Reference', ref, y-6), ('Value', value, y-3), ('Footprint', part.footprint.library_id, y), ('MPN', part.mpn, y)])
     pin_ids = ''.join(f'(pin {q(pin)} (uuid {q(uid("pin/"+ref+"/"+str(unit)+"/"+pin))}))' for pin in sorted(pins, key=natural_key))
-    return f'(symbol (lib_id {q(lib_id)}) (at {x:g} {y:g} 0) (unit {unit}) (in_bom yes) (on_board yes) (dnp no) (uuid {q(symbol_id)}) {props} {pin_ids} (instances (project {q(project_name)} (path {q("/"+root_id+"/"+sheet_id)} (reference {q(ref)}) (unit {unit})))))'
+    return f'(symbol (lib_id {q(lib_id)}) (at {x:g} {y:g} 0) (unit {unit}) (in_bom yes) (on_board yes) (dnp no) (uuid {q(symbol_id)}) {props} {pin_ids} (instances (project {q(project_name)} (path {q(instance_path)} (reference {q(ref)}) (unit {unit})))))'
 
 
 def _interposer_lib(lib_id, unit_pads):
@@ -88,8 +97,106 @@ def _interposer_lib(lib_id, unit_pads):
     return f'(symbol {q(lib_id)} (pin_names (offset 0) (hide yes)) (in_bom yes) (on_board yes) (property "Reference" "E" (at 0 5 0) {effects()}) (property "Value" {q(name)} (at 0 7 0) {effects()}) '+''.join(units)+')'
 
 
+def _sheet_uuid(sheet):
+    value = child(sheet, 'uuid')
+    return value[1] if value and len(value) == 2 else ''
+
+
+def _sheet_file(sheet):
+    for prop in children(sheet, 'property'):
+        if len(prop) >= 3 and prop[1] == 'Sheetfile':
+            return prop[2]
+    return ''
+
+
+def _sheet_name(sheet):
+    for prop in children(sheet, 'property'):
+        if len(prop) >= 3 and prop[1] == 'Sheetname':
+            return prop[2]
+    return ''
+
+
+def _sheet_hash(sheet):
+    return hashlib.sha256(dumps(sheet).encode('utf-8')).hexdigest()
+
+
+def _pages(node):
+    found = []
+    if isinstance(node, list):
+        if len(node) == 2 and node[0] == 'page':
+            try:
+                found.append(int(node[1]))
+            except (TypeError, ValueError):
+                pass
+        for value in node:
+            found.extend(_pages(value))
+    return found
+
+
+def merge_schematic_root(existing, project_id, project_name,
+                         expected_sheet=None):
+    """Attach one stable managed sheet while preserving every designer node."""
+    uid = lambda key: stable_uuid(project_id, key)
+    sheet_id = uid('schematic/managed-sheet')
+    if existing:
+        root = loads(existing)
+        if not root or root[0] != 'kicad_sch':
+            raise ValueError('Project root schematic is not a KiCad schematic')
+        root_uuid = child(root, 'uuid')
+        if not root_uuid or len(root_uuid) != 2:
+            raise ValueError('Project root schematic has no UUID')
+        root_id = root_uuid[1]
+    else:
+        root_id = uid('schematic/designer-root')
+        root = loads(_header(root_id) +
+                     '(sheet_instances (path "/" (page "1"))) '
+                     '(embedded_fonts no))')
+    matches = [sheet for sheet in children(root, 'sheet')
+               if _sheet_uuid(sheet) == sheet_id]
+    if len(matches) > 1:
+        raise ValueError('Managed schematic sheet UUID occurs more than once')
+    if matches:
+        sheet = matches[0]
+        if (_sheet_file(sheet) != MANAGED_ROOT or
+                _sheet_name(sheet) != MANAGED_SHEET_NAME):
+            raise ValueError('Managed schematic root sheet was edited; restore it before rerunning')
+        if (expected_sheet and expected_sheet.get('sheet_sha256') and
+                _sheet_hash(sheet) != expected_sheet['sheet_sha256']):
+            raise ValueError('Managed schematic root sheet was edited; restore it before rerunning')
+    else:
+        if expected_sheet:
+            raise ValueError('Managed schematic root sheet was removed; restore it before rerunning')
+        if any(_sheet_file(sheet) == MANAGED_ROOT for sheet in children(root, 'sheet')):
+            raise ValueError('Managed schematic filename is already used by another sheet')
+        page = max(_pages(root) or [1]) + 1
+        expression = (
+            f'(sheet (at 15 20) (size 60 16) '
+            f'(stroke (width 0) (type default)) (fill (color 0 0 0 0)) '
+            f'(uuid {q(sheet_id)}) '
+            f'(property "Sheetname" {q(MANAGED_SHEET_NAME)} (at 15 19 0) {effects()}) '
+            f'(property "Sheetfile" {q(MANAGED_ROOT)} (at 15 37 0) {effects(.7)}) '
+            f'(instances (project {q(project_name)} '
+            f'(path {q("/" + root_id)} (page {q(page)})))))'
+        )
+        sheet = loads(expression)
+        insert = next((index for index, item in enumerate(root)
+                       if isinstance(item, list) and item and
+                       item[0] in ('sheet_instances', 'embedded_fonts')), len(root))
+        root.insert(insert, sheet)
+    pages = _pages(root)
+    return dumps(root) + '\n', {
+        'file': project_name + '.kicad_sch',
+        'root_uuid': root_id,
+        'sheet_uuid': sheet_id,
+        'sheet_file': MANAGED_ROOT,
+        'sheet_sha256': _sheet_hash(sheet),
+        'child_page_start': max(pages or [1]) + 1,
+    }
+
+
 def generate_schematic(records, gang_parts, interposer_parts, project_id,
-                       project_name='connector_interposer_workflow', dc_parts=None):
+                       project_name='connector_interposer_workflow', dc_parts=None,
+                       root_schematic=None, expected_root_sheet=None):
     """Return all tool-owned file contents; callers stage and review before saving.
 
     gang_parts maps RF gang IDs to PartSelection (approved two-pin symbol required).
@@ -113,7 +220,11 @@ def generate_schematic(records, gang_parts, interposer_parts, project_id,
     if {r.connector for r in records} & set(interposer_parts):
         raise ValueError('Connector and interposer designations must be distinct')
     uid = lambda key: stable_uuid(project_id, key)
-    root_id = uid('schematic/root')
+    designer_root, root_spec = merge_schematic_root(
+        root_schematic, project_id, project_name, expected_root_sheet,
+    )
+    root_id = uid('schematic/managed-root')
+    hierarchy = '/'.join((root_spec['root_uuid'], root_spec['sheet_uuid']))
     files, paths, sheets, bom, identities = {}, {}, [], [], {}
     symbol_libraries, footprint_libraries = {}, {}
     def footprint_library(part):
@@ -156,15 +267,19 @@ def generate_schematic(records, gang_parts, interposer_parts, project_id,
                 slot = index % 24
                 x, y = 30.48+(slot//8)*86.36, 25.4+(slot%8)*21.59
                 symbol_id = uid('symbol/'+r.key)
-                paths[r.key] = '/'+sid+'/'+symbol_id
+                paths[r.key] = '/'+root_spec['sheet_uuid']+'/'+sid+'/'+symbol_id
                 identities[r.key] = symbol_id
-                content.append(_instance(r.key, lib_id, part.value or lib_id.split(':', 1)[1], part, x, y, 1, root_id, sid, symbol_id, numbers, project_name, uid))
+                content.append(_instance(
+                    r.key, lib_id, part.value or lib_id.split(':', 1)[1],
+                    part, x, y, 1, '/'+hierarchy+'/'+sid, symbol_id,
+                    numbers, project_name, uid,
+                ))
                 for pin, px, py, angle in part.symbol.pin_numbers:
                     net = r.signal if pin == part.signal_pin else 'GND'
                     content.append(_label(net, x+px, y-py, uid('label/'+r.key+'/'+pin)))
                 bom.append({'Reference': r.key, 'Value': part.value or lib_id.split(':', 1)[1], 'Footprint': part.footprint.library_id, 'MPN': part.mpn, 'Quantity': 1})
             content.append('(embedded_fonts no))\n')
-            files[filename] = '\n'.join(content)
+            files[MANAGED_DIRECTORY + '/' + filename] = '\n'.join(content)
             sheets.append((key, sid, filename, gang+(' / '+str(page+1) if len(pages)>1 else '')))
     for ref in sorted(dc_parts, key=natural_key):
         part = dc_parts[ref]
@@ -196,10 +311,10 @@ def generate_schematic(records, gang_parts, interposer_parts, project_id,
         content = [_header(uid('document/'+key), library)]
         x, y = 50.8, 50.8
         symbol_id = uid('symbol/'+ref)
-        paths[ref] = '/'+sid+'/'+symbol_id
+        paths[ref] = '/'+root_spec['sheet_uuid']+'/'+sid+'/'+symbol_id
         identities[ref] = symbol_id
         content.append(_instance(ref, lib_id, part.value or lib_id.split(':', 1)[1],
-                                 part, x, y, 1, root_id, sid, symbol_id,
+                                 part, x, y, 1, '/'+hierarchy+'/'+sid, symbol_id,
                                  numbers, project_name, uid))
         for pin, px, py, angle in part.symbol.pin_numbers:
             at_x, at_y = x+px, y-py
@@ -210,7 +325,7 @@ def generate_schematic(records, gang_parts, interposer_parts, project_id,
                 content.append(_no_connect(at_x, at_y,
                                            uid('no-connect/'+ref+'/'+pin)))
         content.append('(embedded_fonts no))\n')
-        files[filename] = '\n'.join(content)
+        files[MANAGED_DIRECTORY + '/' + filename] = '\n'.join(content)
         sheets.append((key, sid, filename, ref))
         bom.append({'Reference': ref, 'Value': part.value or lib_id.split(':', 1)[1],
                     'Footprint': part.footprint.library_id, 'MPN': part.mpn,
@@ -234,13 +349,17 @@ def generate_schematic(records, gang_parts, interposer_parts, project_id,
             content = [_header(uid('document/'+key), library)]
             content.append(f'(text "Signal pins first, then unused pads to GND" (at 30.48 12.7 0) {effects()} (uuid {q(uid("note/"+key))}))')
             x, y = 30.48, 25.4
-            content.append(_instance(ref, lib_id, part.value or 'Interposer', part, x, y, unit, root_id, sid, symbol_id, numbers, project_name, uid))
+            content.append(_instance(
+                ref, lib_id, part.value or 'Interposer', part, x, y, unit,
+                '/'+hierarchy+'/'+sid, symbol_id, numbers, project_name, uid,
+            ))
             for index, number in enumerate(numbers):
                 px, py = (index//16)*58.42, (index%16)*8.89
                 content.append(_label(assignments.get(number, 'GND'), x+px, y+py, uid('label/'+ref+'/'+number)))
             content.append('(embedded_fonts no))\n')
-            files[filename] = '\n'.join(content)
-            paths[ref if unit == 1 else ref+':'+str(unit)] = '/'+sid+'/'+symbol_id
+            files[MANAGED_DIRECTORY + '/' + filename] = '\n'.join(content)
+            paths[ref if unit == 1 else ref+':'+str(unit)] = ('/' +
+                root_spec['sheet_uuid']+'/'+sid+'/'+symbol_id)
             sheets.append((key, sid, filename, ref+' / '+str(unit)))
         bom.append({'Reference': ref, 'Value': part.value or 'Interposer', 'Footprint': part.footprint.library_id, 'MPN': part.mpn, 'Quantity': 1})
     # Root overview pagination is stable per sheet key; use bounded A4 grid.
@@ -251,20 +370,29 @@ def generate_schematic(records, gang_parts, interposer_parts, project_id,
         x, y = 15+(index%columns)*68, 20+(index//columns)*28
         if y > (820 if len(sheets)>24 else 190):
             raise ValueError('Project exceeds supported 290-sheet schematic index; split into projects')
-        top.append(f'(sheet (at {x} {y}) (size 60 16) (stroke (width 0) (type default)) (fill (color 0 0 0 0)) (uuid {q(sid)}) (property "Sheetname" {q(title)} (at {x} {y-1} 0) {effects()}) (property "Sheetfile" {q(filename)} (at {x} {y+17} 0) {effects(.7)}) (instances (project {q(project_name)} (path {q("/"+root_id)} (page {q(index+2)})))))')
+        top.append(f'(sheet (at {x} {y}) (size 60 16) (stroke (width 0) (type default)) (fill (color 0 0 0 0)) (uuid {q(sid)}) (property "Sheetname" {q(title)} (at {x} {y-1} 0) {effects()}) (property "Sheetfile" {q(filename)} (at {x} {y+17} 0) {effects(.7)}) (instances (project {q(project_name)} (path {q("/"+hierarchy)} (page {q(root_spec["child_page_start"]+index)})))))')
     top.append('(sheet_instances (path "/" (page "1"))) (embedded_fonts no))\n')
-    files[project_name+'.kicad_sch'] = '\n'.join(top)
+    files[MANAGED_ROOT] = '\n'.join(top)
+    files[project_name+'.kicad_sch'] = designer_root
     symbol_entries = []
     for alias, symbols in sorted(symbol_libraries.items()):
         filename = alias+'.kicad_sym'
-        files[filename] = '(kicad_symbol_lib (version 20241209) (generator "connector_interposer_workflow") '+''.join(symbols[name] for name in sorted(symbols))+')\n'
-        symbol_entries.append(f'(lib (name {q(alias)}) (type "KiCad") (uri {q("${KIPRJMOD}/"+filename)}) (options "") (descr "Pinned Workflow project symbols"))')
+        managed_name = MANAGED_DIRECTORY + '/' + filename
+        files[managed_name] = '(kicad_symbol_lib (version 20241209) (generator "connector_interposer_workflow") '+''.join(symbols[name] for name in sorted(symbols))+')\n'
+        symbol_entries.append(f'(lib (name {q(alias)}) (type "KiCad") (uri {q("${KIPRJMOD}/"+managed_name)}) (options "") (descr "Pinned Workflow project symbols"))')
     files['sym-lib-table'] = '(sym_lib_table '+''.join(symbol_entries)+')\n'
     files['fp-lib-table'] = '(fp_lib_table '+''.join(f'(lib (name {q(alias)}) (type "KiCad") (uri {q(path)}) (options "") (descr "Read-only approved footprint source"))' for alias,path in sorted(footprint_libraries.items()))+')\n'
     # Exact assignments avoid treating names containing *, ?, [, ] as patterns.
     classes = sorted({r.netclass for r in records})
     settings = merge_project_settings({}, records)
-    return SchematicBundle(files, paths, tuple(sorted(bom, key=lambda row:natural_key(row['Reference']))), settings, identities)
+    managed_files = tuple(sorted(
+        name for name in files if name.startswith(MANAGED_DIRECTORY + '/')
+    ))
+    return SchematicBundle(
+        files, paths,
+        tuple(sorted(bom, key=lambda row:natural_key(row['Reference']))),
+        settings, identities, managed_files, root_spec,
+    )
 
 
 def merge_library_table(existing, generated):

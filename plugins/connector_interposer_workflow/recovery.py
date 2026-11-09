@@ -1,7 +1,7 @@
-"""Guarded multi-file updates for closed, disposable project copies.
+"""Guarded multi-file updates and persistent project recovery journals.
 
-The journal is deliberately persistent. This is recoverable replacement, not a
-live-editor transaction: callers must close KiCad before applying or restoring.
+Prepared live-project journals may be published after in-memory PCB
+reconciliation. Restoring a journal always requires the project to be closed.
 """
 import hashlib
 import json
@@ -53,22 +53,29 @@ def _safe(root, name):
 def require_closed(root, closed_project):
     root = Path(root).resolve()
     if not closed_project:
-        raise RecoveryError("Apply requires an explicitly closed disposable project copy")
+        raise RecoveryError("This operation requires an explicitly closed project")
     if list(root.glob("*.lck")) or list(root.glob("~*.lck")):
         raise RecoveryError("KiCad lock file present; close the project first")
     return root
 
 
-def apply_files(project_root, files, expected, *, closed_project=False,
-                journal_dir=None, boundary=None):
-    """Replace reviewed files with all-file preflight and resumable rollback.
+def require_schematic_closed(root):
+    """Allow the active PCB lock, but reject any open schematic editor."""
+    root = Path(root).resolve()
+    locks = [path for path in root.glob('*.lck')
+             if '.kicad_sch' in path.name]
+    locks += [path for path in root.glob('~*.lck')
+              if '.kicad_sch' in path.name]
+    if locks:
+        raise RecoveryError('Close the Schematic Editor before applying Workflow changes')
+    return root
 
-    ``files`` maps project-relative paths to exact bytes (None deletes an owned
-    obsolete file). ``expected`` records
-    the reviewed current SHA-256 (None for a new file). A boundary callback is
-    useful for progress and interruption testing; exceptions leave the journal.
-    """
-    root = require_closed(project_root, closed_project)
+
+def prepare_files(project_root, files, expected, *, closed_project=False,
+                  live_project=False, journal_dir=None):
+    """Durably stage every before/after image without changing project files."""
+    root = (Path(project_root).resolve() if live_project else
+            require_closed(project_root, closed_project))
     if set(files) != set(expected):
         raise RecoveryError("Expected hashes must cover exactly the file set")
     targets = {name: _safe(root, name) for name in files}
@@ -87,36 +94,86 @@ def apply_files(project_root, files, expected, *, closed_project=False,
         backup = str(index) + ".before"
         if expected[name] is not None:
             _write(run / backup, targets[name].read_bytes())
+        staged = str(index) + ".after"
         if content is not None:
-            _write(run / (str(index) + ".after"), content)
-        entries[name] = {"before": expected[name], "after": digest(content) if content is not None else None,
-                         "backup": backup, "staged": str(index) + ".after"}
-    journal = {"schema": "connector-interposer.recovery/1.0", "root": str(root),
-               "status": "PREPARED", "files": entries}
+            _write(run / staged, content)
+        entries[name] = {
+            "before": expected[name],
+            "after": digest(content) if content is not None else None,
+            "backup": backup, "staged": staged,
+        }
+    journal = {
+        "schema": "connector-interposer.recovery/2.0", "root": str(root),
+        "mode": "live" if live_project else "closed-copy",
+        "status": "PREPARED", "files": entries,
+    }
     location = run / "journal.json"
     _write(location, json.dumps(journal, sort_keys=True, indent=2).encode())
-    if boundary:
-        boundary(0)
-    # Repeat all-file preflight after preparing backups, before first mutation.
-    if any(file_hash(targets[n]) != expected[n] for n in files):
-        raise RecoveryError("Project changed during preparation; nothing applied")
-    for index, name in enumerate(sorted(changed), 1):
-        if changed[name] is None:
+    return {"status": "PREPARED", "journal": str(location),
+            "changed": sorted(changed)}
+
+
+def commit_prepared(journal_path, *, live_project=False, boundary=None):
+    """Publish one prepared journal after repeating its all-file preflight."""
+    location = Path(journal_path).resolve()
+    journal = json.loads(location.read_text())
+    if journal.get('schema') != 'connector-interposer.recovery/2.0':
+        raise RecoveryError('Unsupported recovery journal')
+    if journal.get('status') != 'PREPARED':
+        raise RecoveryError('Recovery journal is not prepared for application')
+    if (journal.get('mode') == 'live') != bool(live_project):
+        raise RecoveryError('Recovery journal publication mode does not match its preparation')
+    root = (Path(journal['root']).resolve() if live_project else
+            require_closed(journal['root'], True))
+    entries = journal['files']
+    targets = {name: _safe(root, name) for name in entries}
+    for name, entry in entries.items():
+        staged = _safe(location.parent, entry['staged'])
+        if entry['after'] is not None and file_hash(staged) != entry['after']:
+            raise RecoveryError('Missing or damaged staged file; nothing applied')
+        if file_hash(targets[name]) != entry['before']:
+            raise RecoveryError('Project changed during preparation; nothing applied')
+    for index, name in enumerate(sorted(entries), 1):
+        entry = entries[name]
+        if entry['after'] is None:
             targets[name].unlink()
         else:
-            _write(targets[name], changed[name])
+            _write(targets[name], _safe(location.parent, entry['staged']).read_bytes())
         if boundary:
             boundary(index)
-    journal["status"] = "APPLIED"
+    journal['status'] = 'APPLIED'
     _write(location, json.dumps(journal, sort_keys=True, indent=2).encode())
-    return {"status": "APPLIED", "journal": str(location), "changed": sorted(changed)}
+    return {'status': 'APPLIED', 'journal': str(location),
+            'changed': sorted(entries)}
+
+
+def apply_files(project_root, files, expected, *, closed_project=False,
+                journal_dir=None, boundary=None):
+    """Replace reviewed files with all-file preflight and resumable rollback.
+
+    ``files`` maps project-relative paths to exact bytes (None deletes an owned
+    obsolete file). ``expected`` records
+    the reviewed current SHA-256 (None for a new file). A boundary callback is
+    useful for progress and interruption testing; exceptions leave the journal.
+    """
+    transaction = prepare_files(
+        project_root, files, expected, closed_project=closed_project,
+        journal_dir=journal_dir,
+    )
+    if transaction['status'] == 'NOOP':
+        return transaction
+    if boundary:
+        boundary(0)
+    return commit_prepared(
+        transaction['journal'], live_project=False, boundary=boundary,
+    )
 
 
 def recover(journal_path, *, closed_project=False, boundary=None):
     """Restore pre-state only if every file and every backup passes preflight."""
     location = Path(journal_path).resolve()
     journal = json.loads(location.read_text())
-    if journal.get("schema") != "connector-interposer.recovery/1.0":
+    if journal.get("schema") != "connector-interposer.recovery/2.0":
         raise RecoveryError("Unsupported recovery journal")
     root = require_closed(journal["root"], closed_project)
     entries = journal["files"]

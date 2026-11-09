@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Apply the current complete C fixture to a fresh reviewable project.
+"""Apply the current complete C fixture to a fresh live demo project.
 
 Run with KiCad's Python, e.g. AppRun python3.11 run_demo.py /tmp/gppo-demo.
-All outputs go to the chosen new directory. Source library parts stay untouched.
+All outputs go to the chosen new directory. Fixture library parts stay untouched.
 """
 import argparse
 import json
@@ -137,6 +137,14 @@ def prepare(destination):
         board_path=str(board),
         source_layer='User.Drawings',
     )
+    revision = native['revision']
+    controller.config['mechanical'].update(
+        inspected_revision=revision,
+        inspected_geometry=native['geometry_revision'],
+    )
+    for name in ('J101', 'J102'):
+        controller.config['gangs'][name]['anchor_circle']['revision'] = revision
+    controller.config['dc_connectors']['J1']['anchor_circle']['revision'] = revision
     interposer_circle = next(
         circle for circle in native['circles']
         if circle['center'] == [42.5625, 42.5625]
@@ -144,6 +152,7 @@ def prepare(destination):
     controller.config['interposers']['E1']['pose_circle'] = {
         'uuid': interposer_circle['uuid'],
         'center': interposer_circle['center'],
+        'revision': revision,
     }
     segments = native['segments']
     points = [point for segment in segments for point in (segment['start'], segment['end'])]
@@ -161,7 +170,6 @@ def prepare(destination):
         'outer_uuids': outer,
         'cutout_uuids': [],
     }
-    controller.config['output_dir'] = str(workspace / 'fresh-C')
     return controller
 
 
@@ -173,7 +181,12 @@ def run(destination):
         raise ValueError(preview['conflicts'])
     if preview.get('warnings'):
         raise ValueError(preview['warnings'])
-    result = controller.apply()
+    prepared = controller.apply()
+    import pcbnew
+    from connector_interposer_workflow.backend import NativeBackend
+    result = NativeBackend(pcbnew).publish_live(
+        pcbnew.LoadBoard(str(controller.board_path)), preview, prepared,
+    )
 
     output_board = Path(result['board_path'])
     reopened = WorkflowController(output_board, backend=NativeProcessBackend(python=[sys.executable]))

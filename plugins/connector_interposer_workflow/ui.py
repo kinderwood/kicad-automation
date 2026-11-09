@@ -4127,6 +4127,12 @@ class WorkflowDialog(wx.Dialog):
         from .core.geometry import feature_tolerance
         tolerance = feature_tolerance(self.feature_tolerance.value_mm())
         mechanical = self.controller.config['mechanical']
+        if mechanical.get('layer') != layer:
+            mechanical['inspected_revision'] = ''
+            mechanical['inspected_geometry'] = ''
+            self._inspected_revision = ''
+            self._inspected_layer = ''
+            self._inspected_circles = ()
         mechanical['layer'] = layer
         mechanical['feature_tolerance_mm'] = tolerance
         mechanical['feature_tolerance_unit'] = self.feature_tolerance.selected_unit()
@@ -4165,6 +4171,44 @@ class WorkflowDialog(wx.Dialog):
             )
         center = circle.GetCenter()
         return circle, [center.x / 1e6, center.y / 1e6]
+
+    def _circle_record(self, circle, center):
+        revision = self.controller.config['mechanical'].get(
+            'inspected_revision', '',
+        )
+        layer = self.user_layer.GetValue().strip()
+        if (not revision or getattr(self, '_inspected_revision', '') != revision or
+                getattr(self, '_inspected_layer', '') != layer):
+            raise ValueError(
+                'Inspect the saved imported drawing before selecting placement circles'
+            )
+        from .core.geometry import feature_tolerance
+        tolerance = feature_tolerance(
+            self.controller.config['mechanical']['feature_tolerance_mm'],
+        )
+        radius = circle.GetRadius() / 1e6
+        matches = [
+            candidate for candidate in self._inspected_circles
+            if math.dist(candidate['center'], center) <= tolerance and
+            abs(float(candidate['radius']) - radius) <= tolerance
+        ]
+        live_uuid = circle.m_Uuid.AsString()
+        selected = next(
+            (candidate for candidate in matches
+             if candidate.get('uuid') == live_uuid),
+            None,
+        )
+        if selected is None and len(matches) == 1:
+            selected = matches[0]
+        if selected is None:
+            raise ValueError(
+                'The selected live circle does not resolve uniquely in the inspected '
+                'saved drawing; save and inspect the drawing again'
+            )
+        return {
+            'uuid': selected['uuid'], 'center': list(selected['center']),
+            'revision': revision,
+        }
 
     def _interposer_placement_changed(self, event=None, source_circle=None):
         if self._loading_placement:
@@ -4296,14 +4340,13 @@ class WorkflowDialog(wx.Dialog):
 
     def capture_interposer_circle(self, event):
         circle, center = self._selected_mechanical_circle('interposer origin')
+        record = self._circle_record(circle, center)
         self._store_mechanical_source()
         self.drawing_status.SetLabel(
             'Drawing layer recorded from the selected circle. Inspect the saved drawing to refresh its inventory.'
         )
         self._style_status(self.drawing_status, 'warning')
-        self._interposer_placement_changed(source_circle={
-            'uuid': circle.m_Uuid.AsString(), 'center': center,
-        })
+        self._interposer_placement_changed(source_circle=record)
 
     def refresh_anchor_gangs(self):
         if not hasattr(self, 'anchor_gang_list'):
@@ -4394,9 +4437,9 @@ class WorkflowDialog(wx.Dialog):
 
     def capture_circle(self, event):
         circle, center = self._selected_mechanical_circle('RF location 1')
-        self._rf_anchor_changed(source_circle={
-            'uuid': circle.m_Uuid.AsString(), 'center': center,
-        })
+        self._rf_anchor_changed(
+            source_circle=self._circle_record(circle, center),
+        )
 
     def refresh_dc_anchors(self):
         if not hasattr(self, 'dc_anchor_list'):
@@ -4502,6 +4545,7 @@ class WorkflowDialog(wx.Dialog):
         if not reference:
             raise ValueError('Select a DC connector')
         circle, center = self._selected_mechanical_circle('DC pin 1')
+        record = self._circle_record(circle, center)
         try:
             rotation = float(self.dc_anchor_rotation.GetValue())
         except ValueError as error:
@@ -4509,8 +4553,8 @@ class WorkflowDialog(wx.Dialog):
         if not math.isfinite(rotation):
             raise ValueError('DC connector orientation must be a finite number')
         self.controller.set_dc_connector(reference, {
-            'anchor_pad': '1', 'anchor': center,
-            'anchor_circle': {'uuid': circle.m_Uuid.AsString(), 'center': center},
+            'anchor_pad': '1', 'anchor': record['center'],
+            'anchor_circle': record,
             'rotation': rotation,
             'side': 'B' if self.dc_anchor_side.GetSelection() == 1 else 'F',
             'anchor_accepted': True,
@@ -4525,9 +4569,19 @@ class WorkflowDialog(wx.Dialog):
     def inspect_mechanical(self, event):
         backend = self.controller.backend
         if backend is None or not hasattr(backend, 'call'): raise ValueError('KiCad native backend is unavailable')
-        layer = self.user_layer.GetValue()
+        self._store_mechanical_source()
+        layer = self.user_layer.GetValue().strip()
         def complete(result):
             if self._closing: return
+            mechanical = self.controller.config['mechanical']
+            prior = mechanical.get('inspected_revision', '')
+            mechanical['inspected_revision'] = result['revision']
+            mechanical['inspected_geometry'] = result['geometry_revision']
+            mechanical['accepted'] = True
+            self._inspected_revision = result['revision']
+            self._inspected_layer = layer
+            self._inspected_circles = tuple(result['circles'])
+            self.controller.changed()
             self.mechanical_list.DeleteAllItems()
             for number, circle in enumerate(result['circles'], 1):
                 row = self.mechanical_list.InsertItem(
@@ -4541,12 +4595,18 @@ class WorkflowDialog(wx.Dialog):
                 )
                 for col, value in enumerate(values, 1):
                     self.mechanical_list.SetItem(row, col, str(value))
+            changed = prior and prior != result['revision']
             self.drawing_status.SetLabel(
                 f"Drawing inventory: {len(result['circles'])} circles, "
                 f"{len(result['segments'])} segments/arcs, and "
-                f"{len(result['texts'])} text items. Text is not used for matching."
+                f"{len(result['texts'])} text items. " +
+                ('Revision changed; reselect every placement circle. '
+                 if changed else '') +
+                'Text is not used for matching.'
             )
-            self._style_status(self.drawing_status, 'success')
+            self._style_status(
+                self.drawing_status, 'warning' if changed else 'success',
+            )
             self.refresh()
         self.controller.run_async(
             lambda: backend.call(
@@ -4559,9 +4619,7 @@ class WorkflowDialog(wx.Dialog):
 
     def capture_hole_circle(self, event):
         circle, center = self._selected_mechanical_circle('mounting hole')
-        self.pending_hole_circle = {
-            'uuid': circle.m_Uuid.AsString(), 'center': center,
-        }
+        self.pending_hole_circle = self._circle_record(circle, center)
         self._store_mechanical_source()
         self.drawing_status.SetLabel(
             'Drawing layer recorded from the selected circle. Inspect the saved drawing to refresh its inventory.'
@@ -4706,26 +4764,29 @@ class WorkflowDialog(wx.Dialog):
         panel.GetSizer().Add(self.review_view, 1, wx.EXPAND | wx.ALL, 8)
         self.review_button = self.button(panel, 'Compare changes', self.compare)
         panel.GetSizer().Add(self.review_button, 0, wx.ALL, 8)
-        self.output_dir = self.field(panel, 'New output project directory', invalidate=False)
-        self.confirm_review = wx.CheckBox(panel, label='I reviewed these changes and the destination project copy')
+        self.confirm_review = wx.CheckBox(panel, label='I reviewed these live-project changes')
         panel.GetSizer().Add(self.confirm_review, 0, wx.ALL, 8)
-        self.apply_button = self.button(panel, 'Apply reviewed changes to project copy', self.apply)
+        self.apply_button = self.button(panel, 'Apply reviewed changes', self.apply)
         panel.GetSizer().Add(self.apply_button, 0, wx.ALL, 8)
         self.confirm_review.Bind(wx.EVT_CHECKBOX, lambda e: self.refresh())
 
     def build_results(self, panel):
         self.task_box(
-            panel, 'Apply / results', 'Apply to a project copy and inspect results',
-            'Apply saves a separate controlled project copy, a reconciliation report and a recovery journal. Keep the source project separate when opening the result.',
+            panel, 'Apply / results', 'Apply to the open PCB and inspect results',
+            'Apply updates and saves the open PCB, regenerates only the managed schematic hierarchy, and records a recovery journal. Keep the Schematic Editor closed during Apply.',
         )
         self.results = wx.TextCtrl(panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL)
         panel.GetSizer().Add(self.results, 1, wx.EXPAND | wx.ALL, 8)
         self.journal = self.field(panel, 'Recovery journal', picker=True)
-        panel.GetSizer().Add(self.button(panel, 'Check / recover closed output project', self.recover), 0, wx.ALL, 8)
+        panel.GetSizer().Add(self.button(panel, 'Recover with all project editors closed', self.recover), 0, wx.ALL, 8)
         self.abort_button = self.button(panel, 'Cancel analysis', self.abort)
         panel.GetSizer().Add(self.abort_button, 0, wx.ALL, 8)
 
     def compare(self, event):
+        if self.pcbnew is not None and self.pcbnew.GetBoard() is not None:
+            board = self.pcbnew.GetBoard()
+            if not self.pcbnew.SaveBoard(str(self.controller.board_path), board, True):
+                raise ValueError('KiCad could not save the open PCB before comparison')
         if not self.save(None):
             return
         self.confirm_review.SetValue(False)
@@ -4786,19 +4847,31 @@ class WorkflowDialog(wx.Dialog):
 
     def apply(self, event):
         if not self.confirm_review.GetValue(): raise ValueError('Review and explicitly accept the current change list first')
-        self.controller.config['output_dir'] = self.output_dir.GetValue()
-        # Destination is operational, not a desired-state input; backend verifies it separately.
-        self.status.SetLabel('Applying the reviewed delta to a separate project copy…')
+        if self.pcbnew is None or self.pcbnew.GetBoard() is None:
+            raise ValueError('The reviewed PCB is no longer open')
+        self.status.SetLabel('Staging and verifying the reviewed live-project delta…')
         self._applying = True
-        self.controller.run_async(self.controller.apply, self.applied, self.failed)
+        self.controller.run_async(self.controller.apply, self.publish_prepared, self.failed)
         self.refresh()
+
+    def publish_prepared(self, prepared):
+        if self._closing:
+            return
+        try:
+            result = self.controller.publish(prepared, self.pcbnew)
+        except Exception as error:
+            self.failed(error)
+            return
+        self.applied(result)
 
     def applied(self, result):
         self._applying = False
         if self._closing: return
+        if self.pcbnew is not None and hasattr(self.pcbnew, 'Refresh'):
+            self.pcbnew.Refresh()
         self.results.ChangeValue(json.dumps(result, indent=2, default=str))
         self.select_page(PAGES.index('Apply / results'))
-        self.status.SetLabel('Project copy saved. Review the reconciliation report and validation results.')
+        self.status.SetLabel('Open PCB and managed schematic hierarchy updated and saved.')
         if isinstance(result, dict) and result.get('journal'): self.journal.ChangeValue(str(result['journal']))
         self.refresh()
 
@@ -4816,7 +4889,7 @@ class WorkflowDialog(wx.Dialog):
 
     def recover(self, event):
         from .recovery import recover
-        with wx.MessageDialog(self, 'Close the output project in all KiCad editors before recovery. Recover the selected journal now?', 'Recover output project', wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING) as dialog:
+        with wx.MessageDialog(self, 'Close this project in PCB Editor, Schematic Editor, and all other KiCad editors before recovery. Recover the selected journal now?', 'Recover project', wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING) as dialog:
             if dialog.ShowModal() == wx.ID_YES:
                 self._applying = True
                 self.controller.run_async(lambda: recover(self.journal.GetValue(), closed_project=True), self.applied, self.failed)
@@ -4935,7 +5008,7 @@ class WorkflowDialog(wx.Dialog):
             for control, value in (
                 (self.interposer_rotation, '0'), (self.user_layer, 'Dwgs.User'),
                 (self.dc_anchor_rotation, '0'), (self.hole_ref, 'H1'),
-                (self.output_dir, ''), (self.journal, ''),
+                (self.journal, ''),
             ):
                 control.ChangeValue(value)
             from .core.geometry import DEFAULT_FEATURE_TOLERANCE_MM
@@ -5029,7 +5102,6 @@ class WorkflowDialog(wx.Dialog):
             if part.get('pose_accepted'):
                 self.interposer_pose_status.SetLabel(f'{ref} placement is ready.')
                 self._style_status(self.interposer_pose_status, 'success')
-        self.output_dir.ChangeValue(cfg.get('output_dir', ''))
         self.outline_enable.SetValue(cfg['outline'].get('enabled', False))
         self.outline_view.show(cfg['outline'].get('source_preview', {}))
         self._loading_placement = True

@@ -8,7 +8,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins"))
-from connector_interposer_workflow.recovery import RecoveryError, apply_files, file_hash, recover
+from connector_interposer_workflow.recovery import (
+    RecoveryError, apply_files, commit_prepared, file_hash, prepare_files, recover,
+)
 
 
 class RecoveryTests(unittest.TestCase):
@@ -96,6 +98,18 @@ apply_files(root,files,expected,closed_project=True,boundary=stop)
             (root/"~board.kicad_pcb.lck").write_text("lock")
             with self.assertRaises(RecoveryError):
                 apply_files(root, {"board": b"x"}, {"board": None}, closed_project=True)
+
+    def test_prepared_journal_cannot_change_publication_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'board').write_bytes(b'before')
+            prepared = prepare_files(
+                root, {'board': b'after'}, {'board': file_hash(root / 'board')},
+                live_project=True,
+            )
+            with self.assertRaisesRegex(RecoveryError, 'mode'):
+                commit_prepared(prepared['journal'], live_project=False)
+            self.assertEqual((root / 'board').read_bytes(), b'before')
 
     def test_owned_obsolete_file_deletion_can_be_restored(self):
         with tempfile.TemporaryDirectory() as directory:

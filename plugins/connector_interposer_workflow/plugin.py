@@ -8,7 +8,7 @@ class ConnectorToInterposerWorkflowPlugin(pcbnew.ActionPlugin):
     def defaults(self):
         self.name = 'Connector to Interposer Workflow'
         self.category = 'PCB automation'
-        self.description = 'Select approved parts, validate connectivity and reconcile a staged project copy'
+        self.description = 'Select approved parts, validate connectivity and reconcile the open project'
         self.show_toolbar_button = False
         self._dialog = None
 

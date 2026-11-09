@@ -5,7 +5,7 @@ from .identities import canonical_json
 from .geometry import DEFAULT_FEATURE_TOLERANCE_MM, feature_tolerance
 from .units import DIMENSION_UNITS
 
-CONFIG_VERSION = 8
+CONFIG_VERSION = 9
 
 
 def _mechanical_defaults():
@@ -14,6 +14,8 @@ def _mechanical_defaults():
         'feature_tolerance_mm': DEFAULT_FEATURE_TOLERANCE_MM,
         'feature_tolerance_unit': 'mil',
         'accepted': False,
+        'inspected_revision': '',
+        'inspected_geometry': '',
     }
 
 @dataclass
@@ -23,7 +25,6 @@ class ProjectConfig:
     workbook: dict = field(default_factory=dict)
     mounting_holes: list = field(default_factory=list)
     presentation: str = 'labels'
-    output_dir: str = ''
     layer_mapping: dict = field(default_factory=dict)
     layer_rules: dict = field(default_factory=dict)
     netclass_types: dict = field(default_factory=dict)
@@ -54,20 +55,24 @@ class ProjectConfig:
             raise ValueError('Unknown project configuration fields')
         result = cls(**value)
         for name in known:
-            if name not in ('project_id', 'schema_version', 'mounting_holes', 'presentation', 'output_dir') and not isinstance(getattr(result, name), dict):
+            if name not in ('project_id', 'schema_version', 'mounting_holes', 'presentation') and not isinstance(getattr(result, name), dict):
                 raise ValueError(f'Project field {name} must be an object')
         if not isinstance(result.mounting_holes, list) or not all(isinstance(hole, dict) for hole in result.mounting_holes):
             raise ValueError('Mounting hole selections must be a list of objects')
-        if result.presentation != 'labels' or not isinstance(result.output_dir, str):
-            raise ValueError('Unsupported presentation or invalid output directory')
+        if result.presentation != 'labels':
+            raise ValueError('Unsupported presentation')
         try:
             layer = result.mechanical['layer']
             accepted = result.mechanical['accepted']
             feature_tolerance(result.mechanical['feature_tolerance_mm'])
             tolerance_unit = result.mechanical['feature_tolerance_unit']
+            inspected_revision = result.mechanical['inspected_revision']
+            inspected_geometry = result.mechanical['inspected_geometry']
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError('Mechanical settings are incomplete or invalid') from error
         if (not isinstance(layer, str) or not layer or
-                type(accepted) is not bool or tolerance_unit not in DIMENSION_UNITS):
+                type(accepted) is not bool or tolerance_unit not in DIMENSION_UNITS or
+                not isinstance(inspected_revision, str) or
+                not isinstance(inspected_geometry, str)):
             raise ValueError('Mechanical settings are incomplete or invalid')
         return result

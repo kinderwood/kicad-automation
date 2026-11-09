@@ -272,10 +272,8 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'stale'): self.controller.apply()
         self.assertIsNone(self.controller.preview)
 
-    def test_destination_selection_does_not_authorize_a_changed_preview(self):
+    def test_every_persisted_workflow_change_invalidates_preview_token(self):
         before = self.controller.token()
-        self.controller.config['output_dir'] = str(self.root/'output')
-        self.assertEqual(before, self.controller.token())
         self.controller.config['layer_mapping']['L1'] = 'B.Cu'
         self.assertNotEqual(before, self.controller.token())
 
@@ -606,7 +604,7 @@ class NativeDialogTests(unittest.TestCase):
             dialog = WorkflowDialog(controller=controller)
             saved = controller.config_path.read_text()
 
-            controller.config['output_dir'] = 'changed'
+            controller.config['layer_mapping']['L1'] = 'changed'
             with mock.patch.object(dialog, '_confirm', return_value=False):
                 self.assertFalse(dialog.save(None))
                 self.assertFalse(dialog.reset_workflow_settings(None))
@@ -1492,6 +1490,42 @@ class NativeDialogTests(unittest.TestCase):
             dialog.Destroy()
             self.app.Yield()
 
+    def test_explicit_live_circle_selection_stores_inspected_saved_uuid(self):
+        from types import SimpleNamespace
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+
+        dialog = WorkflowDialog()
+        try:
+            dialog.user_layer.ChangeValue('Dwgs.User')
+            mechanical = dialog.controller.config['mechanical']
+            mechanical.update(
+                layer='Dwgs.User', inspected_revision='drawing-revision',
+                feature_tolerance_mm=.00762,
+            )
+            dialog._inspected_revision = 'drawing-revision'
+            dialog._inspected_layer = 'Dwgs.User'
+            dialog._inspected_circles = ({
+                'uuid': 'saved-board-uuid', 'center': [12.0, 34.0],
+                'radius': 1.5,
+            },)
+            live = SimpleNamespace(
+                m_Uuid=SimpleNamespace(AsString=lambda: 'live-canvas-uuid'),
+                GetRadius=lambda: 1500000,
+            )
+            self.assertEqual(dialog._circle_record(live, [12.0, 34.0]), {
+                'uuid': 'saved-board-uuid', 'center': [12.0, 34.0],
+                'revision': 'drawing-revision',
+            })
+            dialog._inspected_circles += ({
+                'uuid': 'ambiguous-saved-uuid', 'center': [12.0, 34.0],
+                'radius': 1.5,
+            },)
+            with self.assertRaisesRegex(ValueError, 'resolve uniquely'):
+                dialog._circle_record(live, [12.0, 34.0])
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
 
 
 
@@ -1504,8 +1538,9 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             raise unittest.SkipTest('Native controller integration needs KiCad Python')
         cls.p = pcbnew
 
-    def test_saved_native_population_to_project_copy_and_reopen_noop(self):
+    def test_saved_native_population_to_live_project_and_reopen_noop(self):
         from plugins.connector_interposer_workflow.controller import NativeProcessBackend
+        from plugins.connector_interposer_workflow.backend import NativeBackend
         from test_connector_interposer_schematic import fixture
         import csv
         import hashlib
@@ -1552,6 +1587,10 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             controller.load_workbook(workbook)
             controller.set_netclass_type('RF', 'RF')
             controller.set_layer_mapping('L1', 'F.Cu')
+            inventory = controller.backend.call(
+                'inspect', board_path=str(path), source_layer='Dwgs.User',
+            )
+            revision = inventory['revision']
             symbol = library/'Approved.kicad_sym'
             symbol_sha = hashlib.sha256(symbol.read_bytes()).hexdigest()
             controller.set_gang('J101', {'part_id': gang_parts['J101'].footprint.path, 'library_id': 'Approved:GPPO',
@@ -1559,18 +1598,22 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                                        'symbol': {'path': str(symbol), 'library_id': 'Approved:GPPO', 'sha256': symbol_sha},
                                        'row_lengths': [3], 'pitch_x': 4, 'anchor': [20, 30],
                                        'anchor_circle': {'uuid': circle_ids['J101-1'],
-                                                         'center': [20, 30]},
+                                                         'center': [20, 30],
+                                                         'revision': revision},
                                        'anchor_accepted': True, 'defined': True})
             part = interposer_parts['E1'].footprint
             controller.config['interposers']['E1'] = dict(
                 part.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True, side='F',
-                pose_circle={'uuid': 'live-canvas-interposer', 'center': [70, 60]},
+                pose_circle={'uuid': interposer_circle_uuid, 'center': [70, 60],
+                             'revision': revision},
                 symbol={'path': str(symbol), 'library_id': 'Approved:Interposer', 'sha256': symbol_sha},
             )
             controller.config['mechanical'] = {
                 'layer': 'Dwgs.User', 'accepted': True,
                 'feature_tolerance_mm': .00762,
                 'feature_tolerance_unit': 'mil',
+                'inspected_revision': revision,
+                'inspected_geometry': inventory['geometry_revision'],
             }
             before = path.read_bytes()
             controller.set_gang('J101', {'anchor': [21, 30]})
@@ -1591,11 +1634,14 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             bom_rows = {row['Reference']: row for row in csv.DictReader(io.StringIO(preview['desired']['project_files']['demo-connector-bom.csv']))}
             for reference, instance in preview['desired']['instances'].items():
                 self.assertEqual(instance['symbol_fields'], {name: bom_rows[reference][name] for name in ('Value', 'MPN')})
-            controller.config['output_dir'] = str(root/'output')
-            result = controller.apply()
+            prepared = controller.apply()
+            result = NativeBackend(self.p).publish_live(
+                self.p.LoadBoard(str(path)), preview, prepared,
+            )
             self.assertEqual(result['status'], 'APPLIED')
-            self.assertEqual(before, path.read_bytes())
+            self.assertNotEqual(before, path.read_bytes())
             output = Path(result['board_path'])
+            self.assertEqual(output, path.resolve())
             self.assertTrue(output.with_suffix('.kicad_sch').exists())
             footprints = {footprint.GetReference(): footprint for footprint in self.p.LoadBoard(str(output)).GetFootprints()}
             self.assertEqual(len(footprints), 4)
@@ -1612,7 +1658,6 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             repeated = reopened.review()
             self.assertEqual(repeated['status'], 'NOOP', str(repeated['changes']) + str(repeated['conflicts']))
             stamp = output.stat().st_mtime_ns
-            reopened.config['output_dir'] = str(root/'unused')
             self.assertEqual(reopened.apply()['status'], 'NOOP')
             self.assertEqual(output.stat().st_mtime_ns, stamp)
             import shutil
@@ -1621,6 +1666,7 @@ class NativeControllerEndToEndTests(unittest.TestCase):
 
     def test_mixed_rf_and_dc_controller_apply_keeps_one_dc_instance_and_nc_pad(self):
         from plugins.connector_interposer_workflow.controller import NativeProcessBackend
+        from plugins.connector_interposer_workflow.backend import NativeBackend
         from plugins.connector_interposer_workflow.core import SignalRecord, read_footprint
         from test_connector_interposer_schematic import fixture
         import csv
@@ -1688,6 +1734,10 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             controller.load_workbook(workbook)
             controller.set_netclass_type('RF', 'RF'); controller.set_netclass_type('DC', 'DC')
             controller.set_layer_mapping('L1', 'F.Cu')
+            inventory = controller.backend.call(
+                'inspect', board_path=str(board_path), source_layer='Dwgs.User',
+            )
+            revision = inventory['revision']
             approved_symbols = library / 'Approved.kicad_sym'
             approved_sha = hashlib.sha256(approved_symbols.read_bytes()).hexdigest()
             controller.set_gang('J101', {
@@ -1696,7 +1746,8 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                 'symbol': {'path': str(approved_symbols), 'library_id': 'Approved:GPPO',
                            'sha256': approved_sha},
                 'row_lengths': [1], 'anchor': [20, 30], 'anchor_accepted': True,
-                'anchor_circle': {'uuid': rf_pin1_uuid, 'center': [20, 30]},
+                'anchor_circle': {'uuid': rf_pin1_uuid, 'center': [20, 30],
+                                  'revision': revision},
                 'defined': True,
             })
             transition = write_transition(
@@ -1711,13 +1762,16 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                 'sha256': dc_part.sha256,
                 'symbol': {'path': str(dc_symbol), 'library_id': 'Approved:DSub',
                            'sha256': hashlib.sha256(dc_symbol.read_bytes()).hexdigest()},
-                'anchor': [50, 50], 'anchor_circle': {'uuid': pin1_uuid, 'center': [50, 50]},
+                'anchor': [50, 50], 'anchor_circle': {
+                    'uuid': pin1_uuid, 'center': [50, 50], 'revision': revision,
+                },
                 'rotation': 0, 'side': 'F', 'anchor_accepted': True,
             })
             interposer = interposer_parts['E1'].footprint
             controller.config['interposers']['E1'] = dict(
                 interposer.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True, side='F',
-                pose_circle={'uuid': interposer_center_uuid, 'center': [70, 60]},
+                pose_circle={'uuid': interposer_center_uuid, 'center': [70, 60],
+                             'revision': revision},
                 symbol={'path': str(approved_symbols), 'library_id': 'Approved:Interposer',
                         'sha256': approved_sha},
             )
@@ -1725,12 +1779,16 @@ class NativeControllerEndToEndTests(unittest.TestCase):
                 'layer': 'Dwgs.User', 'accepted': True,
                 'feature_tolerance_mm': .00762,
                 'feature_tolerance_unit': 'mil',
+                'inspected_revision': revision,
+                'inspected_geometry': inventory['geometry_revision'],
             }
             preview = controller.review()
             self.assertEqual(set(preview['desired']['instances']), {'J101-1', 'J1', 'E1'})
             self.assertEqual(preview['desired']['instances']['J1']['pads'], {'1': 'GND', '2': 'PWR'})
-            controller.config['output_dir'] = str(root / 'output')
-            result = controller.apply()
+            prepared = controller.apply()
+            result = NativeBackend(self.p).publish_live(
+                self.p.LoadBoard(str(board_path)), preview, prepared,
+            )
             output_board = self.p.LoadBoard(result['board_path'])
             placed = {footprint.GetReference(): footprint for footprint in output_board.GetFootprints()}
             self.assertEqual(set(placed), {'J101-1', 'J1', 'E1'})

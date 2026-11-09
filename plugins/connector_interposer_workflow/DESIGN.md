@@ -34,7 +34,7 @@ run under both Adwaita light and dark appearances.
 Layer assignment and Routing permissions update the current workflow directly
 from their table controls. They do not add page-level acceptance buttons;
 the global status area reports the change, and **Save workflow settings**
-persists it separately from the reviewed project-copy Apply operation. Saving
+persists it separately from the reviewed live-project Apply operation. Saving
 asks before overwriting an existing sidecar. **Delete workflow settings** removes
 only that sidecar and keeps the current dialog entries open. **Reset workflow
 settings** clears the current entries while preserving the stable project UUID,
@@ -151,7 +151,11 @@ never supplies identity or placement. Group-local status identifies the selected
 circle and current placement state.
 
 Saved-board inspection remains explicit because it launches bounded native
-analysis rather than changing an in-memory field. Mounting-hole creation also
+analysis rather than changing an in-memory field. Inspection fingerprints the
+complete imported layer, including native UUIDs. Circle selections carry that
+accepted drawing revision. A later inspection may offer a unique geometry match
+as a suggestion, but changing or reimporting the drawing always requires explicit
+reselection. Mounting-hole creation also
 remains explicit because it adds a new project item; its selected-circle action
 must never reuse the active RF anchor implicitly.
 The placed-hole list supports removal before Review changes. All source
@@ -253,8 +257,9 @@ continues, while a complete population requires an unambiguous one-to-one match.
 A failed check
 reports the feature identity, measured center deviation and configured limit;
 multiple circles inside the limit remain an ambiguity rather than invoking a
-nearest-circle heuristic. Accepted source UUID and geometry checks remain exact
-because they detect stale source input rather than placement deviation.
+nearest-circle heuristic. Accepted source UUID and complete drawing-revision
+checks remain exact because they detect stale source input rather than placement
+deviation; geometry-only matching is advisory.
 Unused DC pads remain netless and receive schematic no-connect markers. Missing
 RF locations remain blocking population errors.
 
@@ -267,10 +272,30 @@ assignments are reconciled by electrical requirement across all RF locations;
 the workflow rejects incompatible saved layer, side, stackup, revision or
 footprint roles rather than silently retuning geometry.
 
-Apply materializes an isolated project copy and verifies saved native geometry,
-nets and groups before journaled publication of the output files. The open
-source editor is never a concurrent writer to that output. A separate checked
+Apply first materializes and verifies an isolated candidate, then durably stages
+exact before/after project files. On the UI thread it reconciles the active BOARD,
+verifies managed identities and designer-owned content, and publishes the staged
+files. Schematic Editor must be closed while Apply runs. A separate checked
 recovery journal is required because KiCad native Undo does not reliably restore
-all saved group membership across supported versions. A new destination is
-required for each non-noop apply; in-place live-editor mutation is outside this
-release boundary.
+all saved group membership across supported versions; recovery requires every
+project editor to be closed.
+
+The root schematic is designer-owned. One deterministic hierarchical sheet entry
+is the ownership boundary for generated child sheets and symbol libraries under
+`.connector-interposer-managed/`; unrelated root content is preserved. This
+follows KiCad's documented
+[hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics).
+Although KiCad describes
+[Update PCB from Schematic](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#update-pcb-from-schematic)
+as the normal forward-annotation path, this workflow uses bounded object-level
+reconciliation so preservation of designer PCB content is reviewable. Imported
+DXF geometry continues to enter through PCB Editor's native
+[vector graphics import](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#importing_vector_graphics)
+before the workflow inspects it.
+
+Managed PCB identities are derived from stable project and logical identities,
+so remove/reintroduce restores the same UUID. Designer tracks and vias survive a
+netlist-only change only when an entire isolated exact-endpoint component connects
+at least two affected pads and all boundary pads move to one new net. The route
+retains UUID and geometry and changes only its net. Physical changes, incomplete
+boundaries, zones and net-bearing shapes block instead of being guessed.

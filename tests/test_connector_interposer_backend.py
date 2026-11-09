@@ -6,13 +6,16 @@ import shutil
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
 import pcbnew as p
-from connector_interposer_workflow.backend import BackendError, NativeBackend, board_state, uuid_of
+from connector_interposer_workflow.backend import (
+    BackendError, NativeBackend, _set_uuid, board_state, uuid_of,
+)
 from connector_interposer_workflow.recovery import recover
 from test_connector_interposer_artifacts import artifact_fixture, rehash
 
@@ -69,7 +72,9 @@ class BackendTests(unittest.TestCase):
                   "net_settings": {"meta": {"version": 4}, "classes": [{"name": "RF", "priority": 0}],
                   "netclass_patterns": [{"netclass": "RF", "pattern": "CLOCK"}, {"netclass": "RF", "pattern": "DATA"}]}}))
         (self.source/"ordinary.kicad_sch").write_text("designer sheet")
-        self.desired = {"instances": {"J101-1": {"gang": "J101", "kind": "connector", "footprint": self.selection,
+        self.project_id = str(uuid.uuid4())
+        self.desired = {"project_id": self.project_id,
+                        "instances": {"J101-1": {"gang": "J101", "kind": "connector", "footprint": self.selection,
                          "pose": [20, 20, 0], "pads": {"1": "CLOCK", "2": "GND"}, "netclass": "RF", "signal_layer": "In2.Cu",
                          "rf": {"artifact": artifact_fixture(self.selection["sha256"]), "nets": {"signal": "CLOCK", "ground": "GND"}, "clock": 90}}}}
 
@@ -245,7 +250,10 @@ class BackendTests(unittest.TestCase):
         p.SaveBoard(str(self.board_path), board)
         del circle, board, pad, fp
         for side in ('F', 'B'):
-            desired = {'instances': {'J1': {
+            revision = self.backend.inspect_graphics(
+                self.board_path, 'Dwgs.User',
+            )['revision']
+            desired = {'project_id': self.project_id, 'instances': {'J1': {
                 'kind': 'connector', 'connector_type': 'DC', 'gang': 'J1',
                 'footprint': selection, 'pose': [0, 0, 0], 'side': side,
                 'anchor': {'pad': '1', 'at': [20, 20],
@@ -257,6 +265,7 @@ class BackendTests(unittest.TestCase):
                 'dc_anchors': {'J1': {'circle_uuid': circle_ids['pin1'],
                                       'center': [20, 20]}},
                 'feature_tolerance_mm': 0.00762,
+                'drawing_revision': revision,
             }}
             too_narrow = copy.deepcopy(desired)
             too_narrow['mechanical']['feature_tolerance_mm'] = 0.004
@@ -287,6 +296,7 @@ class BackendTests(unittest.TestCase):
 
     def test_interposer_pad_circles_auto_detect_warn_or_validate_with_shared_tolerance(self):
         desired = {
+            'project_id': self.project_id,
             'instances': {'E1': {
                 'kind': 'interposer', 'footprint': self.selection,
                 'pose': [20, 20, 0], 'side': 'F',
@@ -296,6 +306,9 @@ class BackendTests(unittest.TestCase):
                 'source_layer': 'Dwgs.User', 'rf_matches': [], 'rf_keys': [],
                 'rf_anchors': {}, 'dc_anchors': {}, 'interposer_anchors': {},
                 'feature_tolerance_mm': 0.00762,
+                'drawing_revision': self.backend.inspect_graphics(
+                    self.board_path, 'Dwgs.User',
+                )['revision'],
             },
         }
         preview = self.backend.preview(self.board_path, desired)
@@ -314,6 +327,9 @@ class BackendTests(unittest.TestCase):
         circle.SetLayer(p.Dwgs_User)
         board.Add(circle)
         p.SaveBoard(str(self.board_path), board)
+        desired['mechanical']['drawing_revision'] = self.backend.inspect_graphics(
+            self.board_path, 'Dwgs.User',
+        )['revision']
         preview = self.backend.preview(self.board_path, desired)
         self.assertIn('1 of 2', preview['warnings'][0]['message'])
 
@@ -324,11 +340,17 @@ class BackendTests(unittest.TestCase):
         second.SetLayer(p.Dwgs_User)
         board.Add(second)
         p.SaveBoard(str(self.board_path), board)
+        desired['mechanical']['drawing_revision'] = self.backend.inspect_graphics(
+            self.board_path, 'Dwgs.User',
+        )['revision']
         self.assertEqual(self.backend.preview(self.board_path, desired)['warnings'], [])
 
         second.SetStart(p.VECTOR2I(22010000, 20000000))
         second.SetEnd(p.VECTOR2I(22160000, 20000000))
         p.SaveBoard(str(self.board_path), board)
+        desired['mechanical']['drawing_revision'] = self.backend.inspect_graphics(
+            self.board_path, 'Dwgs.User',
+        )['revision']
         with self.assertRaisesRegex(
             BackendError,
             r'E1 pad 2: center deviation.*0\.01 mm.*limit.*0\.00762 mm',
@@ -373,6 +395,164 @@ class BackendTests(unittest.TestCase):
             preview = self.backend.preview(output, desired)
             self.assertTrue(any(c["kind"] == "routed-net-change" for c in preview["conflicts"]), mode)
 
+    def test_exact_endpoint_isolated_route_net_swap_is_retagged(self):
+        desired = copy.deepcopy(self.desired)
+        second = copy.deepcopy(desired['instances']['J101-1'])
+        second.update(gang='E1', kind='interposer', pose=[30, 20, 0])
+        second.pop('rf', None)
+        second.pop('netclass', None)
+        second.pop('signal_layer', None)
+        desired['instances']['E1'] = second
+        first = self.backend.apply(
+            self.backend.preview(self.board_path, desired), self.root / 'routed-first',
+        )
+        output = Path(first['board_path'])
+        board = p.LoadBoard(str(output))
+        track = p.PCB_TRACK(board)
+        track.SetStart(p.VECTOR2I(20000000, 20000000))
+        track.SetEnd(p.VECTOR2I(30000000, 20000000))
+        track.SetLayer(p.F_Cu)
+        track.SetWidth(200000)
+        track.SetNet(next(net for net in board.GetNetInfo().NetsByNetcode().values()
+                          if net.GetNetname() == 'CLOCK'))
+        board.Add(track)
+        route_uuid = uuid_of(track)
+        p.SaveBoard(str(output), board)
+        changed = copy.deepcopy(desired)
+        for spec in changed['instances'].values():
+            spec['pads']['1'] = 'DATA'
+            if spec.get('rf'):
+                spec['rf']['nets']['signal'] = 'DATA'
+        preview = self.backend.preview(output, changed)
+        self.assertEqual(preview['conflicts'], [])
+        self.assertEqual(
+            preview['desired']['route_retags'][route_uuid],
+            {'before': 'CLOCK', 'after': 'DATA'},
+        )
+        result = self.backend.apply(preview, self.root / 'routed-retagged')
+        saved = p.LoadBoard(result['board_path'])
+        route = next(item for item in saved.GetTracks()
+                     if uuid_of(item) == route_uuid)
+        self.assertEqual(route.GetNetname(), 'DATA')
+
+    def test_net_bearing_designer_shape_blocks_route_retag(self):
+        desired = copy.deepcopy(self.desired)
+        second = copy.deepcopy(desired['instances']['J101-1'])
+        second.update(gang='E1', kind='interposer', pose=[30, 20, 0])
+        second.pop('rf', None)
+        second.pop('netclass', None)
+        second.pop('signal_layer', None)
+        desired['instances']['E1'] = second
+        first = self.backend.apply(
+            self.backend.preview(self.board_path, desired), self.root / 'shape-first',
+        )
+        output = Path(first['board_path'])
+        board = p.LoadBoard(str(output))
+        shape = p.PCB_SHAPE(board)
+        shape.SetShape(p.SHAPE_T_SEGMENT)
+        shape.SetStart(p.VECTOR2I(20000000, 20000000))
+        shape.SetEnd(p.VECTOR2I(30000000, 20000000))
+        shape.SetLayer(p.F_Cu)
+        shape.SetWidth(200000)
+        shape.SetNet(next(net for net in board.GetNetInfo().NetsByNetcode().values()
+                          if net.GetNetname() == 'CLOCK'))
+        board.Add(shape)
+        p.SaveBoard(str(output), board)
+        changed = copy.deepcopy(desired)
+        for spec in changed['instances'].values():
+            spec['pads']['1'] = 'DATA'
+            if spec.get('rf'):
+                spec['rf']['nets']['signal'] = 'DATA'
+        preview = self.backend.preview(output, changed)
+        self.assertTrue(any(
+            conflict['kind'] == 'routed-net-change' and
+            uuid_of(shape) in conflict['uuids']
+            for conflict in preview['conflicts']
+        ))
+
+    def test_crossing_designer_track_blocks_exact_endpoint_retag(self):
+        desired = copy.deepcopy(self.desired)
+        second = copy.deepcopy(desired['instances']['J101-1'])
+        second.update(gang='E1', kind='interposer', pose=[30, 20, 0])
+        second.pop('rf', None)
+        second.pop('netclass', None)
+        second.pop('signal_layer', None)
+        desired['instances']['E1'] = second
+        first = self.backend.apply(
+            self.backend.preview(self.board_path, desired), self.root / 'crossing-first',
+        )
+        output = Path(first['board_path'])
+        board = p.LoadBoard(str(output))
+        net = next(item for item in board.GetNetInfo().NetsByNetcode().values()
+                   if item.GetNetname() == 'CLOCK')
+        for start, end in (
+            ((20000000, 20000000), (30000000, 20000000)),
+            ((25000000, 19000000), (25000000, 21000000)),
+        ):
+            track = p.PCB_TRACK(board)
+            track.SetStart(p.VECTOR2I(*start))
+            track.SetEnd(p.VECTOR2I(*end))
+            track.SetLayer(p.F_Cu)
+            track.SetWidth(200000)
+            track.SetNet(net)
+            board.Add(track)
+        p.SaveBoard(str(output), board)
+        changed = copy.deepcopy(desired)
+        for spec in changed['instances'].values():
+            spec['pads']['1'] = 'DATA'
+            if spec.get('rf'):
+                spec['rf']['nets']['signal'] = 'DATA'
+        preview = self.backend.preview(output, changed)
+        self.assertEqual(preview['desired']['route_retags'], {})
+        self.assertTrue(any(conflict['kind'] == 'routed-net-change'
+                            for conflict in preview['conflicts']))
+
+    def test_live_prepare_publish_and_closed_recovery(self):
+        before = self.board_path.read_bytes()
+        preview = self.backend.preview(self.board_path, self.desired)
+        prepared = self.backend.prepare_live(preview)
+        self.assertEqual(prepared['status'], 'PREPARED')
+        self.assertEqual(self.board_path.read_bytes(), before)
+        journal = json.loads(Path(prepared['journal']).read_text())
+        self.assertEqual(journal['mode'], 'live')
+        self.assertEqual(journal['status'], 'PREPARED')
+        live = p.LoadBoard(str(self.board_path))
+        result = self.backend.publish_live(live, preview, prepared)
+        self.assertEqual(result['board_path'], str(self.board_path.resolve()))
+        self.assertEqual(len(list(live.GetFootprints())), 1)
+        self.assertEqual(len(list(p.LoadBoard(str(self.board_path)).GetFootprints())), 1)
+        del live
+        recover(result['journal'], closed_project=True)
+        self.assertEqual(self.board_path.read_bytes(), before)
+
+    def test_live_publish_accepts_foreign_saved_uuid_difference(self):
+        board = p.LoadBoard(str(self.board_path))
+        circle = p.PCB_SHAPE(board)
+        circle.SetShape(p.SHAPE_T_CIRCLE)
+        circle.SetStart(p.VECTOR2I(40000000, 40000000))
+        circle.SetEnd(p.VECTOR2I(41000000, 40000000))
+        circle.SetLayer(p.Dwgs_User)
+        board.Add(circle)
+        p.SaveBoard(str(self.board_path), board)
+        preview = self.backend.preview(self.board_path, self.desired)
+        prepared = self.backend.prepare_live(preview)
+        live = p.LoadBoard(str(self.board_path))
+        live_circle = next(item for item in live.GetDrawings()
+                           if isinstance(item, p.PCB_SHAPE))
+        saved_uuid = uuid_of(live_circle)
+        _set_uuid(live_circle, str(uuid.uuid4()), p)
+        self.assertNotEqual(uuid_of(live_circle), saved_uuid)
+        result = self.backend.publish_live(live, preview, prepared)
+        self.assertEqual(result['status'], 'APPLIED')
+        self.assertEqual(uuid_of(live_circle) in board_state(live, p), True)
+
+    def test_live_prepare_requires_closed_schematic_editor(self):
+        preview = self.backend.preview(self.board_path, self.desired)
+        lock = self.source / '~demo.kicad_sch.lck'
+        lock.write_text('open')
+        with self.assertRaisesRegex(ValueError, 'Schematic Editor'):
+            self.backend.prepare_live(preview)
+
     def test_one_parent_per_gang_removal_reintroduction_and_foreign_member(self):
         desired = copy.deepcopy(self.desired)
         for i in range(2, 7):
@@ -390,7 +570,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(5, len(list(loaded.GetFootprints())))
         self.assertNotIn(former, board_state(loaded, p))
         third = self.backend.apply(self.backend.preview(second["board_path"], desired), self.root/"six-again")
-        self.assertNotEqual(former, third["registry"]["instances"]["J101-1"]["base"])
+        self.assertEqual(former, third["registry"]["instances"]["J101-1"]["base"])
         for key in removed["instances"]:
             self.assertEqual(first["registry"]["instances"][key]["base"], third["registry"]["instances"][key]["base"])
         # A foreign item in an owned group must survive the next own-object edit.
@@ -430,8 +610,10 @@ class BackendTests(unittest.TestCase):
     def test_generated_file_ownership(self):
         desired = copy.deepcopy(self.desired)
         desired["project_files"] = {"ordinary.kicad_sch": "replacement"}
+        desired['managed_files'] = ['ordinary.kicad_sch']
         self.assertEqual("BLOCKED", self.backend.preview(self.board_path, desired)["status"])
         desired["project_files"] = {"generated.kicad_sch": "generated sheet"}
+        desired['managed_files'] = ['generated.kicad_sch']
         first = self.backend.apply(self.backend.preview(self.board_path, desired), self.root/"generated")
         (Path(first["board_path"]).parent/"generated.kicad_sch").write_text("manual edit")
         self.assertTrue(any(c["kind"] == "generated-file-edit" for c in self.backend.preview(first["board_path"], desired)["conflicts"]))
@@ -575,6 +757,7 @@ class BackendTests(unittest.TestCase):
             }},
             "dc_anchors": {}, "interposer_anchors": {},
             "feature_tolerance_mm": 0.00762,
+            "drawing_revision": accepted["revision"],
         }
         self.assertEqual("PREVIEW", self.backend.preview(self.board_path, desired)["status"])
         shifted = copy.deepcopy(desired)

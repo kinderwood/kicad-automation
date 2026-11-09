@@ -1,4 +1,6 @@
-"""Gang placement: board X-right/Y-down, KiCad positive CCW angles, mm input/output."""
+"""Gang placement and explicit imported-drawing identity."""
+import hashlib
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -35,6 +37,55 @@ def finite(value):
         return math.isfinite(float(value))
     except (TypeError, ValueError):
         return False
+
+
+def drawing_revision(inventory, *, include_uuids=True):
+    """Hash the complete inspected drawing layer, not the containing board.
+
+    UUIDs deliberately participate in the accepted revision.  A native DXF
+    replacement can reproduce identical geometry while creating new KiCad
+    objects; that is a new revision and requires explicit reassociation.
+    ``include_uuids=False`` is only a recovery/suggestion fingerprint.
+    """
+    fields = {
+        'source_layer': inventory.get('source_layer', ''),
+        'circles': [], 'segments': [], 'texts': [],
+    }
+    for circle in inventory.get('circles', ()):
+        value = {
+            'center': [float(v) for v in circle.get('center', ())],
+            'radius': float(circle.get('radius', 0)),
+        }
+        if include_uuids:
+            value['uuid'] = str(circle.get('uuid', ''))
+        fields['circles'].append(value)
+    for segment in inventory.get('segments', ()):
+        value = {
+            'start': [float(v) for v in segment.get('start', ())],
+            'end': [float(v) for v in segment.get('end', ())],
+            'mid': ([float(v) for v in segment['mid']]
+                    if segment.get('mid') is not None else None),
+            'owner': str(segment.get('owner', 'board')),
+        }
+        if include_uuids:
+            value['uuid'] = str(segment.get('source_uuid', ''))
+        fields['segments'].append(value)
+    for item in inventory.get('texts', ()):
+        value = {
+            'text': str(item.get('text', '')),
+            'at': [float(v) for v in item.get('at', ())],
+        }
+        if include_uuids:
+            value['uuid'] = str(item.get('uuid', ''))
+        fields['texts'].append(value)
+    for name in ('circles', 'segments', 'texts'):
+        fields[name].sort(key=lambda item: json.dumps(
+            item, sort_keys=True, separators=(',', ':'), allow_nan=False,
+        ))
+    encoded = json.dumps(
+        fields, sort_keys=True, separators=(',', ':'), allow_nan=False,
+    ).encode('utf-8')
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def transform(point, anchor=(0, 0), rotation=0, mirror=False):
@@ -152,7 +203,35 @@ def match_circle_features(features, circles, tolerance, claimed=(), required=Non
 
 
 def match_selected_circle(feature, accepted, circles, tolerance, claimed=()):
-    """Resolve an explicit circle selection by UUID or unique saved geometry."""
+    """Resolve an explicit selection by UUID; geometry never changes identity."""
+    tolerance = feature_tolerance(tolerance)
+    center = accepted.get('center', ()) if isinstance(accepted, dict) else ()
+    if (len(center) != 2 or not all(finite(value) for value in center)):
+        raise ValueError(f'{feature}: selected drawing circle has no valid recorded center')
+    unavailable = set(claimed)
+    selected_uuid = accepted.get('uuid') or accepted.get('circle_uuid', '')
+    if selected_uuid in unavailable:
+        raise ValueError(f'{feature}: selected drawing circle is already assigned')
+    selected = next((circle for circle in circles
+                     if circle.get('uuid') == selected_uuid), None)
+    if selected is None:
+        suggestion = suggest_selected_circle(
+            feature, accepted, circles, tolerance, claimed,
+        )
+        detail = (f'; unique geometry suggestion is {suggestion["uuid"]}'
+                  if suggestion else '')
+        raise ValueError(
+            f'{feature}: selected drawing circle is missing from the accepted '
+            f'drawing revision{detail}; select it again'
+        )
+    deviation = math.dist(selected['center'], center)
+    if deviation > tolerance:
+        raise ValueError(feature_deviation_message(feature, deviation, tolerance))
+    return selected
+
+
+def suggest_selected_circle(feature, accepted, circles, tolerance, claimed=()):
+    """Return one geometry candidate for user confirmation, never acceptance."""
     tolerance = feature_tolerance(tolerance)
     center = accepted.get('center', ()) if isinstance(accepted, dict) else ()
     if (len(center) != 2 or not all(finite(value) for value in center)):
@@ -162,29 +241,10 @@ def match_selected_circle(feature, accepted, circles, tolerance, claimed=()):
                   if circle.get('uuid') not in unavailable]
     distances = [(circle, math.dist(circle['center'], center))
                  for circle in candidates]
-    selected_uuid = accepted.get('uuid') or accepted.get('circle_uuid', '')
-    selected = next(
-        ((circle, deviation) for circle, deviation in distances
-         if circle.get('uuid') == selected_uuid and deviation <= tolerance),
-        None,
-    )
-    if selected is not None:
-        return selected[0]
     matches = [(circle, deviation) for circle, deviation in distances
                if deviation <= tolerance]
     if not matches:
-        if distances:
-            closest = min(deviation for _circle, deviation in distances)
-            raise ValueError(feature_deviation_message(feature, closest, tolerance))
-        raise ValueError(
-            f'{feature}: no drawing circles remain to match; limit is '
-            f'{distance_text(tolerance)}'
-        )
+        return None
     if len(matches) != 1:
-        deviations = ', '.join(distance_text(deviation)
-                               for _circle, deviation in matches)
-        raise ValueError(
-            f'{feature}: {len(matches)} drawing circles match the recorded center '
-            f'at deviations {deviations}; limit is {distance_text(tolerance)}'
-        )
+        return None
     return matches[0][0]

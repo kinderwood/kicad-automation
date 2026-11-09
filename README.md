@@ -21,8 +21,8 @@ parameters and manual installation instructions.
 
 The [Connector to Interposer Workflow](plugins/connector_interposer_workflow/README.md)
 imports complete spreadsheet snapshots, selects librarian-approved connector and
-interposer parts, reconciles native mechanical geometry, and creates a reviewed
-output project. Its validated connector profile currently has one signal contact
+interposer parts, reconciles native mechanical geometry, and applies reviewed
+updates to the open project while preserving designer-owned content. Its validated connector profile currently has one signal contact
 and one ground/shield contact.
 The separate [RF Transition Designer](plugins/gppo_rf_transition/README.md)
 lets librarians author immutable RF geometry artifacts. Neither tool invokes

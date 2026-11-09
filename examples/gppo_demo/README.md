@@ -77,9 +77,10 @@ seven-position rows at 150 mil X/Y pitch with a -90-degree pattern rotation;
 C offsets the second row by 75 mil and location 1 remains the anchor. Connector
 orientation is independent: J101 is 0 degrees and J102 is 180 degrees.
 
-The source inputs and librarian parts are never overwritten by Apply. Generated
-outputs include the reconciled board, schematic hierarchy, BOM, report, pinned
-inputs, registry, and recovery journal.
+The repository fixture inputs and librarian parts are never overwritten. Apply
+updates the copied demo project in place. Generated outputs include the
+reconciled board, managed schematic hierarchy, BOM, report, pinned inputs,
+registry, and recovery journal.
 
 ## Demonstration-data limits
 
