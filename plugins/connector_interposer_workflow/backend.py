@@ -16,7 +16,7 @@ from pathlib import Path
 from .artifacts import canonical, sha256, validate_artifact
 from .core.geometry import (
     MAX_FEATURE_TOLERANCE_MM, distance_text, feature_deviation_message,
-    feature_tolerance, match_circle_features,
+    feature_tolerance, match_circle_features, match_selected_circle,
 )
 from .recovery import apply_files, file_hash, require_closed
 
@@ -392,39 +392,43 @@ class NativeBackend:
                 tolerance = feature_tolerance(mechanical["feature_tolerance_mm"])
             except (KeyError, TypeError, ValueError) as error:
                 raise BackendError("Invalid drawing feature tolerance: " + str(error)) from error
-            circles = {circle["uuid"]: circle for circle in native["circles"]}
             claimed = set()
             for reference, accepted in mechanical.get("interposer_anchors", {}).items():
-                circle = circles.get(accepted.get("circle_uuid"))
-                if circle is None or circle["center"] != accepted.get("center"):
-                    raise BackendError(
-                        f"{reference}: accepted interposer center circle changed or is missing"
+                try:
+                    circle = match_selected_circle(
+                        f"{reference} interposer origin circle", accepted,
+                        native["circles"], tolerance, claimed,
                     )
+                except ValueError as error:
+                    raise BackendError(str(error)) from error
                 claimed.add(circle["uuid"])
                 spec = instances.get(reference)
-                if not spec or list(spec.get("pose", ())[:2]) != list(circle["center"]):
+                deviation = (math.dist(spec.get("pose", ())[:2], circle["center"])
+                             if spec else math.inf)
+                if not spec or deviation > tolerance:
                     raise BackendError(
-                        f"{reference}: interposer position differs from its accepted center circle"
+                        feature_deviation_message(
+                            f"{reference} interposer origin", deviation, tolerance,
+                        )
                     )
             for reference, accepted in mechanical.get("mounting_hole_anchors", {}).items():
-                circle = circles.get(accepted.get("circle_uuid"))
-                if circle is None or circle["center"] != accepted.get("center"):
-                    raise BackendError(
-                        f"{reference}: accepted mounting-hole circle changed or is missing"
+                try:
+                    circle = match_selected_circle(
+                        f"{reference} mounting-hole circle", accepted,
+                        native["circles"], tolerance, claimed,
                     )
+                except ValueError as error:
+                    raise BackendError(str(error)) from error
                 spec = instances.get(reference)
                 if not spec or spec.get("kind") != "mounting-hole":
                     raise BackendError(
                         f"{reference}: mounting-hole anchor has no matching instance"
                     )
-                if list(spec.get("pose", ())[:2]) != list(circle["center"]):
-                    raise BackendError(
-                        f"{reference}: mounting-hole position differs from its accepted circle"
-                    )
-                if circle["uuid"] in claimed:
-                    raise BackendError(
-                        f"{reference}: accepted circle is already used by another anchor"
-                    )
+                deviation = math.dist(spec.get("pose", ())[:2], circle["center"])
+                if deviation > tolerance:
+                    raise BackendError(feature_deviation_message(
+                        f"{reference} mounting-hole origin", deviation, tolerance,
+                    ))
                 claimed.add(circle["uuid"])
 
             rf_keys = set(mechanical.get("rf_keys", []))
@@ -436,10 +440,16 @@ class NativeBackend:
             rf_features = [
                 (key, instances[key].get("pose", ())[:2]) for key in sorted(installed)
             ]
-            required = {
-                gang + "-1": accepted.get("circle_uuid", "")
-                for gang, accepted in mechanical.get("rf_anchors", {}).items()
-            }
+            required = {}
+            for gang, accepted in mechanical.get("rf_anchors", {}).items():
+                try:
+                    circle = match_selected_circle(
+                        f"{gang} location 1 circle", accepted,
+                        native["circles"], tolerance, claimed,
+                    )
+                except ValueError as error:
+                    raise BackendError(str(error)) from error
+                required[gang + "-1"] = circle["uuid"]
             try:
                 rf_matches = match_circle_features(
                     rf_features, native["circles"], tolerance,
@@ -455,9 +465,13 @@ class NativeBackend:
                 raise BackendError("Accepted RF drawing circles changed or are missing")
             claimed.update(match["circle_uuid"] for match in rf_matches)
             for reference, accepted in mechanical.get("dc_anchors", {}).items():
-                circle = circles.get(accepted.get("circle_uuid"))
-                if circle is None or circle["center"] != accepted.get("center"):
-                    raise BackendError(f"{reference}: accepted DC pin 1 circle changed or is missing")
+                try:
+                    circle = match_selected_circle(
+                        f"{reference} pin 1 circle", accepted,
+                        native["circles"], tolerance, claimed,
+                    )
+                except ValueError as error:
+                    raise BackendError(str(error)) from error
                 spec = instances.get(reference)
                 if not spec or spec.get("connector_type") != "DC":
                     raise BackendError(f"{reference}: DC anchor has no matching connector instance")

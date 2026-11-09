@@ -149,3 +149,42 @@ def match_circle_features(features, circles, tolerance, claimed=(), required=Non
             )
         used[match['circle_uuid']] = match['key']
     return matches
+
+
+def match_selected_circle(feature, accepted, circles, tolerance, claimed=()):
+    """Resolve an explicit circle selection by UUID or unique saved geometry."""
+    tolerance = feature_tolerance(tolerance)
+    center = accepted.get('center', ()) if isinstance(accepted, dict) else ()
+    if (len(center) != 2 or not all(finite(value) for value in center)):
+        raise ValueError(f'{feature}: selected drawing circle has no valid recorded center')
+    unavailable = set(claimed)
+    candidates = [circle for circle in circles
+                  if circle.get('uuid') not in unavailable]
+    distances = [(circle, math.dist(circle['center'], center))
+                 for circle in candidates]
+    selected_uuid = accepted.get('uuid') or accepted.get('circle_uuid', '')
+    selected = next(
+        ((circle, deviation) for circle, deviation in distances
+         if circle.get('uuid') == selected_uuid and deviation <= tolerance),
+        None,
+    )
+    if selected is not None:
+        return selected[0]
+    matches = [(circle, deviation) for circle, deviation in distances
+               if deviation <= tolerance]
+    if not matches:
+        if distances:
+            closest = min(deviation for _circle, deviation in distances)
+            raise ValueError(feature_deviation_message(feature, closest, tolerance))
+        raise ValueError(
+            f'{feature}: no drawing circles remain to match; limit is '
+            f'{distance_text(tolerance)}'
+        )
+    if len(matches) != 1:
+        deviations = ', '.join(distance_text(deviation)
+                               for _circle, deviation in matches)
+        raise ValueError(
+            f'{feature}: {len(matches)} drawing circles match the recorded center '
+            f'at deviations {deviations}; limit is {distance_text(tolerance)}'
+        )
+    return matches[0][0]

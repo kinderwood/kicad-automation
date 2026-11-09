@@ -415,7 +415,7 @@ class NativeDialogTests(unittest.TestCase):
         self.assertIsNone(self.wx.FindWindowByLabel('Accept interposer placement', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Accept anchor', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Accept DC placement', dialog))
-        self.assertIsNotNone(self.wx.FindWindowByLabel('Use selected center circle', dialog))
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Use selected origin circle', dialog))
         self.assertIsNotNone(self.wx.FindWindowByLabel('Delete workflow settings', dialog))
         self.assertIsNotNone(self.wx.FindWindowByLabel('Reset workflow settings', dialog))
         self.assertIn('without applying board changes', dialog.save_button.GetToolTipText())
@@ -1564,7 +1564,7 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             part = interposer_parts['E1'].footprint
             controller.config['interposers']['E1'] = dict(
                 part.pin(), approved=True, pose=[70, 60, 0], pose_accepted=True, side='F',
-                pose_circle={'uuid': interposer_circle_uuid, 'center': [70, 60]},
+                pose_circle={'uuid': 'live-canvas-interposer', 'center': [70, 60]},
                 symbol={'path': str(symbol), 'library_id': 'Approved:Interposer', 'sha256': symbol_sha},
             )
             controller.config['mechanical'] = {
@@ -1582,6 +1582,10 @@ class NativeControllerEndToEndTests(unittest.TestCase):
             controller.set_gang('J101', {'anchor': [20, 30]})
             preview = controller.review()
             self.assertEqual(preview['conflicts'], [])
+            self.assertEqual(
+                preview['desired']['mechanical']['interposer_anchors']['E1']['circle_uuid'],
+                interposer_circle_uuid,
+            )
             self.assertNotIn('rf', preview['desired']['instances']['J101-1'])
             import io
             bom_rows = {row['Reference']: row for row in csv.DictReader(io.StringIO(preview['desired']['project_files']['demo-connector-bom.csv']))}

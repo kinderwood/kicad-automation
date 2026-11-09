@@ -2922,7 +2922,7 @@ class WorkflowDialog(wx.Dialog):
                 self._loading_placement = False
             self.interposer_pose_status.SetLabel(
                 f'{reference} placement is ready.' if reference and interposer.get('pose_accepted')
-                else 'Select the interposer center circle.'
+                else 'Select the interposer origin circle.'
             )
             self._style_status(
                 self.interposer_pose_status,
@@ -3938,12 +3938,12 @@ class WorkflowDialog(wx.Dialog):
         interposer_fields.Add(self.interposer_side, 0, wx.ALIGN_LEFT)
         interposer.Add(interposer_fields, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         interposer.Add(
-            self.button(interposer_box, 'Use selected center circle',
+            self.button(interposer_box, 'Use selected origin circle',
                         self.capture_interposer_circle),
             0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8,
         )
         self.interposer_pose_status = self.status_label(
-            interposer_box, 'Select the interposer center circle.'
+            interposer_box, 'Select the interposer origin circle.'
         )
         self._style_status(self.interposer_pose_status, 'warning')
         interposer.Add(self.interposer_pose_status, 0,
@@ -4188,7 +4188,7 @@ class WorkflowDialog(wx.Dialog):
                 raise ValueError
         except ValueError:
             self.interposer_pose_status.SetLabel(
-                'Needs input — select the center circle and enter a finite orientation.'
+                'Needs input — select the origin circle and enter a finite orientation.'
             )
             self._style_status(self.interposer_pose_status, 'error')
             self._skip_event(event)
@@ -4199,7 +4199,7 @@ class WorkflowDialog(wx.Dialog):
         selection['pose_accepted'] = True
         self.controller.changed()
         self.interposer_pose_status.SetLabel(
-            f'{reference} placed from its selected center circle.'
+            f'{reference} placed from its selected origin circle.'
         )
         self._style_status(self.interposer_pose_status, 'success')
         self._skip_event(event)
@@ -4295,7 +4295,7 @@ class WorkflowDialog(wx.Dialog):
         self.microvia_status.GetParent().Layout()
 
     def capture_interposer_circle(self, event):
-        circle, center = self._selected_mechanical_circle('interposer center')
+        circle, center = self._selected_mechanical_circle('interposer origin')
         self._store_mechanical_source()
         self.drawing_status.SetLabel(
             'Drawing layer recorded from the selected circle. Inspect the saved drawing to refresh its inventory.'
@@ -4954,7 +4954,7 @@ class WorkflowDialog(wx.Dialog):
         )
         self._style_status(self.drawing_status, 'warning')
         self.interposer_pose_status.SetLabel(
-            'Select the interposer center circle.'
+            'Select the interposer origin circle.'
         )
         self._style_status(self.interposer_pose_status, 'warning')
         self.anchor_status.SetLabel('Select an RF gang.')

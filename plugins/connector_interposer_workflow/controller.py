@@ -3,6 +3,7 @@ from copy import deepcopy
 from dataclasses import replace
 import hashlib
 import json
+import math
 from pathlib import Path
 import threading
 import uuid
@@ -691,7 +692,7 @@ class WorkflowController:
                         not selection.get('pose_circle', {}).get('uuid')):
                     issues.append(Issue(
                         'interposer_pose_missing',
-                        f'{reference}: select the interposer center circle in Mechanical placement',
+                        f'{reference}: select the interposer origin circle in Mechanical placement',
                     ))
                 if selection.get('pose_accepted') and selection.get('side') not in ('F', 'B'):
                     issues.append(Issue(
@@ -1012,7 +1013,8 @@ __import__("os")._exit(0)
         from .core.libraries import read_footprint, read_symbol, footprint_matches_filters
         from .core.model import validate_records
         from .core.geometry import (
-            feature_tolerance, match_circle_features,
+            feature_deviation_message, feature_tolerance, match_circle_features,
+            match_selected_circle,
         )
         from .schematic import PartSelection, generate_schematic, merge_library_table
         if not controller.board_path or not controller.board_path.exists():
@@ -1117,20 +1119,22 @@ __import__("os")._exit(0)
                            if controller.connector_type(record.connector) == 'RF')
         rf_keys = {record.key for record in rf_records}
         tolerance = feature_tolerance(mechanical['feature_tolerance_mm'])
-        circle_by_uuid = {circle['uuid']: circle for circle in native['circles']}
         claimed = set()
         interposer_anchors = {}
         for reference, selection in cfg['interposers'].items():
             accepted = selection.get('pose_circle', {})
-            circle = circle_by_uuid.get(accepted.get('uuid'))
-            if circle is None or circle['center'] != accepted.get('center'):
-                raise ValueError(
-                    f'{reference}: selected interposer center circle changed or is missing'
-                )
-            if list(selection.get('pose', ())[:2]) != list(circle['center']):
-                raise ValueError(
-                    f'{reference}: interposer position no longer matches its selected center circle'
-                )
+            circle = match_selected_circle(
+                f'{reference} interposer origin circle', accepted,
+                native['circles'], tolerance, claimed,
+            )
+            position = selection.get('pose', ())[:2]
+            if len(position) != 2:
+                raise ValueError(f'{reference}: interposer position is incomplete')
+            deviation = math.dist(position, circle['center'])
+            if deviation > tolerance:
+                raise ValueError(feature_deviation_message(
+                    f'{reference} interposer origin', deviation, tolerance,
+                ))
             claimed.add(circle['uuid'])
             interposer_anchors[reference] = {
                 'circle_uuid': circle['uuid'], 'center': list(circle['center']),
@@ -1139,17 +1143,18 @@ __import__("os")._exit(0)
         for hole in cfg.get('mounting_holes', []):
             reference = hole['reference']
             accepted = hole.get('pose_circle', {})
-            circle = circle_by_uuid.get(accepted.get('uuid'))
-            if circle is None or circle['center'] != accepted.get('center'):
-                raise ValueError(
-                    f'{reference}: selected mounting-hole circle changed or is missing'
-                )
-            if list(hole.get('pose', ())[:2]) != list(circle['center']):
-                raise ValueError(
-                    f'{reference}: mounting-hole position no longer matches its selected circle'
-                )
-            if circle['uuid'] in claimed:
-                raise ValueError(f'{reference}: selected circle is already used by another anchor')
+            circle = match_selected_circle(
+                f'{reference} mounting-hole circle', accepted,
+                native['circles'], tolerance, claimed,
+            )
+            position = hole.get('pose', ())[:2]
+            if len(position) != 2:
+                raise ValueError(f'{reference}: mounting-hole position is incomplete')
+            deviation = math.dist(position, circle['center'])
+            if deviation > tolerance:
+                raise ValueError(feature_deviation_message(
+                    f'{reference} mounting-hole origin', deviation, tolerance,
+                ))
             claimed.add(circle['uuid'])
             mounting_hole_anchors[reference] = {
                 'circle_uuid': circle['uuid'], 'center': list(circle['center']),
@@ -1160,11 +1165,10 @@ __import__("os")._exit(0)
         for gang in controller.gang_names():
             settings = controller.gang(gang)
             accepted = settings.get('anchor_circle', {})
-            circle = circle_by_uuid.get(accepted.get('uuid'))
-            if circle is None or circle['center'] != accepted.get('center'):
-                raise ValueError(
-                    f'{gang}: selected location 1 circle changed or is missing'
-                )
+            circle = match_selected_circle(
+                f'{gang} location 1 circle', accepted,
+                native['circles'], tolerance, claimed,
+            )
             required_rf_circles[gang + '-1'] = circle['uuid']
             rf_anchors[gang] = {
                 'circle_uuid': circle['uuid'], 'center': list(circle['center']),
@@ -1179,6 +1183,26 @@ __import__("os")._exit(0)
             {name: match[name] for name in ('key', 'center', 'circle_uuid')}
             for match in rf_matches
         ]
+        claimed.update(match['circle_uuid'] for match in rf_matches)
+        dc_anchors = {}
+        for reference in controller.dc_connector_names():
+            selection = controller.dc_connector(reference)
+            circle = match_selected_circle(
+                f'{reference} pin 1 circle', selection.get('anchor_circle', {}),
+                native['circles'], tolerance, claimed,
+            )
+            position = selection.get('anchor', ())
+            if len(position) != 2:
+                raise ValueError(f'{reference}: pin 1 position is incomplete')
+            deviation = math.dist(position, circle['center'])
+            if deviation > tolerance:
+                raise ValueError(feature_deviation_message(
+                    f'{reference} pin 1', deviation, tolerance,
+                ))
+            claimed.add(circle['uuid'])
+            dc_anchors[reference] = {
+                'circle_uuid': circle['uuid'], 'center': list(circle['center']),
+            }
         name = controller.board_path.stem
         bundle = generate_schematic(records, gang_parts, interposer_parts, cfg['project_id'],
                                     project_name=name, dc_parts=dc_parts)
@@ -1266,13 +1290,7 @@ __import__("os")._exit(0)
                        'rf_matches': rf_locations,
                        'rf_keys': sorted(rf_keys),
                        'rf_anchors': rf_anchors,
-                       'dc_anchors': {
-                           reference: {
-                               'circle_uuid': controller.dc_connector(reference).get('anchor_circle', {}).get('uuid', ''),
-                               'center': controller.dc_connector(reference).get('anchor', []),
-                           }
-                           for reference in controller.dc_connector_names()
-                       },
+                       'dc_anchors': dc_anchors,
                        'interposer_anchors': interposer_anchors,
                        'mounting_hole_anchors': mounting_hole_anchors,
                        'feature_tolerance_mm': tolerance,

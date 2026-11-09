@@ -145,7 +145,7 @@ Valid orientation, side, drawing-layer and center-tolerance edits update
 the current workflow when their complete value is committed. There are no
 separate interposer, RF-anchor or DC-placement acceptance buttons. Capturing a
 selected native circle is an explicit canvas action and applies its center
-immediately. The interposer has its own center-circle action; RF uses location
+immediately. The interposer has its own origin-circle action; RF uses location
 1 and DC uses footprint pad 1. Imported text is contextual inventory only and
 never supplies identity or placement. Group-local status identifies the selected
 circle and current placement state.

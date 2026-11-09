@@ -1,7 +1,7 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.5.4 and the
+are authorized. Connector to Interposer Workflow is version 0.5.5 and the
 separate GPPO RF Transition Designer is version 0.1.2; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The BGA
 Interposer Wizard remains an independent package at version 0.16.1.
@@ -304,7 +304,7 @@ RF anchors, DC connectors and mounting holes. RF and DC targets use the stable
 selector-plus-editor pattern established by Define RF gangs. Complete numeric,
 orientation, side, layer and offset values update the workflow when committed;
 the redundant interposer, RF-anchor and DC-placement acceptance buttons are
-removed. The interposer can now use a selected native center circle. Mounting
+removed. The interposer can now use a selected native origin circle. Mounting
 holes receive independent coordinates, selected-circle capture, a placed-hole
 list and removal instead of implicitly reusing the current RF anchor.
 
@@ -353,7 +353,13 @@ Unmatched extra circles are ignored, while missing, duplicate and ambiguous
 required matches block Review. Optional interposer pad circles retain the
 complete-set warning behavior introduced in 0.5.2.
 
-The complete 163-test native/CLI suite and all three packaged PCM loader checks
+Version 0.5.5 names the interposer selection by its actual role—the footprint
+origin—so package-center and guide-pin-origin footprints remain equally valid.
+Explicit circle selections survive KiCad UUID differences between the live
+canvas and saved board when exactly one saved circle matches the recorded
+center within tolerance; missing and ambiguous geometry remain blocking.
+
+The complete 164-test native/CLI suite and all three packaged PCM loader checks
 pass on both KiCad 10.0.0 and 10.0.8. The 14-test native dialog suite passes on
 10.0.8 under both Adwaita light and dark themes.
 

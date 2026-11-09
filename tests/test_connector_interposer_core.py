@@ -14,7 +14,7 @@ from connector_interposer_workflow.core import *
 from connector_interposer_workflow.core.outline import Segment, validate_outline
 from connector_interposer_workflow.core.geometry import (
     DEFAULT_FEATURE_TOLERANCE_MM, feature_deviation_message, feature_tolerance,
-    match_circle_features,
+    match_circle_features, match_selected_circle,
 )
 from connector_interposer_workflow.core.sexpr import loads, dumps, children
 
@@ -287,6 +287,28 @@ class GeometryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'same drawing circle'):
             match_circle_features(
                 [('J101-1', [10, 20]), ('J102-1', [10, 20])], circles, .00762,
+            )
+
+    def test_selected_circle_reassociates_unique_geometry_after_uuid_change(self):
+        accepted = {'uuid': 'live-canvas-id', 'center': [42.5625, 42.5625]}
+        circles = [
+            {'uuid': 'saved-board-id', 'center': [42.5625, 42.5625]},
+            {'uuid': 'unrelated', 'center': [80, 80]},
+        ]
+        matched = match_selected_circle(
+            'E1 interposer origin circle', accepted, circles, .00762,
+        )
+        self.assertEqual(matched['uuid'], 'saved-board-id')
+        with self.assertRaisesRegex(ValueError, '2 drawing circles match'):
+            match_selected_circle(
+                'E1 interposer origin circle', accepted,
+                circles + [{'uuid': 'ambiguous', 'center': [42.563, 42.5625]}],
+                .00762,
+            )
+        with self.assertRaisesRegex(ValueError, 'center deviation.*limit'):
+            match_selected_circle(
+                'E1 interposer origin circle', accepted,
+                [{'uuid': 'moved', 'center': [42.58, 42.5625]}], .00762,
             )
 
     def test_custom_numbering_location_one_anchor_and_independence(self):

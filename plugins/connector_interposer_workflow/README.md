@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.5.4**, testing release. The package targets KiCad 10.0.0 through
+Version **0.5.5**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -156,7 +156,7 @@ an already-open source board does not update the output copy.
    RF anchor, DC connector and mounting-hole work. The bounded drawing
    inventory lists saved circles, lines/arcs and optional text. Text is
    shown only as drawing context and is never parsed for identity or placement.
-   Select the interposer center circle, orientation and Front/Back mounting
+   Select the interposer origin circle, orientation and Front/Back mounting
    side.
    Select RF gangs and DC connectors from compact lists; a selected location-1
    or pin-1 circle is applied immediately. Valid numeric, orientation, side,
