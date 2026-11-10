@@ -5,9 +5,10 @@ each distributable tool self-contained under `plugins/<tool>/`.
 
 ## Development status and compatibility
 
-This repository is development-only: its current users are the owner and Codex,
-with no external/production users, deployed projects, durable work products, or
-historical data requiring compatibility. Unless explicitly requested for a
+This repository is development-only: its current users are the owner and the
+owner's coding agents (Codex and Claude Code), with no external/production
+users, deployed projects, durable work products, or historical data requiring
+compatibility. Unless explicitly requested for a
 current requirement, do not add migrations, compatibility shims, deprecated or
 legacy interfaces/formats, or fallback behavior. Change internal APIs and
 persisted development formats directly; update implementation, tests, fixtures,
@@ -50,9 +51,10 @@ Native GUI testing is supplemental, not an automatic requirement for UI
 changes. Use `--include-native-gui` (or `scripts/test_native_gui.sh`) for final
 QA of substantial UI work, when explicitly requested, or to reproduce/debug
 complex native interaction issues; prefer CLI coverage for routine UI work. The
-managed command sandbox can block Xvfb from binding `/tmp/.X11-unix`; if that
-occurs, rerun the GUI script with host-level execution permission. A skipped GUI
-suite is not a pass.
+Codex command sandbox can block Xvfb from binding `/tmp/.X11-unix`; if that
+occurs, rerun the GUI script with host-level execution permission. Claude Code
+cloud sessions are not sandboxed this way and run the script directly. A skipped
+GUI suite is not a pass.
 
 See `docs/development-environment.md` for runtime paths, individual commands,
 native-GUI troubleshooting, and visual-review procedures.
@@ -66,6 +68,9 @@ builds the PCM repository from source after the compatibility matrix passes.
   `origin/main` unless the user explicitly requests another delivery method.
 - Do not create or push remote branches or open pull requests unless the user
   explicitly asks for one. Local branches are allowed while work is in progress.
+- This applies to every agent. A Claude Code cloud session is assigned a
+  `claude/...` branch by default; the owner has authorized pushing to
+  `origin/main` instead, so do not push that session branch unless asked.
 - Do not stop at a local-only commit: GitHub Actions on remote `main` is the
   publication path that makes plugin changes available through the Plugin and
   Content Manager.
