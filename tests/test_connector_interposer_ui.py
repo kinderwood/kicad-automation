@@ -1431,6 +1431,78 @@ class NativeDialogTests(unittest.TestCase):
             dialog.Destroy()
             self.app.Yield()
 
+    def test_gang_text_commits_on_enter_or_blur_with_one_refresh_per_edit(self):
+        from plugins.connector_interposer_workflow.core.model import HEADERS
+        from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+
+        dialog = WorkflowDialog()
+        try:
+            rows = [HEADERS]
+            rows.extend(
+                (f'SIGNAL{pin}', 'RF', 'E1', f'A{pin}', gang, str(pin), 'L2')
+                for gang in ('J501', 'J502') for pin in range(1, 20)
+            )
+            dialog.controller.table = parse_sheet(Worksheet('Signals', tuple(rows)))
+            dialog.controller.set_netclass_type('RF', 'RF')
+            dialog.refresh_gangs()
+            dialog.select_page(5)
+            dialog.Show()
+            self.app.Yield()
+
+            def press_enter(control):
+                event = self.wx.CommandEvent(self.wx.wxEVT_TEXT_ENTER, control.GetId())
+                event.SetEventObject(control)
+                control.GetEventHandler().ProcessEvent(event)
+
+            with mock.patch.object(dialog, '_refresh', wraps=dialog._refresh) as refresh:
+                rotation = dialog.gang_pattern_rotation
+                for partial in ('2', '27', '270'):
+                    rotation.SetValue(partial)
+                    self.app.Yield()
+                self.assertEqual(refresh.call_count, 0)
+                self.assertEqual(dialog.controller.gang('J501')['rotation'], 0)
+                self.assertFalse(dialog.controller.gang('J501')['defined'])
+                press_enter(rotation)
+                self.assertEqual(refresh.call_count, 1)
+                self.assertEqual(dialog.controller.gang('J501')['rotation'], 270)
+                self.assertTrue(dialog.controller.gang('J501')['defined'])
+                press_enter(rotation)
+                self.assertEqual(refresh.call_count, 1)
+
+                orientation = dialog.gang_connector_rotation
+                orientation.SetFocus()
+                orientation.SetValue('9')
+                orientation.SetValue('90')
+                self.assertEqual(dialog.controller.gang('J501')['connector_rotation'], 0)
+                dialog.gang_pattern_rotation.SetFocus()
+                self.app.Yield()
+                focus = self.wx.FocusEvent(self.wx.wxEVT_KILL_FOCUS, orientation.GetId())
+                focus.SetEventObject(orientation)
+                orientation.GetEventHandler().ProcessEvent(focus)
+                self.assertEqual(dialog.controller.gang('J501')['connector_rotation'], 90)
+                self.assertEqual(refresh.call_count, 2)
+
+                dialog.gang_rows.SetCellValue(0, 1, '10')
+                dialog.gang_draft_changed()
+                self.assertEqual(refresh.call_count, 3)
+                dialog.guard(dialog.add_gang_row)(None)
+                self.assertEqual(refresh.call_count, 4)
+                dialog.gang_rows.SetCellValue(1, 1, '9')
+                dialog.gang_draft_changed()
+                self.assertEqual(refresh.call_count, 5)
+                self.assertEqual(dialog.controller.gang('J501')['row_lengths'], [10, 9])
+
+                # Loading another gang is not an edit and must not define it.
+                dialog.current_gang = 'J502'
+                dialog.select_gang(None)
+                press_enter(dialog.gang_pattern_rotation)
+                self.assertFalse(dialog.controller.gang('J502')['defined'])
+                self.assertEqual(refresh.call_count, 5)
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
     def test_dimension_inputs_normalize_suffixes_and_store_connector_placement_in_mm(self):
         from plugins.connector_interposer_workflow.core.model import HEADERS
         from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet

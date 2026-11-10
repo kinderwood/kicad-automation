@@ -1,4 +1,5 @@
 """Native, modeless wx workflow. Library sources are selected, never authored here."""
+from contextlib import contextmanager
 import json
 import math
 from pathlib import Path
@@ -1011,6 +1012,8 @@ class WorkflowDialog(wx.Dialog):
         self.current_anchor_gang = None
         self.current_dc_anchor = None
         self._loading_gang = False
+        self._refresh_hold = 0
+        self._refresh_pending = False
         self._loading_placement = False
         self._gang_invalid_edits = {}
         self._closing = False
@@ -1174,13 +1177,49 @@ class WorkflowDialog(wx.Dialog):
 
     def guard(self, callback):
         def run(event):
-            try:
-                callback(event)
-            except Exception as error:
-                self.status.SetLabel(str(error))
-                wx.MessageBox(str(error), 'Workflow requires attention', wx.OK | wx.ICON_ERROR, self)
-            self.refresh()
+            with self._coalesced_refresh():
+                try:
+                    callback(event)
+                except Exception as error:
+                    self.status.SetLabel(str(error))
+                    wx.MessageBox(str(error), 'Workflow requires attention', wx.OK | wx.ICON_ERROR, self)
+                self.refresh()
         return run
+
+    @contextmanager
+    def _coalesced_refresh(self):
+        """Run at most one dialog refresh for a whole user action.
+
+        Repopulating a list selects its current row, and that selection event
+        is itself a guarded handler. Without coalescing, one edit refreshed the
+        entire dialog once per nested handler.
+        """
+        self._refresh_hold += 1
+        try:
+            yield
+        finally:
+            self._refresh_hold -= 1
+            if not self._refresh_hold and self._refresh_pending:
+                self.refresh()
+
+    def _bind_commit(self, control, handler):
+        """Commit typed text on Enter or focus departure, not per keystroke."""
+        edited = [False]
+
+        def mark(event):
+            edited[0] = True
+            event.Skip()
+
+        def commit(event):
+            if edited[0] and not self._closing:
+                edited[0] = False
+                handler()
+            if event.GetEventType() != wx.wxEVT_TEXT_ENTER:
+                event.Skip()
+
+        control.Bind(wx.EVT_TEXT, mark)
+        control.Bind(wx.EVT_TEXT_ENTER, commit)
+        control.Bind(wx.EVT_KILL_FOCUS, commit)
 
     def _style_grid(self, view):
         palette = ui_palette()
@@ -3173,14 +3212,18 @@ class WorkflowDialog(wx.Dialog):
         )
         placement.Add(self.gang_numbering_mode, 1, wx.EXPAND)
         placement.Add(wx.StaticText(placement_page, label='Custom numbering'), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.gang_custom_numbering = wx.TextCtrl(placement_page)
+        self.gang_custom_numbering = wx.TextCtrl(placement_page, style=wx.TE_PROCESS_ENTER)
         self.gang_custom_numbering.SetToolTip('Comma-separated position indices in traversal order.')
         placement.Add(self.gang_custom_numbering, 1, wx.EXPAND)
         placement.Add(wx.StaticText(placement_page, label='Pattern rotation (degrees)'), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.gang_pattern_rotation = wx.TextCtrl(placement_page, value='0')
+        self.gang_pattern_rotation = wx.TextCtrl(
+            placement_page, value='0', style=wx.TE_PROCESS_ENTER,
+        )
         placement.Add(self.gang_pattern_rotation, 1, wx.EXPAND)
         placement.Add(wx.StaticText(placement_page, label='Connector orientation (degrees)'), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.gang_connector_rotation = wx.TextCtrl(placement_page, value='0')
+        self.gang_connector_rotation = wx.TextCtrl(
+            placement_page, value='0', style=wx.TE_PROCESS_ENTER,
+        )
         placement.Add(self.gang_connector_rotation, 1, wx.EXPAND)
         placement.Add(wx.StaticText(placement_page, label='Connector mounting side'), 0, wx.ALIGN_CENTER_VERTICAL)
         self.gang_side = wx.Choice(placement_page, choices=['Front (F)', 'Back (B)'])
@@ -3208,7 +3251,7 @@ class WorkflowDialog(wx.Dialog):
 
         for control in (self.gang_custom_numbering, self.gang_pattern_rotation,
                         self.gang_connector_rotation):
-            control.Bind(wx.EVT_TEXT, self.gang_draft_changed)
+            self._bind_commit(control, self.gang_draft_changed)
         self.gang_pitch_x.bind_changed(self.gang_draft_changed)
         self.gang_pitch_y.bind_changed(self.gang_draft_changed)
         for control in (self.gang_numbering_mode, self.gang_side):
@@ -3398,6 +3441,12 @@ class WorkflowDialog(wx.Dialog):
         return True
 
     def gang_draft_changed(self, event=None):
+        with self._coalesced_refresh():
+            self._gang_draft_changed(event)
+        if event is not None:
+            event.Skip()
+
+    def _gang_draft_changed(self, event=None):
         if not self._loading_gang and self.current_gang:
             if (event is not None and isinstance(event, grid.GridEvent)
                     and event.GetCol() == 2):
@@ -3436,8 +3485,6 @@ class WorkflowDialog(wx.Dialog):
                 self._show_gang_definition(values, True)
             self.refresh_gang_list()
             self.refresh()
-        if event is not None:
-            event.Skip()
 
     def numbering_mode_changed(self, event):
         self.gang_custom_numbering.Enable(self.gang_numbering_mode.GetSelection() == 3)
@@ -5123,6 +5170,17 @@ class WorkflowDialog(wx.Dialog):
         self.refresh_microvias()
 
     def refresh(self):
+        if self._refresh_hold:
+            self._refresh_pending = True
+            return
+        self._refresh_hold += 1
+        try:
+            self._refresh()
+        finally:
+            self._refresh_hold -= 1
+            self._refresh_pending = False
+
+    def _refresh(self):
         self.refresh_connector_assignments()
         self.refresh_microvias()
         self.view_button.Enable(self.controller.view_data_enabled)

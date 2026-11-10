@@ -380,6 +380,15 @@ explicit live-canvas click is resolved uniquely to the current inspected saved
 circle, addressing KiCad live/saved UUID differences without carrying an
 association across drawing revisions.
 
+Version 0.6.2 removes the interaction delays seen on large projects (measured
+on a 2744-pin interposer with 240 nets, five RF gangs and six DC connectors).
+The s-expression reader is single-pass, unchanged library content is parsed
+once per session while every read still hashes the file to detect changes, and
+the interposer minimum pad pitch uses a sorted sweep. One user action now
+refreshes the dialog once instead of once per nested selection handler. Custom
+numbering, pattern rotation and connector orientation commit on Enter or focus
+departure.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal

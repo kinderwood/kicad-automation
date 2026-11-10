@@ -65,7 +65,9 @@ to be removed without changing the selected symbol.
 A **value-entry cell** accepts typed numeric or geometric content in a dense
 editable form. It retains a neutral native surface, activates its real editor
 on one click and commits on Enter, focus departure, unit selection or cell
-navigation. Dimension value-entry cells keep the number left aligned and the
+navigation. Free-text gang values (custom numbering, pattern rotation and
+connector orientation) follow the same commit rule, and one user action
+refreshes the dialog at most once. Dimension value-entry cells keep the number left aligned and the
 unit selector right aligned in one bordered cell. The active editor must be tall
 enough for the native Windows and GTK text and choice controls; typed unit
 suffixes are parsed only when the complete value is committed. A clipped

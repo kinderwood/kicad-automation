@@ -3,9 +3,31 @@ import hashlib
 import fnmatch
 import math
 import shlex
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from .sexpr import loads, child, children
+
+# Parsed parts keyed by content checksum. Callers still read and hash the file on
+# every request, so a changed library is always detected; only the parse of
+# unchanged content is reused. Dialog refreshes ask for the same few large
+# interposer and connector parts many times per edit.
+_PARSE_CACHE = OrderedDict()
+_PARSE_CACHE_LIMIT = 64
+
+
+def _cached_parse(key, build):
+    try:
+        value = _PARSE_CACHE[key]
+    except KeyError:
+        value = build()
+        _PARSE_CACHE[key] = value
+        while len(_PARSE_CACHE) > _PARSE_CACHE_LIMIT:
+            _PARSE_CACHE.popitem(last=False)
+    else:
+        _PARSE_CACHE.move_to_end(key)
+    return value
+
 
 @dataclass(frozen=True)
 class Pad:
@@ -47,6 +69,16 @@ def read_footprint(path, library_id, expected_sha256=None, allow_mechanical=Fals
     checksum = hashlib.sha256(data).hexdigest()
     if expected_sha256 and checksum != expected_sha256:
         raise ValueError("Pinned approved footprint content changed; select its revision explicitly")
+    result = _cached_parse(
+        ('footprint', checksum, library_id, str(path.resolve())),
+        lambda: _parse_footprint(data, checksum, path, library_id),
+    )
+    if not result.pad_numbers and not allow_mechanical:
+        raise ValueError("Selected footprint has no electrical pads")
+    return result
+
+
+def _parse_footprint(data, checksum, path, library_id):
     node = loads(data.decode('utf-8-sig'))
     if node[0] not in ('footprint', 'module'):
         raise ValueError("Not a KiCad footprint")
@@ -70,11 +102,8 @@ def read_footprint(path, library_id, expected_sha256=None, allow_mechanical=Fals
     mpn = next((properties[key] for key in
                 ('mpn', 'manufacturer part number', 'manufacturerpartnumber')
                 if properties.get(key)), '')
-    result = ApprovedFootprint(library_id, str(path.resolve()), checksum, tuple(pads),
-                               properties.get('value', ''), mpn)
-    if not result.pad_numbers and not allow_mechanical:
-        raise ValueError("Selected footprint has no electrical pads")
-    return result
+    return ApprovedFootprint(library_id, str(path.resolve()), checksum, tuple(pads),
+                             properties.get('value', ''), mpn)
 
 
 @dataclass(frozen=True)
@@ -108,12 +137,25 @@ def footprint_matches_filters(library_id, filters):
 
 
 def read_symbol(path, library_id, expected_sha256=None, require_two_pin=True):
-    """Read a standalone librarian symbol and its footprint-filter contract."""
+    """Read a standalone librarian symbol and its footprint-filter contract.
+
+    The returned ``expression`` is shared with later reads of the same library
+    content and must be copied before it is modified.
+    """
     data = Path(path).read_bytes()
     checksum = hashlib.sha256(data).hexdigest()
     if expected_sha256 and checksum != expected_sha256:
         raise ValueError("Pinned symbol content changed")
-    root = loads(data.decode('utf-8-sig'))
+    return _cached_parse(
+        ('symbol', checksum, library_id, bool(require_two_pin)),
+        lambda: _parse_symbol(data, checksum, library_id, require_two_pin),
+    )
+
+
+def _parse_symbol(data, checksum, library_id, require_two_pin):
+    root = _cached_parse(
+        ('symbol-library', checksum), lambda: loads(data.decode('utf-8-sig')),
+    )
     if root[0] != 'kicad_symbol_lib' or ':' not in library_id:
         raise ValueError("Select a library-qualified KiCad symbol")
     name = library_id.split(':', 1)[1]

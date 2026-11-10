@@ -1,5 +1,6 @@
 """Deterministic interposer microvia size eligibility and stack topology."""
 from dataclasses import dataclass
+from functools import lru_cache
 import math
 
 
@@ -20,9 +21,25 @@ def minimum_pitch(points):
     points = tuple(tuple(float(v) for v in point) for point in points)
     if any(len(point) != 2 or not all(math.isfinite(v) for v in point) for point in points):
         raise ValueError("Interposer pad centres must be finite XY pairs")
-    return min((math.dist(first, second)
-                for index, first in enumerate(points)
-                for second in points[index + 1:]), default=math.inf)
+    return _minimum_pitch(points)
+
+
+@lru_cache(maxsize=8)
+def _minimum_pitch(points):
+    # Sweep in X order: a later point cannot be the nearest neighbour once its
+    # X distance alone reaches the best separation found so far.
+    ordered = sorted(points)
+    best = math.inf
+    count = len(ordered)
+    for index, first in enumerate(ordered):
+        for other in range(index + 1, count):
+            second = ordered[other]
+            if second[0] - first[0] >= best:
+                break
+            distance = math.dist(first, second)
+            if distance < best:
+                best = distance
+    return best
 
 
 def check_preset(diameter, drill, *, min_diameter=0, min_drill=0,

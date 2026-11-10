@@ -387,6 +387,76 @@ class LibraryTests(unittest.TestCase):
         self.assertFalse(footprint_matches_filters('Other:Interposer_800', ('Example:Interposer_*',)))
         self.assertFalse(footprint_matches_filters('Example:Anything', ()))
 
+    def test_sexpr_reader_is_strict_and_linear_on_large_libraries(self):
+        import time
+        self.assertEqual(
+            loads('(a "x\\n \\"q\\" \\\\" ; comment (ignored)\n (b 1.5) "" c;d\n)'),
+            ['a', 'x\n "q" \\', ['b', '1.5'], '', 'c'],
+        )
+        for text, message in (
+                ('(a "x', 'Unterminated quoted string'),
+                ('(a "x\\', 'Unterminated string escape'),
+                ('(a) (b)', 'Multiple root expressions'),
+                ('a', 'Token outside root expression'),
+                ('(a', 'Incomplete s-expression'),
+                ('', 'Incomplete s-expression'),
+                ('(a))', 'Unexpected closing parenthesis')):
+            with self.assertRaisesRegex(ValueError, message):
+                loads(text)
+        # A multi-megabyte library took minutes when every token re-sliced the
+        # remaining text. The bound is generous; the old reader misses it widely.
+        pins = ' '.join(f'(pin "{index}" (at {index} 0 0) (name "P{index}"))'
+                        for index in range(40000))
+        started = time.perf_counter()
+        root = loads(f'(symbol "Large" {pins})')
+        self.assertLess(time.perf_counter() - started, 10)
+        self.assertEqual(len(root), 40002)
+        self.assertEqual(root[-1], ['pin', '39999', ['at', '39999', '0', '0'],
+                                    ['name', 'P39999']])
+
+    def test_unchanged_library_content_is_parsed_once_and_changes_are_detected(self):
+        footprint = '(footprint "Part" (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu")))'
+        symbols = ('(kicad_symbol_lib (symbol "One" (symbol "One_1_1" '
+                   '(pin passive line (at 0 0 0) (length 1) (name "A") (number "1")))))')
+        with tempfile.TemporaryDirectory() as tmp:
+            part = Path(tmp) / 'Part.kicad_mod'
+            part.write_text(footprint)
+            first = read_footprint(part, 'Lib:Part')
+            self.assertIs(read_footprint(part, 'Lib:Part', first.sha256), first)
+            part.write_text(footprint.replace('"1"', '"2"'))
+            with self.assertRaisesRegex(ValueError, 'content changed'):
+                read_footprint(part, 'Lib:Part', first.sha256)
+            self.assertEqual(read_footprint(part, 'Lib:Part').pad_numbers, ('2',))
+
+            library = Path(tmp) / 'Lib.kicad_sym'
+            library.write_text(symbols)
+            symbol = read_symbol(library, 'Lib:One', require_two_pin=False)
+            self.assertIs(read_symbol(library, 'Lib:One', require_two_pin=False), symbol)
+            with self.assertRaises(ValueError):
+                read_symbol(library, 'Lib:One')
+            library.write_text(symbols.replace('"A"', '"B"'))
+            with self.assertRaisesRegex(ValueError, 'content changed'):
+                read_symbol(library, 'Lib:One', symbol.sha256, require_two_pin=False)
+            changed = read_symbol(library, 'Lib:One', require_two_pin=False)
+            self.assertIsNot(changed, symbol)
+            self.assertNotEqual(changed.sha256, symbol.sha256)
+
+    def test_minimum_pitch_matches_exhaustive_search(self):
+        import random
+        generator = random.Random(2744)
+        for count in (0, 1, 2, 3, 60):
+            points = tuple((generator.uniform(-5, 5), generator.uniform(-5, 5))
+                           for _index in range(count))
+            expected = min((math.dist(first, second)
+                            for index, first in enumerate(points)
+                            for second in points[index + 1:]), default=math.inf)
+            self.assertEqual(minimum_pitch(points), expected)
+        grid = tuple((column * .8, row * .8) for row in range(53) for column in range(53))
+        self.assertAlmostEqual(minimum_pitch(grid), .8)
+        self.assertEqual(minimum_pitch(((0, 0), (0, 0))), 0)
+        with self.assertRaises(ValueError):
+            minimum_pitch(((0, math.inf),))
+
     def test_approved_pad_universe_repeated_ground_and_npth(self):
         content='(footprint "Approved" (pad "A1" thru_hole circle (at 0 0) (size 1 1) (drill .5) (layers "*.Cu" "*.Mask")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu")) (pad "2" smd rect (at 3 0) (size 1 1) (layers "F.Cu")) (pad "" np_thru_hole circle (at 4 0) (size 1 1) (drill 1) (layers "*.Cu" "*.Mask")))'
         with tempfile.TemporaryDirectory() as tmp:

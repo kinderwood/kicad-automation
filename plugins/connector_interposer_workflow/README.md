@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.6.1**, testing release. The package targets KiCad 10.0.0 through
+Version **0.6.2**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -139,7 +139,9 @@ files changed after the transaction.
    the DXF anchor. The preview keeps the gang centroid at its center while
    pattern rotation changes, refits after every render and reduces circle radius
    and label font size when necessary to keep dense locations and multi-digit
-   identifiers distinct. Valid changes update the gang immediately. New gangs remain
+   identifiers distinct. Valid changes update the gang immediately; typed custom
+   numbering, pattern rotation and connector orientation commit on Enter or focus
+   departure, not on each keystroke. New gangs remain
    **Not defined** until edited; incomplete or population-mismatched entries are
    **Invalid**. Copying settings never changes gang anchors or selected library parts.
 7. **RF transitions:** optionally assign one immutable published transition to each unique
