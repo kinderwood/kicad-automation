@@ -389,6 +389,11 @@ refreshes the dialog once instead of once per nested selection handler. Custom
 numbering, pattern rotation and connector orientation commit on Enter or focus
 departure.
 
+Version 0.6.3 handles a saved sidecar that the installed version cannot load.
+Opening Workflow offers **Delete and open** or **Keep and close** instead of
+only reporting the error. Settings are not converted between schema versions;
+only a valid project identity is carried into the new workflow.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal

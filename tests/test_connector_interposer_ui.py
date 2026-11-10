@@ -10,7 +10,9 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from plugins.connector_interposer_workflow.controller import WorkflowController, row_ranges, PAGES
+from plugins.connector_interposer_workflow.controller import (
+    PAGES, SavedSettingsError, WorkflowController, open_controller, row_ranges,
+)
 
 
 def write_transition(path, part_id, part_sha256, netclass='RF', layer='F.Cu',
@@ -105,6 +107,45 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(settings_path.exists())
         self.assertTrue(snapshot_directory.is_dir(), 'Delete targets the settings sidecar only')
         self.assertFalse(self.controller.delete_saved_settings())
+
+    def test_unloadable_saved_settings_can_be_deleted_to_open_or_kept_to_close(self):
+        import json
+        self.controller.save()
+        settings_path = self.controller.config_path
+        project_id = self.controller.config['project_id']
+        saved = json.loads(settings_path.read_text())
+        saved['schema_version'] -= 1
+        stale = json.dumps(saved)
+        settings_path.write_text(stale)
+
+        with self.assertRaisesRegex(SavedSettingsError, 'schema version') as raised:
+            WorkflowController(self.board)
+        self.assertEqual(raised.exception.path, settings_path)
+
+        asked = []
+        self.assertIsNone(open_controller(
+            self.board, lambda error: asked.append(error) or False,
+        ))
+        self.assertEqual(len(asked), 1)
+        self.assertEqual(settings_path.read_text(), stale, 'Keep must not touch the file')
+
+        reopened = open_controller(self.board, lambda error: True)
+        self.assertFalse(settings_path.exists())
+        self.assertEqual(reopened.config['project_id'], project_id)
+        self.assertEqual(reopened.config['gangs'], {})
+        self.assertEqual(reopened.config['workbook'], {})
+        reopened.save()
+        self.assertEqual(
+            open_controller(self.board, self.fail).config['project_id'], project_id,
+        )
+
+        for unreadable in ('{not json', '[]', '{"schema_version": 1, "project_id": "x"}'):
+            settings_path.write_text(unreadable)
+            with self.assertRaises(SavedSettingsError):
+                WorkflowController(self.board)
+            fresh = open_controller(self.board, lambda error: True)
+            self.assertFalse(settings_path.exists())
+            self.assertNotEqual(fresh.config['project_id'], project_id)
 
     def test_layer_policy_survives_stackup_and_class_growth(self):
         self.controller.set_rule('RF', 'F.Cu', False)

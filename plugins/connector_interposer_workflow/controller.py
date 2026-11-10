@@ -33,15 +33,56 @@ def row_ranges(text):
     return tuple(sorted(result))
 
 
+class SavedSettingsError(ValueError):
+    """The project sidecar exists but this version cannot load it."""
+
+    def __init__(self, path, reason):
+        super().__init__(f'Saved Workflow settings cannot be opened: {reason}')
+        self.path = Path(path)
+        self.reason = str(reason)
+
+
+def discard_saved_settings(path):
+    """Delete an unloadable sidecar and return its project identity if readable.
+
+    Managed board and schematic objects derive their identities from the
+    project id, so a fresh workflow keeps it whenever the old file still
+    states a valid one. Nothing else is carried over.
+    """
+    path = Path(path)
+    project_id = None
+    try:
+        project_id = str(uuid.UUID(json.loads(path.read_text(encoding='utf-8'))['project_id']))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    path.unlink(missing_ok=True)
+    return project_id
+
+
+def open_controller(board_path, confirm_discard, **options):
+    """Open the project workflow, offering to discard unloadable saved settings.
+
+    ``confirm_discard(error)`` decides. Return ``None`` when the saved file is
+    kept, which leaves it untouched and Workflow closed.
+    """
+    try:
+        return WorkflowController(board_path, **options)
+    except SavedSettingsError as error:
+        if not confirm_discard(error):
+            return None
+        project_id = discard_saved_settings(error.path)
+        return WorkflowController(board_path, project_id=project_id, **options)
+
+
 class WorkflowController:
     """Persist drafts separately from accepted backend state and invalidate every preview."""
-    def __init__(self, board_path=None, backend=None, dispatch=None):
+    def __init__(self, board_path=None, backend=None, dispatch=None, project_id=None):
         self.board_path = Path(board_path).resolve() if board_path else None
         self.config_path = self.board_path.with_suffix('.connector-interposer-workflow.json') if self.board_path else None
         self.backend = backend
         self.dispatch = dispatch or (lambda fn, *args: fn(*args))
         from .core.config import ProjectConfig
-        self.config = ProjectConfig(project_id=str(uuid.uuid4())).to_dict()
+        self.config = ProjectConfig(project_id=project_id or str(uuid.uuid4())).to_dict()
         self.config['outline'] = {"enabled": False}
         self.workbook = None
         self.workbook_sha256 = None
@@ -59,8 +100,11 @@ class WorkflowController:
         self.cancelled = threading.Event()
         self._generation = 0
         if self.config_path and self.config_path.exists():
-            saved = json.loads(self.config_path.read_text(encoding='utf-8'))
-            saved = ProjectConfig.from_dict(saved).to_dict()
+            try:
+                saved = json.loads(self.config_path.read_text(encoding='utf-8'))
+                saved = ProjectConfig.from_dict(saved).to_dict()
+            except (ValueError, KeyError, TypeError, AttributeError) as error:
+                raise SavedSettingsError(self.config_path, error) from error
             self.config.update(saved)
 
     def changed(self):

@@ -24,11 +24,16 @@ class ConnectorToInterposerWorkflowPlugin(pcbnew.ActionPlugin):
         if not filename or not Path(filename).is_file():
             wx.MessageBox('Save the PCB in its project before opening Workflow.', self.name, wx.OK | wx.ICON_INFORMATION)
             return
-        from .controller import WorkflowController, NativeProcessBackend
+        from .controller import NativeProcessBackend, open_controller
         from .ui import WorkflowDialog
         parent = next((window for window in wx.GetTopLevelWindows() if 'PCB Editor' in window.GetTitle()), None)
         try:
-            controller = WorkflowController(filename, backend=NativeProcessBackend(), dispatch=wx.CallAfter)
+            controller = open_controller(
+                filename, lambda error: self._confirm_discard(error, parent),
+                backend=NativeProcessBackend(), dispatch=wx.CallAfter,
+            )
+            if controller is None:
+                return
             count = board.GetCopperLayerCount()
             copper = [pcbnew.F_Cu] + [getattr(pcbnew, 'In%d_Cu' % i) for i in range(1, count-1)] + [pcbnew.B_Cu]
             controller.set_layers([board.GetLayerName(layer) for layer in copper])
@@ -47,6 +52,19 @@ class ConnectorToInterposerWorkflowPlugin(pcbnew.ActionPlugin):
         self._dialog = dialog
         dialog.Bind(wx.EVT_WINDOW_DESTROY, self._destroyed)
         dialog.Show()
+
+    def _confirm_discard(self, error, parent):
+        with wx.MessageDialog(
+            parent,
+            f'{error}.\n\n{error.path}\n\n'
+            'The file was probably saved by a different Workflow version. Delete it '
+            'and open Workflow with new settings, or keep the file and close?\n\n'
+            'Deleting removes only this settings file. The PCB and schematic are '
+            'not changed.',
+            self.name, wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
+        ) as dialog:
+            dialog.SetYesNoLabels('Delete and open', 'Keep and close')
+            return dialog.ShowModal() == wx.ID_YES
 
     def _destroyed(self, event):
         if event.GetEventObject() is self._dialog:

@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.6.2**, testing release. The package targets KiCad 10.0.0 through
+Version **0.6.3**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -33,6 +33,13 @@ preserving the project identity, detected stackup and any saved sidecar. None of
 these settings actions updates the PCB or schematic. Layer assignments take effect
 in the current workflow as soon as they are selected. **Apply** is the separate,
 review-gated operation that updates the open project.
+
+If the saved sidecar cannot be loaded, typically because a different Workflow
+version wrote it, opening Workflow asks whether to **Delete and open** or
+**Keep and close**. Deleting removes only that sidecar and starts with new
+settings; the project identity is carried over when the old file still states
+one, so previously applied managed objects stay recognized. Keeping leaves the
+file untouched and does not open the dialog.
 
 Compare auto-saves the open PCB. Apply verifies a complete candidate update
 without changing the project, then reconciles the active board and publishes the staged
