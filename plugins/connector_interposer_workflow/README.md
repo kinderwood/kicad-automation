@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.6.3**, testing release. The package targets KiCad 10.0.0 through
+Version **0.6.4**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 

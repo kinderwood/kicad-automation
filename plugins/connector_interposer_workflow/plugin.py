@@ -55,14 +55,10 @@ class ConnectorToInterposerWorkflowPlugin(pcbnew.ActionPlugin):
 
     def _confirm_discard(self, error, parent):
         with wx.MessageDialog(
-            parent,
-            f'{error}.\n\n{error.path}\n\n'
-            'The file was probably saved by a different Workflow version. Delete it '
-            'and open Workflow with new settings, or keep the file and close?\n\n'
-            'Deleting removes only this settings file. The PCB and schematic are '
-            'not changed.',
-            self.name, wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
+            parent, "Saved Workflow settings can't be loaded.", self.name,
+            wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
         ) as dialog:
+            dialog.SetExtendedMessage(error.path.name)
             dialog.SetYesNoLabels('Delete and open', 'Keep and close')
             return dialog.ShowModal() == wx.ID_YES
 
