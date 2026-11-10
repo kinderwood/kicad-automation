@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.6.0**, testing release. The package targets KiCad 10.0.0 through
+Version **0.6.1**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -158,7 +158,9 @@ files changed after the transaction.
    UUIDs. Every selected circle is accepted only for that exact drawing revision.
    When KiCad exposes a different transient UUID for the selected live graphic,
    the explicit click is resolved uniquely to the current inspected saved circle
-   and stores that saved UUID.
+   and stores that saved UUID. Apply also aligns transient live drawing UUIDs to
+   those reviewed saved identities so a later PCB Editor save does not make an
+   unchanged imported drawing appear to be a new revision.
    Reimporting or replacing a DXF therefore requires a new inspection and explicit
    reselection, even when its visible geometry is identical. A unique geometry
    match may be shown as a suggestion but is never silently accepted. Five native tabs separate drawing inventory, interposer,

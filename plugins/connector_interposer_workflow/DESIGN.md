@@ -155,7 +155,10 @@ analysis rather than changing an in-memory field. Inspection fingerprints the
 complete imported layer, including native UUIDs. Circle selections carry that
 accepted drawing revision. A later inspection may offer a unique geometry match
 as a suggestion, but changing or reimporting the drawing always requires explicit
-reselection. Mounting-hole creation also
+reselection. During Apply, exact live/saved drawing content is used to align
+KiCad's transient live graphic UUIDs to the already reviewed saved UUIDs; this
+prevents a later editor save from manufacturing a false drawing revision without
+weakening explicit reassociation for a real reimport. Mounting-hole creation also
 remains explicit because it adds a new project item; its selected-circle action
 must never reuse the active RF anchor implicitly.
 The placed-hole list supports removal before Review changes. All source

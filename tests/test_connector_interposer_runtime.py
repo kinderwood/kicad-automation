@@ -130,6 +130,15 @@ class InterpreterDiscoveryTests(unittest.TestCase):
         self.assertEqual(NativeProcessBackend._subprocess_options(fake_subprocess, fake_os),
                          {'creationflags': 0x08000000})
 
+    def test_worker_diagnostics_omit_duplicate_image_handler_noise(self):
+        diagnostics = NativeProcessBackend._worker_diagnostics(
+            "Adding duplicate image handler for 'PNG file'\n"
+            "Adding duplicate image handler for 'JPEG file'\n"
+            'Windows fatal exception: access violation\n',
+            '',
+        )
+        self.assertEqual(diagnostics, 'Windows fatal exception: access violation')
+
 
 if __name__ == '__main__':
     unittest.main()

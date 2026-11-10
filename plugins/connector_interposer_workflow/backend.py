@@ -11,6 +11,7 @@ import json
 import math
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 
 from .artifacts import canonical, sha256, validate_artifact
@@ -104,12 +105,16 @@ def board_state(board, p):
     all_copper = set(range(0, 63, 2))
     for uid, item in board_items(board).items():
         group = item.GetParentGroup()
-        value = {"type": item.GetClass(), "xy": _xy(item.GetPosition()),
-                 "group": uuid_of(group) if group else None, "locked": item.IsLocked()}
         if isinstance(item, p.PCB_GROUP):
+            # PCB_GROUP.GetPosition() is not meaningful and can dereference an
+            # invalid native anchor in the Windows KiCad 10 SWIG binding.
             value = {"type": item.GetClass(), "name": item.GetName(),
                      "group": uuid_of(group) if group else None, "locked": item.IsLocked()}
-        elif isinstance(item, p.FOOTPRINT):
+            state[uid] = value
+            continue
+        value = {"type": item.GetClass(), "xy": _xy(item.GetPosition()),
+                 "group": uuid_of(group) if group else None, "locked": item.IsLocked()}
+        if isinstance(item, p.FOOTPRINT):
             value.update(reference=item.GetReference(), value=item.GetValue(),
                          fields=dict(item.GetFieldsText()),
                          angle=round(item.GetOrientationDegrees() % 360, 8),
@@ -149,6 +154,26 @@ def board_state(board, p):
     return state
 
 
+def _normalized_board_value(state, uid):
+    """Return one UUID-insensitive board-state value, including group ancestry."""
+    item = copy.deepcopy(state[uid])
+    path = []
+    group = item.get('group')
+    seen = set()
+    while group and group not in seen:
+        seen.add(group)
+        parent = state.get(group, {})
+        path.append(parent.get('name', ''))
+        group = parent.get('group')
+    item['group'] = path
+    if isinstance(item.get('pads'), dict):
+        item['pads'] = sorted(
+            item['pads'].values(),
+            key=lambda pad: json.dumps(pad, sort_keys=True),
+        )
+    return item
+
+
 def board_content_state(board, p):
     """UUID-insensitive projection for comparing the live canvas to its save.
 
@@ -157,28 +182,9 @@ def board_content_state(board, p):
     object and pad identity keys are normalized here.
     """
     state = board_state(board, p)
-    group_names = {
-        uid: value.get('name', '') for uid, value in state.items()
-        if value.get('type') == 'PCB_GROUP'
-    }
-    def group_path(uid):
-        result = []
-        seen = set()
-        while uid and uid not in seen:
-            seen.add(uid)
-            value = state.get(uid, {})
-            result.append(group_names.get(uid, ''))
-            uid = value.get('group')
-        return result
     normalized = []
-    for value in state.values():
-        item = copy.deepcopy(value)
-        item['group'] = group_path(item.get('group'))
-        if isinstance(item.get('pads'), dict):
-            item['pads'] = sorted(
-                item['pads'].values(),
-                key=lambda pad: json.dumps(pad, sort_keys=True),
-            )
+    for uid in state:
+        item = _normalized_board_value(state, uid)
         normalized.append(json.dumps(item, sort_keys=True, separators=(',', ':')))
     return tuple(sorted(normalized))
 
@@ -194,6 +200,77 @@ class NativeBackend:
         count = board.GetCopperLayerCount()
         return [board.GetLayerName(p.F_Cu)] + [board.GetLayerName(getattr(p, "In%d_Cu" % i))
                 for i in range(1, count - 1)] + [board.GetLayerName(p.B_Cu)]
+
+    def _align_live_drawing_uuids(self, live_board, saved_board):
+        """Make transient live graphic UUIDs agree with the reviewed saved PCB.
+
+        KiCad can assign a different UUID to a newly imported live graphic than
+        the UUID emitted by its first SaveBoard.  Apply uses the saved board as
+        the reviewed source, so retain those identities in the open BOARD too;
+        otherwise a later editor save silently restores the transient UUIDs and
+        makes an unchanged drawing look like a new import on the next run.
+        """
+        p = self.p
+        live_state = board_state(live_board, p)
+        saved_state = board_state(saved_board, p)
+
+        def supported(item):
+            return isinstance(item, (p.PCB_SHAPE, p.PCB_TEXT))
+
+        def signature(state, uid, item):
+            value = _normalized_board_value(state, uid)
+            if isinstance(item, p.PCB_TEXT):
+                value.update(text=item.GetText(), layer=item.GetLayer())
+            return json.dumps(value, sort_keys=True, separators=(',', ':'))
+
+        def buckets(board, state):
+            result = {}
+            for item in board.GetDrawings():
+                if not supported(item):
+                    continue
+                uid = uuid_of(item)
+                result.setdefault(signature(state, uid, item), []).append((uid, item))
+            return result
+
+        live = buckets(live_board, live_state)
+        saved = buckets(saved_board, saved_state)
+        if {key: len(value) for key, value in live.items()} != {
+                key: len(value) for key, value in saved.items()}:
+            raise BackendError(
+                'The live PCB drawing content differs from its saved file; save and compare again'
+            )
+
+        changes = []
+        for key in sorted(live):
+            live_items = {uid: item for uid, item in live[key]}
+            saved_ids = {uid for uid, _item in saved[key]}
+            common = set(live_items) & saved_ids
+            sources = sorted(set(live_items) - common)
+            targets = sorted(saved_ids - common)
+            changes.extend((live_items[source], source, target)
+                           for source, target in zip(sources, targets))
+        if not changes:
+            return 0
+
+        changing_sources = {source for _item, source, _target in changes}
+        occupied = set(live_state)
+        collision = next((target for _item, _source, target in changes
+                          if target in occupied - changing_sources), None)
+        if collision:
+            raise BackendError(
+                'The saved drawing UUID collides with another live board object: ' + collision
+            )
+
+        reserved = occupied | {target for _item, _source, target in changes}
+        for item, _source, _target in changes:
+            temporary = str(uuid.uuid4())
+            while temporary in reserved:
+                temporary = str(uuid.uuid4())
+            reserved.add(temporary)
+            _set_uuid(item, temporary, p)
+        for item, _source, target in changes:
+            _set_uuid(item, target, p)
+        return len(changes)
 
     def inspect_graphics(self, board_path, source_layer="Dwgs.User"):
         """Inventory already imported native geometry; never guess a DXF parser."""
@@ -1739,10 +1816,10 @@ class NativeBackend:
         if Path(live_board.GetFileName()).resolve() != source:
             raise BackendError('The active PCB is not the reviewed Workflow board')
         disk_board = self._load(source)
-        before = board_state(live_board, self.p)
         if board_content_state(live_board, self.p) != board_content_state(disk_board, self.p):
             raise BackendError('The live PCB differs from its saved file; save and compare again')
-        missing_owned = set(preview['registry'].get('expected', {})) - set(before)
+        initial = board_state(live_board, self.p)
+        missing_owned = set(preview['registry'].get('expected', {})) - set(initial)
         if missing_owned:
             raise BackendError(
                 'The live PCB does not contain the reviewed managed identities; '
@@ -1750,9 +1827,11 @@ class NativeBackend:
             )
         old_owned = set(preview['registry'].get('expected', {}))
         retag_ids = set(preview['desired'].get('route_retags', {}))
-        foreign = {uid: value for uid, value in before.items()
-                   if uid not in old_owned and uid not in retag_ids}
         try:
+            self._align_live_drawing_uuids(live_board, disk_board)
+            before = board_state(live_board, self.p)
+            foreign = {uid: value for uid, value in before.items()
+                       if uid not in old_owned and uid not in retag_ids}
             result = self._materialize(
                 live_board, preview['desired'], preview['registry'],
             )

@@ -970,6 +970,14 @@ class NativeProcessBackend:
             return {'creationflags': subprocess_module.CREATE_NO_WINDOW}
         return {}
 
+    @staticmethod
+    def _worker_diagnostics(stderr, stdout):
+        raw = stderr.strip() or stdout.strip()
+        lines = [line for line in raw.splitlines()
+                 if 'Adding duplicate image handler for' not in line]
+        return ('\n'.join(lines).strip() or
+                'no process diagnostics (KiCad image-handler warnings omitted)')
+
     def _validate_interpreter(self, command, subprocess_module, os_module, explicit=False):
         import tempfile
         probe = '''import json,pathlib,traceback
@@ -1045,7 +1053,9 @@ __import__("os")._exit(0)
                                      env=environment, capture_output=True, text=True, timeout=300,
                                      **self._subprocess_options(subprocess, os))
             if process.returncode:
-                diagnostics = process.stderr.strip() or process.stdout.strip() or 'no process diagnostics'
+                diagnostics = self._worker_diagnostics(
+                    process.stderr, process.stdout,
+                )
                 raise RuntimeError(
                     f'Native project analysis failed (exit {process.returncode}): '
                     + diagnostics[-6000:]

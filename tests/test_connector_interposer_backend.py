@@ -8,6 +8,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +82,37 @@ class BackendTests(unittest.TestCase):
     def apply_first(self):
         preview = self.backend.preview(self.board_path, self.desired)
         return self.backend.apply(preview, self.root/"first")
+
+    def test_board_state_never_asks_a_group_for_a_position(self):
+        class Identity:
+            def AsString(self):
+                return '00000000-0000-4000-8000-000000000001'
+
+        class Group:
+            m_Uuid = Identity()
+
+            def GetParentGroup(self): return None
+            def GetClass(self): return 'PCB_GROUP'
+            def GetName(self): return 'Workflow:test'
+            def IsLocked(self): return True
+            def GetPosition(self):
+                raise AssertionError('PCB_GROUP.GetPosition must not be called')
+
+        class Board:
+            def GetCopperLayerCount(self): return 2
+            def GetFootprints(self): return ()
+            def GetTracks(self): return ()
+            def GetDrawings(self): return ()
+            def Zones(self): return ()
+            def Groups(self): return (Group(),)
+
+        unused = type('Unused', (), {})
+        api = SimpleNamespace(
+            F_Cu=0, B_Cu=31, PCB_GROUP=Group, FOOTPRINT=unused,
+            PCB_TRACK=unused, PCB_VIA=unused, PCB_SHAPE=unused, ZONE=unused,
+        )
+        state = board_state(Board(), api)
+        self.assertEqual(state[Group.m_Uuid.AsString()]['name'], 'Workflow:test')
 
     def microvia_desired(self, side='F', signal_layer='In1.Cu', diameter=.3, drill=.1):
         desired = copy.deepcopy(self.desired)
@@ -538,13 +570,21 @@ class BackendTests(unittest.TestCase):
         prepared = self.backend.prepare_live(preview)
         live = p.LoadBoard(str(self.board_path))
         live_circle = next(item for item in live.GetDrawings()
-                           if isinstance(item, p.PCB_SHAPE))
+                           if isinstance(item, p.PCB_SHAPE) and
+                           item.GetShape() == p.SHAPE_T_CIRCLE and
+                           item.GetCenter() == p.VECTOR2I(40000000, 40000000))
         saved_uuid = uuid_of(live_circle)
         _set_uuid(live_circle, str(uuid.uuid4()), p)
         self.assertNotEqual(uuid_of(live_circle), saved_uuid)
         result = self.backend.publish_live(live, preview, prepared)
         self.assertEqual(result['status'], 'APPLIED')
-        self.assertEqual(uuid_of(live_circle) in board_state(live, p), True)
+        self.assertEqual(uuid_of(live_circle), saved_uuid)
+        p.SaveBoard(str(self.board_path), live)
+        saved_circle = next(item for item in p.LoadBoard(str(self.board_path)).GetDrawings()
+                            if isinstance(item, p.PCB_SHAPE) and
+                            item.GetShape() == p.SHAPE_T_CIRCLE and
+                            item.GetCenter() == p.VECTOR2I(40000000, 40000000))
+        self.assertEqual(uuid_of(saved_circle), saved_uuid)
 
     def test_live_prepare_requires_closed_schematic_editor(self):
         preview = self.backend.preview(self.board_path, self.desired)
