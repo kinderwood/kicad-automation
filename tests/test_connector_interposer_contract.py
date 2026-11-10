@@ -239,6 +239,66 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
         }
         self.assertEqual(dxf_pad_centers, expected)
 
+    def test_revision_drawings_share_one_legible_annotation_convention(self):
+        library = SOURCE.parent
+        drills = {}
+        for gang, name in (("J101", SOURCE.stem), ("J102", SOURCE.stem),
+                           ("J1", "DSub_9_Pins_Vertical")):
+            pad = next(pad for pad in p.FootprintLoad(str(library), name).Pads()
+                       if pad.GetNumber() == "1")
+            drills[gang] = pad.GetDrillSize().x
+        expected_text = {
+            "A": ["1", "1", "14", "14", "J101", "J102"],
+            "B": ["1", "1", "14", "14", "7", "7", "8", "8", "J101", "J102"],
+        }
+        expected_text["C"] = sorted(expected_text["B"] + ["1", "5", "6", "9", "J1"])
+        for variant in "ABC":
+            positions = json.loads(
+                (DEMO / "inputs" / f"positions-{variant}.json").read_text())
+            board = p.LoadBoard(str(DEMO / f"mechanical-{variant}.kicad_pcb"))
+            drawings = list(board.GetDrawings())
+            texts = [item for item in drawings if isinstance(item, p.PCB_TEXT)]
+            shapes = [item for item in drawings if isinstance(item, p.PCB_SHAPE)]
+            self.assertEqual(sorted(item.GetText() for item in texts),
+                             expected_text[variant])
+
+            circles = {
+                (item.GetCenter().x, item.GetCenter().y): item.GetRadius()
+                for item in shapes if item.GetShape() == p.SHAPE_T_CIRCLE
+            }
+            for row in positions:
+                center = (p.FromMM(row["x_mm"]), p.FromMM(row["y_mm"]))
+                self.assertLessEqual(
+                    abs(2 * circles[center] - drills[row["gang"]]), 2, row["reference"])
+
+            boxes = [item.GetBoundingBox() for item in texts]
+            for index, box in enumerate(boxes):
+                for other in boxes[index + 1:]:
+                    self.assertFalse(box.Intersects(other), variant)
+                for shape in shapes:
+                    self.assertFalse(box.Intersects(shape.GetBoundingBox()), variant)
+
+            by_text = {}
+            for item in texts:
+                by_text.setdefault(item.GetText(), []).append(item)
+            for gang in {row["gang"] for row in positions}:
+                rows = [row for row in positions if row["gang"] == gang]
+                label, = by_text[gang]
+                self.assertLess(label.GetBoundingBox().GetBottom(),
+                                p.FromMM(min(row["y_mm"] for row in rows)))
+                x_values = [row["x_mm"] for row in rows]
+                self.assertAlmostEqual(
+                    p.ToMM(label.GetPosition().x), (min(x_values) + max(x_values)) / 2,
+                    places=5)
+
+            dxf = (DEMO / "inputs" / f"dxf-{variant}-mils.dxf").read_text().splitlines()
+            entities = dxf[dxf.index("ENTITIES"):]
+            dxf_text = sorted(
+                entities[index + entities[index:].index("  1") + 1]
+                for index, line in enumerate(entities) if line == "TEXT"
+            )
+            self.assertEqual(dxf_text, expected_text[variant])
+
     def test_revision_geometry_uses_maximum_ground_separated_rf_population(self):
         positions = {
             variant: json.loads((DEMO / "inputs" / f"positions-{variant}.json").read_text())

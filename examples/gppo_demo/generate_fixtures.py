@@ -11,6 +11,7 @@ import gc
 import hashlib
 import io
 import json
+import math
 from pathlib import Path
 import shutil
 import tempfile
@@ -27,7 +28,6 @@ BOARD_MM = BOARD_MIL * .0254
 BOARD_CENTER = BOARD_MM / 2
 PITCH_MM = 150 * .0254
 INTERPOSER_POSE = (BOARD_CENTER - 13, BOARD_CENTER - 13)
-RF_FAB_RADIUS_MM = 1.6129
 RF_COURTYARD_RADIUS_MM = 1.8629
 EDGE_MARGIN_MM = 12.7
 OUTER_RF_X = EDGE_MARGIN_MM + RF_COURTYARD_RADIUS_MM
@@ -43,6 +43,16 @@ PAD_ROWS = (
     "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AJ", "AK",
 )
 SIGNAL_ROWS = PAD_ROWS[1:28:2]
+LIBRARY = ROOT / "library/Example.pretty"
+RF_FOOTPRINT = "GPPO_B012_L13_01_EXPERIMENTAL"
+DC_FOOTPRINT = "DSub_9_Pins_Vertical"
+DC_ROW_LENGTHS = (5, 4)
+# Drawing annotation, authored in mils like the DXF it lands in.
+GANG_LABEL_HEIGHT_MM = 70 * .0254
+PIN_LABEL_HEIGHT_MM = 50 * .0254
+LABEL_GAP_MM = 50 * .0254
+# KiCad's DXF importer derives the character width from the text height.
+TEXT_WIDTH_RATIO = .9
 NAMESPACE = uuid.UUID("c6f41829-41b5-56bd-a56f-10d0940a4ff0")
 
 
@@ -109,6 +119,73 @@ def dc_positions() -> list[dict]:
             "orientation_degrees": 0,
         })
     return result
+
+
+def row_lengths(variant: str, gang: str) -> tuple[int, ...]:
+    if gang == "J1":
+        return DC_ROW_LENGTHS
+    return (14,) if variant == "A" else (7, 7)
+
+
+def pth_radius(footprint_name: str) -> float:
+    """Return the pad 1 finished-hole radius of a library connector."""
+    footprint = p.FootprintLoad(str(LIBRARY), footprint_name)
+    pad = next(pad for pad in footprint.Pads() if pad.GetNumber() == "1")
+    return p.ToMM(pad.GetDrillSize().x) / 2
+
+
+def hole_radii() -> dict[str, float]:
+    rf = pth_radius(RF_FOOTPRINT)
+    return {"J101": rf, "J102": rf, "J1": pth_radius(DC_FOOTPRINT)}
+
+
+def text_extent(text: str, height: float) -> tuple[float, float]:
+    return TEXT_WIDTH_RATIO * height * len(text), height
+
+
+def drawing_labels(variant: str, positions: list[dict],
+                   radii: dict[str, float]) -> list[dict]:
+    """Label each gang once and each row at its first and last pin.
+
+    Pin numbers continue the row axis outward from the end holes. The gang
+    identifier is centered over the holes on the board-top side of everything
+    the gang draws, whatever the gang rotation. Every label is anchored at its
+    center so placement does not depend on the viewer's font metrics.
+    """
+    gangs: dict[str, list[dict]] = {}
+    for row in positions:
+        gangs.setdefault(row["gang"], []).append(row)
+    labels = []
+    for gang, rows in gangs.items():
+        radius = radii[gang]
+        hole_x = [row["x_mm"] for row in rows]
+        top = min(row["y_mm"] for row in rows) - radius
+        start = 0
+        for length in row_lengths(variant, gang):
+            first, last = rows[start], rows[start + length - 1]
+            start += length
+            span = math.dist((first["x_mm"], first["y_mm"]), (last["x_mm"], last["y_mm"]))
+            axis = ((last["x_mm"] - first["x_mm"]) / span,
+                    (last["y_mm"] - first["y_mm"]) / span)
+            for row, direction in ((first, -1), (last, 1)):
+                text = str(row["pin"])
+                width, height = text_extent(text, PIN_LABEL_HEIGHT_MM)
+                reach = direction * (
+                    LABEL_GAP_MM + (abs(axis[0]) * width + abs(axis[1]) * height) / 2
+                )
+                center = (row["x_mm"] + axis[0] * reach, row["y_mm"] + axis[1] * reach)
+                top = min(top, center[1] - height / 2)
+                labels.append({
+                    "key": f"text:{gang}:pin:{text}", "text": text,
+                    "center": center, "height": PIN_LABEL_HEIGHT_MM,
+                })
+        labels.append({
+            "key": "text:" + gang, "text": gang,
+            "center": ((min(hole_x) + max(hole_x)) / 2,
+                       top - LABEL_GAP_MM - GANG_LABEL_HEIGHT_MM / 2),
+            "height": GANG_LABEL_HEIGHT_MM,
+        })
+    return labels
 
 
 def netlist_rows(variant: str) -> list[tuple]:
@@ -222,15 +299,21 @@ class DxfEntities:
             " 40", number(radius),
         ))
 
-    def text(self, layer: str, at: tuple[float, float], value: str) -> None:
+    def text(self, layer: str, center: tuple[float, float], height: float,
+             value: str) -> None:
+        """Write middle-center text; group 11/21 is the governing point."""
+        width, _height = text_extent(value, height)
         self._head("TEXT", layer, "AcDbText")
         self.lines.extend((
-            " 10", number(at[0]), " 20", number(at[1]), " 30", "0",
-            " 40", "70", "  1", value, "100", "AcDbText",
+            " 10", number(center[0] - width / 2), " 20", number(center[1] - height / 2),
+            " 30", "0", " 40", number(height), "  1", value, " 72", "1",
+            " 11", number(center[0]), " 21", number(center[1]), " 31", "0",
+            "100", "AcDbText", " 73", "2",
         ))
 
 
-def replace_dxf_entities(path: Path, positions: list[dict], include_dc: bool,
+def replace_dxf_entities(path: Path, positions: list[dict], labels: list[dict],
+                         radii: dict[str, float], include_dc: bool,
                          pad_centers: list[tuple[float, float]]) -> None:
     source = path.read_text(encoding="utf-8").splitlines()
     entity_start = next(
@@ -258,11 +341,11 @@ def replace_dxf_entities(path: Path, positions: list[dict], include_dc: bool,
     dxf.circle("INTERPOSER", dxf_point(INTERPOSER_POSE), 1.25 / .0254)
     for row in positions:
         center = dxf_point((row["x_mm"], row["y_mm"]))
-        if row["gang"] == "J1":
-            dxf.circle("DC_CENTERS", center, .5 / .0254)
-        else:
-            dxf.circle("GPPO_CENTERS", center, RF_FAB_RADIUS_MM / .0254)
-            dxf.text("MECH_LABELS", (center[0] - 100, center[1] + 100), row["reference"])
+        layer = "DC_CENTERS" if row["gang"] == "J1" else "GPPO_CENTERS"
+        dxf.circle(layer, center, radii[row["gang"]] / .0254)
+    for label in labels:
+        dxf.text("MECH_LABELS", dxf_point(label["center"]), label["height"] / .0254,
+                 label["text"])
     if include_dc:
         for center in pad_centers:
             dxf.circle("INTERPOSER", dxf_point(center), 6)
@@ -296,22 +379,27 @@ def add_circle(board, key: str, center: tuple[float, float], radius: float) -> N
     board.Add(item)
 
 
-def add_text(board, reference: str, center: tuple[float, float]) -> None:
+def add_text(board, label: dict) -> None:
+    """Add a label as PCB Editor's DXF import represents middle-center text."""
+    height = label["height"]
     item = p.PCB_TEXT(board)
-    item.SetText(reference)
+    item.SetText(label["text"])
     item.SetPosition(p.VECTOR2I(
-        p.FromMM(center[0] - 2.54), p.FromMM(center[1] - 2.54),
+        p.FromMM(label["center"][0]), p.FromMM(label["center"][1]),
     ))
-    item.SetTextSize(p.VECTOR2I(p.FromMM(1.778), p.FromMM(1.6002)))
-    item.SetTextThickness(p.FromMM(.22225))
-    item.SetHorizJustify(p.GR_TEXT_H_ALIGN_LEFT)
-    item.SetVertJustify(p.GR_TEXT_V_ALIGN_BOTTOM)
+    item.SetTextSize(p.VECTOR2I(
+        p.FromMM(TEXT_WIDTH_RATIO * height), p.FromMM(height),
+    ))
+    item.SetTextThickness(p.FromMM(height / 8))
+    item.SetHorizJustify(p.GR_TEXT_H_ALIGN_CENTER)
+    item.SetVertJustify(p.GR_TEXT_V_ALIGN_CENTER)
     item.SetLayer(p.Dwgs_User)
-    assign_uuid(item, "text:" + reference)
+    assign_uuid(item, label["key"])
     board.Add(item)
 
 
-def write_board(variant: str, positions: list[dict],
+def write_board(variant: str, positions: list[dict], labels: list[dict],
+                radii: dict[str, float],
                 pad_centers: list[tuple[str, tuple[float, float]]]) -> None:
     board = p.BOARD()
     board.SetCopperLayerCount(4)
@@ -327,10 +415,9 @@ def write_board(variant: str, positions: list[dict],
     add_circle(board, "interposer-origin", INTERPOSER_POSE, 1.25)
     for row in positions:
         center = (row["x_mm"], row["y_mm"])
-        radius = .5 if row["gang"] == "J1" else RF_FAB_RADIUS_MM
-        add_circle(board, "circle:" + row["reference"], center, radius)
-        if row["gang"] != "J1":
-            add_text(board, row["reference"], center)
+        add_circle(board, "circle:" + row["reference"], center, radii[row["gang"]])
+    for label in labels:
+        add_text(board, label)
     if variant == "C":
         for pad_number, center in pad_centers:
             add_circle(board, "interposer-pad:" + pad_number, center, .1524)
@@ -343,8 +430,7 @@ def write_board(variant: str, positions: list[dict],
 
 
 def interposer_pad_centers() -> list[tuple[str, tuple[float, float]]]:
-    footprint_path = ROOT / "library/Example.pretty/Interposer_800.kicad_mod"
-    footprint = p.FootprintLoad(str(footprint_path.parent), footprint_path.stem)
+    footprint = p.FootprintLoad(str(LIBRARY), "Interposer_800")
     footprint.SetPosition(p.VECTOR2I(p.FromMM(INTERPOSER_POSE[0]), p.FromMM(INTERPOSER_POSE[1])))
     return [
         (pad.GetNumber(), (p.ToMM(pad.GetPosition().x), p.ToMM(pad.GetPosition().y)))
@@ -373,6 +459,7 @@ def main() -> None:
         xlsx_template = {name: archive.read(name) for name in xlsx_order}
     pad_centers = interposer_pad_centers()
     pad_points = [center for _number, center in pad_centers]
+    radii = hole_radii()
     for variant in "ABC":
         rows = netlist_rows(variant)
         positions = rf_positions(variant)
@@ -383,11 +470,12 @@ def main() -> None:
         (INPUTS / f"positions-{variant}.json").write_text(
             json.dumps(positions, indent=2) + "\n", encoding="utf-8",
         )
+        labels = drawing_labels(variant, positions, radii)
         replace_dxf_entities(
-            INPUTS / f"dxf-{variant}-mils.dxf", positions,
+            INPUTS / f"dxf-{variant}-mils.dxf", positions, labels, radii,
             include_dc=variant == "C", pad_centers=pad_points,
         )
-        write_board(variant, positions, pad_centers)
+        write_board(variant, positions, labels, radii, pad_centers)
     update_provenance()
 
 

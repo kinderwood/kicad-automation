@@ -2,9 +2,9 @@
   "purpose": "Canonical A/B/C demonstration inputs; experimental geometry, not production library approval or manufacturing qualification. Workflow treats these as selected immutable librarian inputs.",
   "source": "Deterministic A/B/C demonstration geometry derived from the supplied B012-L13-01 connector and existing 800-pad interposer library sources.",
   "sha256": {
-    "inputs/dxf-A-mils.dxf": "8932dde46fc81924476856ae94206f18c74154e25e52e926100657e4beb42af6",
-    "inputs/dxf-B-mils.dxf": "1371773654227f25b64cfac17af0d6c6c842936a6e087359d7140d8d70828efb",
-    "inputs/dxf-C-mils.dxf": "3f607b535803ca6dd1a1fcc91e1cea70696fca8b34379bd00ab97650ca041f3a",
+    "inputs/dxf-A-mils.dxf": "29deb13c63dca8039c92baeb92216379330849b1294ea931a90f76c5942cc6bf",
+    "inputs/dxf-B-mils.dxf": "104fd5d2f3c9e8d2961d29162f5153e5f62767b38241fd9503f0f8139f2205ac",
+    "inputs/dxf-C-mils.dxf": "6544bc7c108bc0540f9bfd782f4061e6f838d04a9411ab79da17b004979ee9eb",
     "inputs/netlist-A.csv": "61f514dd086125df5a781c25b7a3927c04223356d3f0e7e542713d1627c3fa72",
     "inputs/netlist-A.xlsx": "ad02ef5bae5d064f54c651d73d11bfb0b9967bb9b76dd063fb90e5e52db9e3b7",
     "inputs/netlist-B.csv": "75ff9b1d9d3df843f0cf86730890c6e7a411f82104d0767c9a0d9f17cc3d29b5",
@@ -22,11 +22,11 @@
     "library/rf/RF-L2.r1.gppo-rf.json": "71aea60e458968a9467c158d0451a4bc2ea0e81e9483bcf7886147448a021cfc",
     "library/rf/RF-L3.r1.gppo-rf.json": "4b4c772ea734f7e56426edd89bdb3a950b53af7c42fe563ce14a8d34e460105d",
     "library/rf/manifest.json": "c699cbbc98617234504aeabeb104e8978d00c97e6dcb58872e6cd86df79502d6",
-    "mechanical-A.kicad_pcb": "3e5780b91f2746a29dccf89765790115c260867199474a3dbc73526323d055ea",
+    "mechanical-A.kicad_pcb": "e0386655bd53e759994925576cc7f48d84f25256b8d55f320224985f564e50bf",
     "mechanical-A.kicad_pro": "34e2ca84524d340e0738ddc7b3619ba216f3ddf3936689168868fc90107360a1",
-    "mechanical-B.kicad_pcb": "c0a016609fe48ad31bcfa31ecaf76ac96234abe7c21d0cec1a929a120e1e86b9",
+    "mechanical-B.kicad_pcb": "27ff54c6536fbe4ff28db999955a5238aa59feba64d8fa87fcca12eaecc43702",
     "mechanical-B.kicad_pro": "250fe469f67b38ebc810a76461d56c734efe8f0898ce240dff93d25300b40f00",
-    "mechanical-C.kicad_pcb": "4fc753babf325ce186667ff8a5a0e663edc67e42925dba143e9da4489b3a1f09",
+    "mechanical-C.kicad_pcb": "05c0ad3f951acc4dffd622dd916741135b13e9798ff73bdaae5d8054239966d6",
     "mechanical-C.kicad_pro": "c427a4d4ebb3ebfdb4e8e6255eecc2343d8ede68f1f5fa0013aea4e504020997"
   }
 }

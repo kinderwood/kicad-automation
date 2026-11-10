@@ -111,7 +111,7 @@
 	)
 	(gr_circle
 		(center 18.3729 30.7975)
-		(end 19.9858 30.7975)
+		(end 18.5634 30.7975)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -122,7 +122,7 @@
 	)
 	(gr_circle
 		(center 18.3729 34.6075)
-		(end 19.9858 34.6075)
+		(end 18.5634 34.6075)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -133,7 +133,7 @@
 	)
 	(gr_circle
 		(center 18.3729 38.4175)
-		(end 19.9858 38.4175)
+		(end 18.5634 38.4175)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -144,7 +144,7 @@
 	)
 	(gr_circle
 		(center 18.3729 42.2275)
-		(end 19.9858 42.2275)
+		(end 18.5634 42.2275)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -155,7 +155,7 @@
 	)
 	(gr_circle
 		(center 18.3729 46.0375)
-		(end 19.9858 46.0375)
+		(end 18.5634 46.0375)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -166,7 +166,7 @@
 	)
 	(gr_circle
 		(center 18.3729 49.8475)
-		(end 19.9858 49.8475)
+		(end 18.5634 49.8475)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -177,7 +177,7 @@
 	)
 	(gr_circle
 		(center 18.3729 53.6575)
-		(end 19.9858 53.6575)
+		(end 18.5634 53.6575)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -188,7 +188,7 @@
 	)
 	(gr_circle
 		(center 18.3729 57.4675)
-		(end 19.9858 57.4675)
+		(end 18.5634 57.4675)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -199,7 +199,7 @@
 	)
 	(gr_circle
 		(center 18.3729 61.2775)
-		(end 19.9858 61.2775)
+		(end 18.5634 61.2775)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -210,7 +210,7 @@
 	)
 	(gr_circle
 		(center 18.3729 65.0875)
-		(end 19.9858 65.0875)
+		(end 18.5634 65.0875)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -221,7 +221,7 @@
 	)
 	(gr_circle
 		(center 18.3729 68.8975)
-		(end 19.9858 68.8975)
+		(end 18.5634 68.8975)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -232,7 +232,7 @@
 	)
 	(gr_circle
 		(center 18.3729 72.7075)
-		(end 19.9858 72.7075)
+		(end 18.5634 72.7075)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -243,7 +243,7 @@
 	)
 	(gr_circle
 		(center 18.3729 76.5175)
-		(end 19.9858 76.5175)
+		(end 18.5634 76.5175)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -254,7 +254,7 @@
 	)
 	(gr_circle
 		(center 18.3729 80.3275)
-		(end 19.9858 80.3275)
+		(end 18.5634 80.3275)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -316,7 +316,7 @@
 	)
 	(gr_circle
 		(center 92.7521 30.7975)
-		(end 94.365 30.7975)
+		(end 92.9426 30.7975)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -327,7 +327,7 @@
 	)
 	(gr_circle
 		(center 92.7521 34.6075)
-		(end 94.365 34.6075)
+		(end 92.9426 34.6075)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -338,7 +338,7 @@
 	)
 	(gr_circle
 		(center 92.7521 38.4175)
-		(end 94.365 38.4175)
+		(end 92.9426 38.4175)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -349,7 +349,7 @@
 	)
 	(gr_circle
 		(center 92.7521 42.2275)
-		(end 94.365 42.2275)
+		(end 92.9426 42.2275)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -360,7 +360,7 @@
 	)
 	(gr_circle
 		(center 92.7521 46.0375)
-		(end 94.365 46.0375)
+		(end 92.9426 46.0375)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -371,7 +371,7 @@
 	)
 	(gr_circle
 		(center 92.7521 49.8475)
-		(end 94.365 49.8475)
+		(end 92.9426 49.8475)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -382,7 +382,7 @@
 	)
 	(gr_circle
 		(center 92.7521 53.6575)
-		(end 94.365 53.6575)
+		(end 92.9426 53.6575)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -393,7 +393,7 @@
 	)
 	(gr_circle
 		(center 92.7521 57.4675)
-		(end 94.365 57.4675)
+		(end 92.9426 57.4675)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -404,7 +404,7 @@
 	)
 	(gr_circle
 		(center 92.7521 61.2775)
-		(end 94.365 61.2775)
+		(end 92.9426 61.2775)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -415,7 +415,7 @@
 	)
 	(gr_circle
 		(center 92.7521 65.0875)
-		(end 94.365 65.0875)
+		(end 92.9426 65.0875)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -426,7 +426,7 @@
 	)
 	(gr_circle
 		(center 92.7521 68.8975)
-		(end 94.365 68.8975)
+		(end 92.9426 68.8975)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -437,7 +437,7 @@
 	)
 	(gr_circle
 		(center 92.7521 72.7075)
-		(end 94.365 72.7075)
+		(end 92.9426 72.7075)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -448,7 +448,7 @@
 	)
 	(gr_circle
 		(center 92.7521 76.5175)
-		(end 94.365 76.5175)
+		(end 92.9426 76.5175)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -459,7 +459,7 @@
 	)
 	(gr_circle
 		(center 92.7521 80.3275)
-		(end 94.365 80.3275)
+		(end 92.9426 80.3275)
 		(stroke
 			(width 0.2)
 			(type default)
@@ -488,340 +488,70 @@
 		(layer "Dwgs.User")
 		(uuid "241325e4-0ffa-58c2-8443-070402ebee48")
 	)
-	(gr_text "J101-1"
-		(at 15.8329 28.2575 0)
+	(gr_text "1"
+		(at 18.3729 28.8925 0)
 		(layer "Dwgs.User")
-		(uuid "d3f953d1-4b7d-5e35-9444-7e46dacd628c")
+		(uuid "d5f3cfe3-3012-53a9-ab36-e91f2ac08277")
 		(effects
 			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
+				(size 1.27 1.143)
+				(thickness 0.15875)
 			)
-			(justify left bottom)
 		)
 	)
-	(gr_text "J101-2"
-		(at 15.8329 32.0675 0)
+	(gr_text "14"
+		(at 18.3729 82.2325 0)
 		(layer "Dwgs.User")
-		(uuid "5fe3dbfb-7016-5432-8c4d-614674a0a366")
+		(uuid "07099136-987e-5dbb-8ac1-3efbd61d91fb")
 		(effects
 			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
+				(size 1.27 1.143)
+				(thickness 0.15875)
 			)
-			(justify left bottom)
 		)
 	)
-	(gr_text "J101-3"
-		(at 15.8329 35.8775 0)
+	(gr_text "1"
+		(at 92.7521 28.8925 0)
 		(layer "Dwgs.User")
-		(uuid "2df55414-ada5-5588-b441-068cd4d68014")
+		(uuid "224a07c5-4def-56eb-80a3-f52470018556")
 		(effects
 			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
+				(size 1.27 1.143)
+				(thickness 0.15875)
 			)
-			(justify left bottom)
 		)
 	)
-	(gr_text "J101-4"
-		(at 15.8329 39.6875 0)
+	(gr_text "14"
+		(at 92.7521 82.2325 0)
 		(layer "Dwgs.User")
-		(uuid "949f682e-8781-53e3-a0bb-eb27c73d6f9f")
+		(uuid "350c9eec-4fff-527a-b981-8203971d02f6")
 		(effects
 			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
+				(size 1.27 1.143)
+				(thickness 0.15875)
 			)
-			(justify left bottom)
 		)
 	)
-	(gr_text "J101-5"
-		(at 15.8329 43.4975 0)
+	(gr_text "J101"
+		(at 18.3729 26.098499 0)
 		(layer "Dwgs.User")
-		(uuid "77b6c2c5-8e7a-5620-ae0c-8d14f42495d1")
+		(uuid "7f70ed0d-6fad-5ad6-9572-eafdb29cd42e")
 		(effects
 			(font
-				(size 1.6002 1.778)
+				(size 1.778 1.6002)
 				(thickness 0.22225)
 			)
-			(justify left bottom)
 		)
 	)
-	(gr_text "J101-6"
-		(at 15.8329 47.3075 0)
+	(gr_text "J102"
+		(at 92.7521 26.098499 0)
 		(layer "Dwgs.User")
-		(uuid "25b84b2d-e66c-58fa-b64f-f9a11d6ad0ab")
+		(uuid "3ed38848-35e0-5621-9cf8-6aaf29317238")
 		(effects
 			(font
-				(size 1.6002 1.778)
+				(size 1.778 1.6002)
 				(thickness 0.22225)
 			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J101-7"
-		(at 15.8329 51.1175 0)
-		(layer "Dwgs.User")
-		(uuid "ae222b05-daee-5aca-9479-1910ce1ee968")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J101-8"
-		(at 15.8329 54.9275 0)
-		(layer "Dwgs.User")
-		(uuid "f570ec80-0012-5c84-a069-530681531936")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J101-9"
-		(at 15.8329 58.7375 0)
-		(layer "Dwgs.User")
-		(uuid "f5987fcc-fc41-5775-9fd4-d19b9a0a5e22")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J101-10"
-		(at 15.8329 62.5475 0)
-		(layer "Dwgs.User")
-		(uuid "e8dac674-6b85-5c92-b7b1-6fb68192a4ec")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J101-11"
-		(at 15.8329 66.357499 0)
-		(layer "Dwgs.User")
-		(uuid "f47eb564-0bb5-5e7b-9368-7bd7bfb77675")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J101-12"
-		(at 15.8329 70.167499 0)
-		(layer "Dwgs.User")
-		(uuid "dede27df-b130-5df3-90ac-c4324cd91bd8")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J101-13"
-		(at 15.8329 73.977499 0)
-		(layer "Dwgs.User")
-		(uuid "899f3855-d9a6-5df5-854a-a777d43bb439")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J101-14"
-		(at 15.8329 77.7875 0)
-		(layer "Dwgs.User")
-		(uuid "bdbcfc07-95db-5a5d-b637-c4df7b0e8ad0")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-1"
-		(at 90.212099 28.2575 0)
-		(layer "Dwgs.User")
-		(uuid "458e3972-1850-5aef-8c9b-9d384c74ec9f")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-2"
-		(at 90.212099 32.0675 0)
-		(layer "Dwgs.User")
-		(uuid "ed9ff9bd-ca15-5fde-beb1-35d52f1b1d4a")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-3"
-		(at 90.212099 35.8775 0)
-		(layer "Dwgs.User")
-		(uuid "ead90512-4b19-58be-9cc2-81161746274e")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-4"
-		(at 90.212099 39.6875 0)
-		(layer "Dwgs.User")
-		(uuid "c455176f-4847-5d2f-bac1-c2ae4965abc8")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-5"
-		(at 90.212099 43.4975 0)
-		(layer "Dwgs.User")
-		(uuid "ff649668-0db3-5619-ab78-930441794466")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-6"
-		(at 90.212099 47.3075 0)
-		(layer "Dwgs.User")
-		(uuid "919c8130-8eae-518e-b345-404839336366")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-7"
-		(at 90.212099 51.1175 0)
-		(layer "Dwgs.User")
-		(uuid "454f55c2-2cf7-58ce-a125-3e9bf8e43d97")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-8"
-		(at 90.212099 54.9275 0)
-		(layer "Dwgs.User")
-		(uuid "4cba9c5c-ec51-5b1c-be14-ab4d70ccfb3e")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-9"
-		(at 90.212099 58.7375 0)
-		(layer "Dwgs.User")
-		(uuid "375d89ca-0162-5fbd-a4e2-3bb70ae04a70")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-10"
-		(at 90.212099 62.5475 0)
-		(layer "Dwgs.User")
-		(uuid "5e0dcfe6-7511-56c2-a508-ae61dd7e7aa9")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-11"
-		(at 90.212099 66.357499 0)
-		(layer "Dwgs.User")
-		(uuid "357c8b49-a26d-56f7-bc5e-575a254d97c7")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-12"
-		(at 90.212099 70.167499 0)
-		(layer "Dwgs.User")
-		(uuid "e0369198-9e9e-5025-9d2e-d6ab234e2748")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-13"
-		(at 90.212099 73.977499 0)
-		(layer "Dwgs.User")
-		(uuid "15e27ae1-9050-541a-85b5-2e4361d7a696")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
-		)
-	)
-	(gr_text "J102-14"
-		(at 90.212099 77.7875 0)
-		(layer "Dwgs.User")
-		(uuid "a5986cec-2930-5133-93aa-ff54e0314a32")
-		(effects
-			(font
-				(size 1.6002 1.778)
-				(thickness 0.22225)
-			)
-			(justify left bottom)
 		)
 	)
 	(embedded_fonts no)

@@ -34,6 +34,18 @@ complete set and validates it with the same drawing center tolerance used for
 RF and DC features. The DC nets connect to adjacent interposer pads `AK11`
 through `AK19` on `L2`.
 
+The three drawings share one annotation convention. Each `GPPO_CENTERS` and
+`DC_CENTERS` circle is drawn at the finished through-hole diameter of pad 1 in
+its library footprint: 15 mil (0.381 mm) for the GPPO center contact and
+1.0 mm for the DE-9. Each gang carries one 70 mil identifier on `MECH_LABELS`
+(`J101` and `J102` for RF, `J1` for DC), centered over its holes on the
+board-top side regardless of gang rotation. Pin numbers are 50 mil and appear
+only at the first and last pin of every row, continuing the row axis outward
+from the end hole: `1` and `14` in A, `1`, `7`, `8` and `14` in B and C, and
+`1`, `5`, `6` and `9` on the DE-9. The interposer is not labelled. All text is
+middle-center justified, so placement does not depend on a viewer's font
+metrics. Workflow never parses this text; it is drawing context only.
+
 The 14 RF signals per side are the largest balanced population that retains a
 complete grounded interposer row between signal rows. Signal rows are `B`, `D`,
 `F`, `H`, `K`, `M`, `P`, `T`, `V`, `Y`, `AB`, `AD`, `AF`, and `AH`; the
