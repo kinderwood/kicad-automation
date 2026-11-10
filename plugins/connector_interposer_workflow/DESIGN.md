@@ -214,10 +214,11 @@ The editable [UI Design Guide](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx
 records the current workflow, product principles, approved and retired patterns,
 page anatomy, interaction states and open prototypes. Its **Entry controls,
 tables, and scrolling** section names the assignment-cell and value-entry-cell
-patterns. The file keeps the current guide first, a dedicated KiCad exemplar
-and Netlist source reference page second, current workshops next and clearly
-named archives last. It records durable design decisions and reasons;
-implementation history remains in repository documentation.
+patterns. The file's Read me page defines the page roles: Foundations
+(variables named after `ui_palette()`), Components (each recurring control,
+with its code counterpart in the description), Spec, Proposal, Guide, Reference
+and Archive. It records durable design decisions and reasons; implementation
+history remains in repository documentation.
 Its editable Layer assignment pattern is at
 [section 08](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=148-37).
 The implemented Define RF gangs and RF transitions patterns are at

@@ -31,6 +31,28 @@ explicit project decision.
 - Prefer KiCad layer/editor defaults over new wizard parameters when a library
   convention already supplies the value.
 
+## UI design (Figma)
+
+The Connector to Interposer Workflow design file is
+<https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l>; its **Read me** page
+defines each page's role. Use the Figma MCP server (connector) to read and
+edit it.
+
+- Before changing UI, read the step's **Spec** frame if one exists, else the
+  matching **Guide** section. Read text content and a screenshot; layer names
+  can be stale.
+- A Spec binds layout, grouping, wording, states and colour by token. It is
+  not pixel-exact: controls are native wx and differ between platforms.
+- Change the Figma frame and the code in the same task. Every user-facing
+  string appears in Figma exactly as shipped.
+- Draw with **Components** instances and **Foundations** variables only. Add a
+  component when a control recurs; name its code counterpart in the component
+  description. Colour variable names mirror `ui_palette()`.
+- New ideas go on a `Proposal — <topic>` page and are not a target until
+  moved to Spec. Never edit **Reference** or **Archive** pages.
+- Keep user-facing text short: state the condition and the action, nothing a
+  button label already says.
+
 ## Environment and validation
 
 Run commands from the repository root. Before changing code or running a longer
