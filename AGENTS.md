@@ -53,6 +53,26 @@ edit it.
 - Keep user-facing text short: state the condition and the action, nothing a
   button label already says.
 
+Owner's standing UI rules (the Read me page carries the same list):
+
+- Low mental load: each step asks one thing. Do not merge steps or replace
+  guidance with a wall of settings.
+- Nothing moves: controls, buttons and status areas keep their position and
+  size. Nothing appears, disappears or shifts with state; change content in
+  place.
+- Predictable buttons: a button always does the same thing and keeps its label.
+- Glance, then detail: one status icon per step in the step list; description
+  and a per-concern checklist with counts in the About-this-step box. No other
+  status areas.
+- Columns separate kinds of thing (pick, edit, see); inside a column, content
+  reads top to bottom.
+- Do not repeat a value already shown on the page.
+- Editable looks like a control; displayed values are plain text. Colour never
+  marks editability.
+- The window opens large enough for every step; long tables scroll inside
+  themselves.
+- The current plugin UI is work in progress and is not the specification.
+
 ## Environment and validation
 
 Run commands from the repository root. Before changing code or running a longer
