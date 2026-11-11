@@ -31,47 +31,11 @@ explicit project decision.
 - Prefer KiCad layer/editor defaults over new wizard parameters when a library
   convention already supplies the value.
 
-## UI design (Figma)
+## UI design
 
-The Connector to Interposer Workflow design file is
-<https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l>; its **Read me** page
-defines each page's role. Use the Figma MCP server (connector) to read and
-edit it.
-
-- Before changing UI, read the step's **Spec** frame if one exists, else the
-  matching **Guide** section. Read text content and a screenshot; layer names
-  can be stale.
-- A Spec binds layout, grouping, wording, states and colour by token. It is
-  not pixel-exact: controls are native wx and differ between platforms.
-- Change the Figma frame and the code in the same task. Every user-facing
-  string appears in Figma exactly as shipped.
-- Draw with **Components** instances and **Foundations** variables only. Add a
-  component when a control recurs; name its code counterpart in the component
-  description. Colour variable names mirror `ui_palette()`.
-- New ideas go on a `Proposal — <topic>` page and are not a target until
-  moved to Spec. Never edit **Reference** or **Archive** pages.
-- Keep user-facing text short: state the condition and the action, nothing a
-  button label already says.
-
-Owner's standing UI rules (the Read me page carries the same list):
-
-- Low mental load: each step asks one thing. Do not merge steps or replace
-  guidance with a wall of settings.
-- Nothing moves: controls, buttons and status areas keep their position and
-  size. Nothing appears, disappears or shifts with state; change content in
-  place.
-- Predictable buttons: a button always does the same thing and keeps its label.
-- Glance, then detail: one status icon per step in the step list; description
-  and a per-concern checklist with counts in the About-this-step box. No other
-  status areas.
-- Columns separate kinds of thing (pick, edit, see); inside a column, content
-  reads top to bottom.
-- Do not repeat a value already shown on the page.
-- Editable looks like a control; displayed values are plain text. Colour never
-  marks editability.
-- The window opens large enough for every step; long tables scroll inside
-  themselves.
-- The current plugin UI is work in progress and is not the specification.
+UI work on the Connector to Interposer Workflow follows the Figma design file
+and the standing rules in `plugins/connector_interposer_workflow/DESIGN.md`
+("Design source and standing rules"). Read that section before changing UI.
 
 ## Environment and validation
 

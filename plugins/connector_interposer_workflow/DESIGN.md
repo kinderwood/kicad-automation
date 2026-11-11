@@ -227,6 +227,54 @@ and [section 10](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=178
 The curated entry-control and scrolling rules are in
 [section 11](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=200-60).
 
+## Design source and standing rules
+
+The design file is <https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l>; its
+Read me page defines each page's role and repeats the rules below. Agents read
+and edit it through the Figma MCP server.
+
+Working with the file:
+
+- The current plugin UI is work in progress and is not the specification. A
+  step is a target only once it has an approved **Spec** frame; until then use
+  the open **Proposal** and the **Guide**.
+- Read text content and a screenshot; layer names can be stale.
+- A Spec binds layout, grouping, wording, states and colour by token. It is
+  not pixel-exact: controls are native wx and differ between platforms.
+- Change the Figma frame and the code in the same task. Every user-facing
+  string appears in Figma exactly as shipped.
+- Draw with **Components** instances and **Foundations** variables only. Name a
+  component's code counterpart in its description. Colour variable names
+  mirror `ui_palette()`.
+- New ideas go on a `Proposal — <topic>` page. Never edit **Reference** or
+  **Archive** pages.
+
+Standing rules:
+
+- Low mental load: each step asks one thing. Do not merge steps or replace
+  guidance with a wall of settings.
+- Nothing moves: controls, buttons and status areas keep their position and
+  size. Nothing appears, disappears or shifts with state; change content in
+  place.
+- Predictable buttons: a button always does the same thing and keeps its
+  label. Next goes to the next step.
+- Glance, then detail: one status icon per step in the step list; the
+  About-this-step box under it holds the description and a checklist with one
+  line and count per concern. No other status areas.
+- Motion aids continuity: clicking a checklist line fades a highlight outline
+  in over the section, holds it for a few seconds and fades it out, with no
+  layout change. If the section is off screen, scroll to it smoothly inside
+  the page's own scroll area; never jump. No blinking.
+- Columns separate kinds of thing (pick, edit, see); inside a column, content
+  reads top to bottom.
+- Do not repeat a value already shown on the page.
+- Editable looks like a control; displayed values are plain text. Colour never
+  marks editability.
+- Keep user-facing text short: state the condition and the action, nothing a
+  button label already says.
+- Stock wxPython and KiCad conventions only; nothing beyond what KiCad
+  installs.
+
 `WorkflowController` owns UI drafts and preview invalidation. Core records,
 workbook parsing, geometry, validation and schematic generation stay independent
 of wx and pcbnew. Native KiCad object loading and writing runs in an isolated
