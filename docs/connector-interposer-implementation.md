@@ -427,6 +427,20 @@ Version 0.7.2 completes the Nets & Layers details: the netlist table drops its
 for their reserved status slot, "Showing N of M nets" sits beside Open Full
 Table, and Auto Assign sits below its table on the table's left edge.
 
+Version 0.7.3 brings Connector assignments, RF transitions, Interposer
+microvias and Board outline into line with the Spec. Connector assignments
+uses Interposer / RF gangs / DC connectors tabs; its symbol and footprint
+cells are entry cells with the blue outline, the red missing state and a
+neutral "Set for all…" bulk row, and its readouts are grey. RF transitions
+loads the project's transition files when the dialog opens, offers Search
+Project, and drops the permanently disabled Designer button. The microvia
+step no longer carries a fabrication note. Board outline lists its two
+contours with their size and whether they close, validates automatically,
+and replaces the raw JSON box and the validate button with Pick in Editor,
+Show in Editor and Clear. Pick in Editor takes the next selection made in the
+PCB Editor; Show in Editor highlights the saved items and moves the view to
+them.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal

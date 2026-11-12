@@ -976,26 +976,70 @@ class LibrarySelectionCtrl(wx.Panel):
             self.set_selection({'path': str(value), 'library_id': library_id(value) if value else ''})
 
 
-class SymbolAssignmentCtrl(wx.Panel):
-    """Compact table cell that opens the native loaded-library symbol picker."""
-    def __init__(self, parent, owner, title, require_two_pin, on_change):
-        super().__init__(parent, style=wx.BORDER_SIMPLE)
-        self.owner, self.title = owner, title
-        self.require_two_pin, self.on_change = require_two_pin, on_change
-        self.selection = {}
-        self.valid = False
+class EntryCell(wx.Panel):
+    """A table entry cell composed of real controls.
+
+    White surface, blue outline, chevron. When the entry is required and not
+    set, the outline turns red and the red X appears in a slot that is always
+    reserved. A disabled cell has a neutral outline. ``bulk`` cells apply a
+    value to every row and are never themselves missing.
+    """
+    PLACEHOLDER = 'Select…'
+    BULK_PLACEHOLDER = 'Set for all…'
+
+    def _build_entry(self):
+        self.bulk = False
+        self.needs_attention = False
         row = wx.BoxSizer(wx.HORIZONTAL)
-        self.display = wx.StaticText(self, label='Choose a symbol', style=wx.ST_ELLIPSIZE_END)
-        row.Add(self.display, 1, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 7)
-        self.select = wx.Button(self, label='Select…', size=(76, -1))
-        self.select.Bind(wx.EVT_BUTTON, owner.guard(self.choose))
-        row.Add(self.select, 0, wx.ALL, 4)
+        self.slot = wx.Panel(self, size=(16, 16))
+        self.slot.Bind(wx.EVT_PAINT, self._paint_slot)
+        row.Add(self.slot, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 5)
+        self.display = wx.StaticText(self, label=self.PLACEHOLDER, style=wx.ST_ELLIPSIZE_END)
+        row.Add(self.display, 1, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 3)
+        self.chevron = wx.StaticText(self, label='▾')
+        row.Add(self.chevron, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, 8)
         self.SetSizer(row)
+        self.Bind(wx.EVT_PAINT, self._paint_outline)
         self.Bind(wx.EVT_SIZE, self._resized)
-        self.set_selection({})
+
+    def placeholder(self):
+        return self.BULK_PLACEHOLDER if self.bulk else self.PLACEHOLDER
+
+    def set_bulk(self):
+        self.bulk = True
+        self._style()
+
+    def _outline(self, palette):
+        if not self.IsEnabled():
+            return palette.muted
+        return palette.status[progress.MISSING] if self.needs_attention else palette.highlight
+
+    def _paint_outline(self, event):
+        dc = wx.PaintDC(self)
+        width, height = self.GetClientSize()
+        dc.SetPen(wx.Pen(self._outline(ui_palette()), 2))
+        dc.SetBrush(wx.TRANSPARENT_BRUSH)
+        dc.DrawRectangle(1, 1, width - 1, height - 1)
+
+    def _paint_slot(self, event):
+        dc = wx.PaintDC(self.slot)
+        if self.needs_attention and self.IsEnabled():
+            draw_status_icon(dc, progress.MISSING, 1, 1)
+
+    def _style_entry(self, assigned):
+        palette = ui_palette()
+        self.needs_attention = not assigned and not self.bulk
+        self.SetBackgroundColour(palette.window)
+        self.SetForegroundColour(palette.text)
+        for control in (self.slot, self.display, self.chevron):
+            control.SetBackgroundColour(palette.window)
+        self.display.SetForegroundColour(palette.text if assigned else palette.muted)
+        self.chevron.SetForegroundColour(palette.text)
+        self.Refresh()
 
     def _resized(self, event):
         event.Skip()
+        self.Refresh()
         wx.CallAfter(self._refresh_overflow_tooltip)
 
     def _refresh_overflow_tooltip(self):
@@ -1003,16 +1047,43 @@ class SymbolAssignmentCtrl(wx.Panel):
             text = self.display.GetLabel()
             available = max(
                 self.display.GetClientSize().width,
-                self.GetClientSize().width - self.select.GetSize().width - 16,
+                self.GetClientSize().width - self.chevron.GetSize().width - 44,
             )
             tooltip = _overflow_tooltip(
                 self.display, text, available_width=available,
             )
-            for control in (self, self.display, self.select):
+            for control in (self, self.display, self.chevron):
                 control.SetToolTip(tooltip)
         except RuntimeError:
             # Dynamic connector rows can be rebuilt before a queued size event.
             return
+
+
+class SymbolAssignmentCtrl(EntryCell):
+    """Table entry cell that opens the native loaded-library symbol picker."""
+    def __init__(self, parent, owner, title, require_two_pin, on_change):
+        super().__init__(parent, style=wx.BORDER_NONE | wx.WANTS_CHARS)
+        self.owner, self.title = owner, title
+        self.require_two_pin, self.on_change = require_two_pin, on_change
+        self.selection = {}
+        self.valid = False
+        self._build_entry()
+        for control in (self, self.slot, self.display, self.chevron):
+            control.Bind(wx.EVT_LEFT_DOWN, self._clicked)
+        self.Bind(wx.EVT_KEY_DOWN, self._key_down)
+        self.set_selection({})
+
+    def _clicked(self, event):
+        if self.IsEnabled():
+            self.SetFocus()
+            self.owner.guard(self.choose)(event)
+
+    def _key_down(self, event):
+        if event.GetKeyCode() in (wx.WXK_SPACE, wx.WXK_RETURN,
+                                  getattr(wx, 'WXK_NUMPAD_ENTER', wx.WXK_RETURN)):
+            self.owner.guard(self.choose)(event)
+            return
+        event.Skip()
 
     def choose(self, event):
         if self.owner.pcbnew is None or self.owner.controller.board_path is None:
@@ -1030,7 +1101,7 @@ class SymbolAssignmentCtrl(wx.Panel):
 
     def set_selection(self, selection, valid=None):
         self.selection = dict(selection or {})
-        self.display.SetLabel(self.selection.get('library_id', 'Choose a symbol'))
+        self.display.SetLabel(self.selection.get('library_id', self.placeholder()))
         self.valid = bool(self.selection.get('library_id')) if valid is None else bool(valid)
         self._style()
         self._refresh_overflow_tooltip()
@@ -1040,54 +1111,28 @@ class SymbolAssignmentCtrl(wx.Panel):
         self._style()
 
     def _style(self):
-        assigned = bool(self.selection.get('library_id')) and self.valid
-        palette = ui_palette()
-        self.SetBackgroundColour(palette.assigned if assigned else palette.warning)
-        self.SetForegroundColour(palette.text)
-        self.display.SetForegroundColour(palette.text)
-        self.Refresh()
+        if not self.selection.get('library_id'):
+            self.display.SetLabel(self.placeholder())
+        self._style_entry(bool(self.selection.get('library_id')) and self.valid)
 
 
-class FootprintAssignmentCtrl(wx.Panel):
-    """Filtered footprint assignment rendered as a one-click table cell."""
+class FootprintAssignmentCtrl(EntryCell):
+    """Filtered footprint assignment rendered as a one-click table entry cell."""
     def __init__(self, parent, on_change):
-        super().__init__(parent, style=wx.BORDER_SIMPLE | wx.WANTS_CHARS)
+        super().__init__(parent, style=wx.BORDER_NONE | wx.WANTS_CHARS)
         self.on_change, self.options = on_change, []
         self.selected = {}
         self.valid = False
-        row = wx.BoxSizer(wx.HORIZONTAL)
-        self.display = wx.StaticText(
-            self, label='Choose an allowed footprint', style=wx.ST_ELLIPSIZE_END,
-        )
-        row.Add(self.display, 1, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 7)
-        self.chevron = wx.StaticText(self, label='▾')
-        row.Add(self.chevron, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, 8)
-        self.SetSizer(row)
-        for control in (self, self.display, self.chevron):
+        self._build_entry()
+        for control in (self, self.slot, self.display, self.chevron):
             control.Bind(wx.EVT_LEFT_DOWN, self._clicked)
         self.Bind(wx.EVT_KEY_DOWN, self._key_down)
-        self.Bind(wx.EVT_SIZE, self._resized)
         self.set_options((), {})
 
-    def _resized(self, event):
-        event.Skip()
-        wx.CallAfter(self._refresh_overflow_tooltip)
-
-    def _refresh_overflow_tooltip(self):
-        try:
-            text = self.display.GetLabel()
-            available = max(
-                self.display.GetClientSize().width,
-                self.GetClientSize().width - self.chevron.GetSize().width - 24,
-            )
-            tooltip = _overflow_tooltip(
-                self.display, text, available_width=available,
-            )
-            for control in (self, self.display, self.chevron):
-                control.SetToolTip(tooltip)
-        except RuntimeError:
-            # Dynamic connector rows can be rebuilt before a queued size event.
-            return
+    def Enable(self, enable=True):
+        result = super().Enable(enable)
+        self.Refresh()
+        return result
 
     def set_options(self, options, selected, valid=None):
         self.options = [dict(option) for option in options]
@@ -1103,9 +1148,7 @@ class FootprintAssignmentCtrl(wx.Panel):
              if option.get('library_id') == selected_id),
             {},
         )
-        self.display.SetLabel(
-            self.selected.get('library_id', 'Choose an allowed footprint'),
-        )
+        self.display.SetLabel(self.selected.get('library_id', self.placeholder()))
         inferred_valid = bool(self.selected) and selected_id in allowed_ids
         self.valid = inferred_valid if valid is None else bool(valid and self.selected)
         self._style()
@@ -1171,15 +1214,9 @@ class FootprintAssignmentCtrl(wx.Panel):
         self.on_change(self.selection())
 
     def _style(self):
-        assigned = bool(self.selected) and self.valid
-        palette = ui_palette()
-        colour = palette.assigned if assigned else palette.warning
-        self.SetBackgroundColour(colour)
-        self.SetForegroundColour(palette.text)
-        for control in (self.display, self.chevron):
-            control.SetBackgroundColour(colour)
-            control.SetForegroundColour(palette.text)
-        self.Refresh()
+        if not self.selected:
+            self.display.SetLabel(self.placeholder())
+        self._style_entry(bool(self.selected) and self.valid)
 
 
 class WorkflowDialog(wx.Dialog):
@@ -1193,6 +1230,9 @@ class WorkflowDialog(wx.Dialog):
         self.current_anchor_gang = None
         self.current_dc_anchor = None
         self._loading_gang = False
+        self._pick = None
+        self._pick_timer = None
+        self._shown_in_editor = []
         self._refresh_hold = 0
         self._refresh_pending = False
         self._loading_placement = False
@@ -1295,6 +1335,9 @@ class WorkflowDialog(wx.Dialog):
         for page in self.pages:
             page.FitInside()
         self.refresh()
+        if self.controller.board_path:
+            self.refresh_transition_catalog()
+            self.status.last = 'Ready'
         self._saved_snapshot = self._settings_snapshot()
 
     DEFAULT_SIZE = (1280, 800)
@@ -1399,6 +1442,7 @@ class WorkflowDialog(wx.Dialog):
         self.about_box.Layout()
 
     def select_step(self, event):
+        self._disarm_pick()
         self.book.SetSelection(event.GetSelection())
         self.step_list.Refresh()
         self._refresh_guidance()
@@ -1619,10 +1663,11 @@ class WorkflowDialog(wx.Dialog):
     @staticmethod
     def _style_table_data_cell(control):
         palette = ui_palette()
+        # A readout that shares a row with entry cells is flat grey.
         if isinstance(control, TableTextCell):
-            control.set_colours(palette.window, palette.text)
+            control.set_colours(palette.panel, palette.text)
         else:
-            control.SetBackgroundColour(palette.window)
+            control.SetBackgroundColour(palette.panel)
             control.SetForegroundColour(palette.text)
 
     @staticmethod
@@ -2640,8 +2685,10 @@ class WorkflowDialog(wx.Dialog):
             'Use Select… inside a symbol cell to open the library picker; the footprint cell then offers '
             'only matching choices. No placement or BOM overrides are entered here.',
         )
-        interposer_box = wx.StaticBox(panel, label='Interposer assignment')
-        interposer = wx.StaticBoxSizer(interposer_box, wx.VERTICAL)
+        self.assignment_notebook = wx.Notebook(panel)
+        interposer_box = wx.Panel(self.assignment_notebook)
+        interposer = wx.BoxSizer(wx.VERTICAL)
+        interposer_box.SetSizer(interposer)
         (self.interposer_assignment_surface,
          self.interposer_assignment_table,
          self.interposer_assignment_grid) = self._assignment_table(interposer_box, 5)
@@ -2688,12 +2735,14 @@ class WorkflowDialog(wx.Dialog):
         interposer.Add(self.interposer_assignment_surface, 0, wx.ALL, 8)
         self.interposer_assignment_status = self.status_label(interposer_box, '0 of 0 interposers assigned')
         interposer.Add(self.interposer_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        panel.GetSizer().Add(interposer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.interposer_assignment_status.Hide()
+        self.assignment_notebook.AddPage(interposer_box, 'Interposer')
 
-        gangs_box = wx.StaticBox(panel, label='RF connector gang assignments')
-        gangs = wx.StaticBoxSizer(gangs_box, wx.VERTICAL)
+        gangs_box = wx.Panel(self.assignment_notebook)
+        gangs = wx.BoxSizer(wx.VERTICAL)
+        gangs_box.SetSizer(gangs)
         self.assignment_filter = wx.SearchCtrl(gangs_box, style=wx.TE_PROCESS_ENTER)
-        self.assignment_filter.SetDescriptiveText('Filter gangs')
+        self.assignment_filter.SetDescriptiveText('Search')
         self.assignment_filter.SetMinSize((330, -1))
         self.assignment_filter.SetMaxSize((330, -1))
         self.assignment_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_connector_assignments(True))
@@ -2704,14 +2753,16 @@ class WorkflowDialog(wx.Dialog):
         gangs.Add(self.gang_assignment_rows, 0, wx.ALL, 8)
         self.gang_assignment_status = self.status_label(gangs_box, '0 of 0 gangs assigned')
         gangs.Add(self.gang_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        panel.GetSizer().Add(gangs, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.gang_assignment_status.Hide()
+        self.assignment_notebook.AddPage(gangs_box, 'RF gangs')
         self.gang_assignment_controls = {}
         self.gang_assignment_all_controls = {}
 
-        dc_box = wx.StaticBox(panel, label='DC connector assignments')
-        dc = wx.StaticBoxSizer(dc_box, wx.VERTICAL)
+        dc_box = wx.Panel(self.assignment_notebook)
+        dc = wx.BoxSizer(wx.VERTICAL)
+        dc_box.SetSizer(dc)
         self.dc_assignment_filter = wx.SearchCtrl(dc_box, style=wx.TE_PROCESS_ENTER)
-        self.dc_assignment_filter.SetDescriptiveText('Filter DC connectors')
+        self.dc_assignment_filter.SetDescriptiveText('Search')
         self.dc_assignment_filter.SetMinSize((330, -1))
         self.dc_assignment_filter.SetMaxSize((330, -1))
         self.dc_assignment_filter.Bind(
@@ -2724,7 +2775,9 @@ class WorkflowDialog(wx.Dialog):
         dc.Add(self.dc_assignment_rows, 0, wx.ALL, 8)
         self.dc_assignment_status = self.status_label(dc_box, '0 of 0 DC connectors assigned')
         dc.Add(self.dc_assignment_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        panel.GetSizer().Add(dc, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.dc_assignment_status.Hide()
+        self.assignment_notebook.AddPage(dc_box, 'DC connectors')
+        panel.GetSizer().Add(self.assignment_notebook, 1, wx.EXPAND | wx.ALL, 8)
         self.dc_assignment_controls = {}
         self.dc_assignment_all_controls = {}
 
@@ -3092,21 +3145,21 @@ class WorkflowDialog(wx.Dialog):
             state = {'names': (), 'symbol': {}, 'footprint': {}}
             self._bulk_assignments[kind] = state
         label = TableTextCell(
-            parent, label='All', bold=True, background=ui_palette().info,
+            parent, label='All', bold=True, background=ui_palette().heading,
         )
         quantity = TableTextCell(
-            parent, label='—', bold=True, background=ui_palette().info,
+            parent, label='—', bold=True, background=ui_palette().heading,
         )
         leading = [(label, 100), (quantity, 80 if kind == 'rf' else 85)]
         symbol_pins = None
         if kind == 'dc':
             symbol_pins = TableTextCell(
-                parent, label='—', bold=True, background=ui_palette().info,
+                parent, label='—', bold=True, background=ui_palette().heading,
             )
             leading.append((symbol_pins, 90))
         for control, width in leading:
             self._fix_table_cell_width(control, width, 38)
-            control.set_colours(ui_palette().info, ui_palette().text)
+            control.set_colours(ui_palette().heading, ui_palette().text)
         if kind == 'rf':
             symbol_control = SymbolAssignmentCtrl(
                 parent, self, 'Choose symbol for all RF gangs', True,
@@ -3123,6 +3176,8 @@ class WorkflowDialog(wx.Dialog):
             footprint_control = FootprintAssignmentCtrl(
                 parent, self.assign_all_dc_footprints,
             )
+        symbol_control.set_bulk()
+        footprint_control.set_bulk()
         symbol_spec = state.get('symbol', {})
         symbol_control.set_selection(symbol_spec)
         symbol = self._configured_symbol(symbol_spec, kind == 'rf')
@@ -3905,7 +3960,7 @@ class WorkflowDialog(wx.Dialog):
         )
         controls = wx.BoxSizer(wx.HORIZONTAL)
         self.transition_filter = wx.SearchCtrl(panel, style=wx.TE_PROCESS_ENTER)
-        self.transition_filter.SetDescriptiveText('Search requirements')
+        self.transition_filter.SetDescriptiveText('Search')
         self.transition_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_rf_transitions())
         controls.Add(self.transition_filter, 1, wx.RIGHT, 8)
         self.transition_status_filter = wx.Choice(
@@ -3914,11 +3969,16 @@ class WorkflowDialog(wx.Dialog):
         self.transition_status_filter.SetSelection(0)
         self.transition_status_filter.Bind(wx.EVT_CHOICE, lambda event: self.refresh_rf_transitions())
         controls.Add(self.transition_status_filter, 0, wx.RIGHT, 8)
-        controls.Add(self.button(panel, 'Refresh transition library', self.refresh_transition_catalog), 0, wx.RIGHT, 8)
-        self.open_transition_designer = wx.Button(panel, label='Open RF Transition Designer…')
-        self.open_transition_designer.Enable(False)
-        self.open_transition_designer.SetToolTip('Reserved for the separately installed RF Transition Designer.')
-        controls.Add(self.open_transition_designer, 0)
+        search_project = self.button(panel, 'Search Project', self.refresh_transition_catalog)
+        search_project.SetToolTip(
+            'Look again for RF transition files in the project folder.'
+        )
+        controls.Add(search_project, 0, wx.RIGHT, 12)
+        self.transition_found = wx.StaticText(
+            panel, label='Found 0 transitions in the project folder',
+        )
+        self.transition_found.SetForegroundColour(ui_palette().muted)
+        controls.Add(self.transition_found, 0, wx.ALIGN_CENTER_VERTICAL)
         panel.GetSizer().Add(controls, 0, wx.EXPAND | wx.ALL, 8)
 
         self.transition_summary = wx.StaticText(panel, label='0 unique requirements · 0 RF locations')
@@ -3942,13 +4002,14 @@ class WorkflowDialog(wx.Dialog):
         self.transition_choice = wx.Choice(detail_box)
         self.transition_choice.Bind(wx.EVT_CHOICE, self.assign_rf_transition)
         assignment.Add(self.transition_choice, 1, wx.RIGHT, 8)
-        assignment.Add(self.button(detail_box, 'Browse artifact…', self.browse_rf_transition), 0, wx.RIGHT, 8)
-        assignment.Add(self.button(detail_box, 'Clear assignment', self.clear_rf_transition), 0)
+        assignment.Add(self.button(detail_box, 'Browse…', self.browse_rf_transition), 0, wx.RIGHT, 8)
+        assignment.Add(self.button(detail_box, 'Clear', self.clear_rf_transition), 0)
         detail.Add(assignment, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         panel.GetSizer().Add(detail, 0, wx.EXPAND | wx.ALL, 8)
         self.transition_page_status = self.status_label(panel, '0 optional transitions assigned')
         self.transition_page_status.SetMinSize((360, -1))
         panel.GetSizer().Add(self.transition_page_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.transition_page_status.Hide()
         self.transition_catalog = {}
         self._transition_choice_paths = []
         self.current_transition_requirement = None
@@ -4075,6 +4136,10 @@ class WorkflowDialog(wx.Dialog):
             except (OSError, ValueError):
                 errors += 1
         self.transition_catalog = catalog
+        self.transition_found.SetLabel(
+            f'Found {len(catalog)} transition{"" if len(catalog) == 1 else "s"} '
+            'in the project folder'
+        )
         self.refresh_rf_transitions()
         self.status.SetLabel(
             f'Transition library refreshed: {len(catalog)} valid artifact'
@@ -4558,10 +4623,7 @@ class WorkflowDialog(wx.Dialog):
         panel.GetSizer().Add(self.microvia_summary, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         self.microvia_status = self.status_label(panel, 'Assign an interposer footprint first')
         panel.GetSizer().Add(self.microvia_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        self.note(
-            panel,
-            'Generated objects are plated native microvias with no IPC-4761 plugging, filling or capping. Final plane connectivity and fabrication validity are verified outside this workflow.',
-        )
+        self.microvia_status.Hide()
         self._microvia_choice_pairs = []
 
     def toggle_microvias(self, event):
@@ -4971,22 +5033,139 @@ class WorkflowDialog(wx.Dialog):
         self.hole_status.SetLabel(f'{reference} removed from the workflow.')
         self._style_status(self.hole_status, 'neutral')
 
+    OUTLINE_ROLES = (('outer', 'Outer boundary'), ('cutout', 'Centre cutout'))
+
     def build_outline(self, panel):
-        self.task_box(
-            panel, 'Board outline', 'Capture managed board contours',
-            'Select imported native lines or arcs in the PCB canvas. Capture the outer boundary and optional center cutout separately. Exact closure and ownership are checked before Apply; designer Edge.Cuts stay untouched.',
-        )
-        self.outline_enable = wx.CheckBox(panel, label='Explicitly enable managed board outline')
-        panel.GetSizer().Add(self.outline_enable, 0, wx.ALL, 8)
-        panel.GetSizer().Add(self.button(panel, 'Capture selected outer boundary', lambda e: self.capture_outline('outer')), 0, wx.ALL, 8)
-        panel.GetSizer().Add(self.button(panel, 'Capture selected center cutout', lambda e: self.capture_outline('cutout')), 0, wx.ALL, 8)
-        self.outline_status = self.note(panel, 'Managed outline disabled. No Edge.Cuts changes requested.')
+        body = wx.BoxSizer(wx.HORIZONTAL)
+        settings = wx.BoxSizer(wx.VERTICAL)
+        self.outline_enable = wx.CheckBox(panel, label='Create the board outline')
+        settings.Add(self.outline_enable, 0, wx.BOTTOM, 10)
+        self.outline_list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        for column, (heading, width) in enumerate(
+                (('Contour', 150), ('Lines and arcs', 120), ('Status', 110))):
+            self.outline_list.InsertColumn(column, heading, width=width)
+        for _role, label in self.OUTLINE_ROLES:
+            self.outline_list.InsertItem(self.outline_list.GetItemCount(), label)
+        self.outline_list.SetMinSize((384, 96))
+        self.outline_list.SetMaxSize((384, 96))
+        self.outline_list.Select(0)
+        settings.Add(self.outline_list, 0, wx.BOTTOM, 10)
+        actions = wx.BoxSizer(wx.HORIZONTAL)
+        actions.Add(self.button(panel, 'Pick in Editor', self.pick_outline), 0, wx.RIGHT, 8)
+        actions.Add(self.button(panel, 'Show in Editor', self.show_outline), 0, wx.RIGHT, 8)
+        actions.Add(self.button(panel, 'Clear', self.clear_outline), 0)
+        settings.Add(actions, 0)
+        self.outline_status = wx.StaticText(panel, label='')
+        self.outline_status.Hide()
+        body.Add(settings, 0, wx.ALL, 8)
+        preview = wx.BoxSizer(wx.VERTICAL)
+        preview.Add(wx.StaticText(panel, label='Preview'), 0, wx.BOTTOM, 6)
         self.outline_view = OutlinePreview(panel)
-        panel.GetSizer().Add(self.outline_view, 1, wx.EXPAND | wx.ALL, 8)
-        self.outline_preview = wx.TextCtrl(panel, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 95))
-        panel.GetSizer().Add(self.outline_preview, 0, wx.EXPAND | wx.ALL, 8)
-        panel.GetSizer().Add(self.button(panel, 'Validate / accept outline selection', self.accept_outline), 0, wx.ALL, 8)
+        preview.Add(self.outline_view, 1, wx.EXPAND)
+        body.Add(preview, 1, wx.EXPAND | wx.ALL, 8)
+        panel.GetSizer().Add(body, 1, wx.EXPAND)
         self.outline_enable.Bind(wx.EVT_CHECKBOX, self.guard(self.toggle_outline))
+
+    def _outline_role(self):
+        index = self.outline_list.GetFirstSelected()
+        return self.OUTLINE_ROLES[max(0, index)][0]
+
+    def refresh_outline(self):
+        """Show each contour's size and whether it closes."""
+        from .core.outline import validate_outline
+        outline = self.controller.config.get('outline', {})
+        contours = outline.get('source_preview', {})
+        for row, (role, _label) in enumerate(self.OUTLINE_ROLES):
+            count = len(outline.get(role + '_uuids', ()))
+            status = 'None'
+            if count:
+                try:
+                    if role == 'outer':
+                        validate_outline(contours.get('outer', []), [])
+                    else:
+                        validate_outline(contours.get('outer', []), [contours.get('cutout', [])])
+                    status = 'Closed'
+                except (TypeError, ValueError, KeyError):
+                    status = 'Problem'
+            self.outline_list.SetItem(row, 1, str(count))
+            self.outline_list.SetItem(row, 2, status)
+        self.outline_view.show(contours)
+
+    def pick_outline(self, event):
+        role = self._outline_role()
+        self._arm_pick('the ' + dict(self.OUTLINE_ROLES)[role].lower(),
+                       lambda: self.capture_outline(role))
+
+    def show_outline(self, event):
+        role = self._outline_role()
+        self._show_in_editor(self.controller.config.get('outline', {}).get(role + '_uuids', ()))
+
+    def clear_outline(self, event):
+        role = self._outline_role()
+        outline = self.controller.config['outline']
+        outline.pop(role + '_uuids', None)
+        outline.get('source_preview', {}).pop(role, None)
+        self.controller.changed()
+        self.refresh_outline()
+
+    # ---- PCB Editor interaction shared by Board outline and Mechanical placement ----
+
+    def _selection_ids(self):
+        return tuple(sorted(item.m_Uuid.AsString()
+                            for item in self.pcbnew.GetCurrentSelection()))
+
+    def _arm_pick(self, description, accept):
+        """Take the next selection made in the PCB Editor; there is no second click here."""
+        if not self.pcbnew or not hasattr(self.pcbnew, 'GetCurrentSelection'):
+            raise ValueError('Open this workflow from the KiCad PCB Editor')
+        self._disarm_pick()
+        self._pick = {'accept': accept, 'before': self._selection_ids()}
+        self._pick_timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self._poll_pick, self._pick_timer)
+        self._pick_timer.Start(200)
+        self.status.SetLabel(f'Waiting for {description} in the PCB Editor.')
+
+    def _poll_pick(self, event):
+        if self._closing or not self._pick:
+            return
+        current = self._selection_ids()
+        if not current:
+            # Deselecting first lets the same item be picked again.
+            self._pick['before'] = ()
+        elif current != self._pick['before']:
+            accept = self._pick['accept']
+            self._disarm_pick()
+            self.guard(lambda _event: accept())(None)
+
+    def _disarm_pick(self):
+        if self._pick_timer is not None:
+            self._pick_timer.Stop()
+            self._pick_timer = None
+        self._pick = None
+
+    def _show_in_editor(self, uuids):
+        """Highlight the given saved drawing items in the PCB Editor and move to the first."""
+        if not self.pcbnew or not hasattr(self.pcbnew, 'GetBoard'):
+            raise ValueError('Open this workflow from the KiCad PCB Editor')
+        wanted = set(uuids)
+        if not wanted:
+            raise ValueError('Nothing is set for this row yet')
+        for item in self._shown_in_editor:
+            try:
+                item.ClearBrightened()
+            except (RuntimeError, AttributeError):
+                pass
+        board = self.pcbnew.GetBoard()
+        found = [item for item in board.GetDrawings()
+                 if item.m_Uuid.AsString() in wanted]
+        if not found:
+            raise ValueError('These drawing items are no longer on the board')
+        for item in found:
+            item.SetBrightened()
+        self._shown_in_editor = found
+        if hasattr(self.pcbnew, 'FocusOnItem'):
+            self.pcbnew.FocusOnItem(found[0])
+        self.pcbnew.Refresh()
 
     def _show_outline_state(self):
         self.outline_status.SetLabel(
@@ -4994,6 +5173,7 @@ class WorkflowDialog(wx.Dialog):
             if self.outline_enable.GetValue()
             else 'Managed outline disabled. No Edge.Cuts changes requested.'
         )
+        self.refresh_outline()
 
     def toggle_outline(self, event):
         self.controller.config['outline']['enabled'] = self.outline_enable.GetValue()
@@ -5016,19 +5196,9 @@ class WorkflowDialog(wx.Dialog):
             segments.append(segment)
         contours = self.controller.config['outline'].setdefault('source_preview', {})
         contours[role] = segments
-        self.outline_view.show(contours)
         self.controller.changed()
-        self.outline_preview.ChangeValue(json.dumps(self.controller.config['outline'], indent=2))
-
-    def accept_outline(self, event):
-        self.toggle_outline(event)
-        if self.outline_enable.GetValue() and not self.controller.config['outline'].get('outer_uuids'):
-            raise ValueError('Select a complete outer boundary')
-        if self.outline_enable.GetValue():
-            from .core.outline import validate_outline
-            contours = self.controller.config['outline'].get('source_preview', {})
-            validate_outline(contours.get('outer', []), [contours['cutout']] if contours.get('cutout') else [])
-        self.outline_status.SetLabel('Contour topology validated. Saved source UUIDs and ownership are rechecked during comparison.')
+        self.refresh_outline()
+        self.status.SetLabel(json.dumps(self.controller.config['outline'], sort_keys=True))
 
     def build_review(self, panel):
         self.task_box(
@@ -5343,7 +5513,7 @@ class WorkflowDialog(wx.Dialog):
         self.outline_enable.SetValue(False)
         self.outline_status.SetLabel('Managed outline disabled. No Edge.Cuts changes requested.')
         self.outline_view.show({})
-        self.outline_preview.ChangeValue('')
+        self.refresh_outline()
         self.validation.DeleteAllItems()
         self.diff_list.DeleteAllItems()
         self.review_view.ChangeValue('')
@@ -5507,6 +5677,12 @@ class WorkflowDialog(wx.Dialog):
             if answer == wx.ID_YES:
                 self.controller.save()
         self._closing = True
+        self._disarm_pick()
+        for item in self._shown_in_editor:
+            try:
+                item.ClearBrightened()
+            except (RuntimeError, AttributeError):
+                pass
         self._cancel_spreadsheet_timer()
         self.controller.cancel()
         self.Destroy()

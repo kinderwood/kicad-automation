@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from plugins.connector_interposer_workflow import progress
 from plugins.connector_interposer_workflow.controller import (
     PAGES, SavedSettingsError, WorkflowController, open_controller, row_ranges,
 )
@@ -589,7 +590,8 @@ class NativeDialogTests(unittest.TestCase):
         self.assertIsInstance(dialog.interposer_footprint_assignment, FootprintAssignmentCtrl)
         self.assertIsInstance(dialog.hole_path, LibrarySelectionCtrl)
         self.assertIsInstance(dialog.gang_rows, self.wx.grid.Grid)
-        self.assertFalse(dialog.open_transition_designer.IsEnabled())
+        self.assertIsNone(self.wx.FindWindowByLabel('Open RF Transition Designer…', dialog))
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Search Project', dialog))
         self.assertFalse(dialog.microvia_enable.IsEnabled())
         self.assertEqual(dialog.microvia_status.GetLabel(), 'Assign an interposer footprint first')
         self.assertIsNotNone(self.wx.FindWindowByLabel('Board side', dialog.pages[7]))
@@ -1026,6 +1028,16 @@ class NativeDialogTests(unittest.TestCase):
                         for child in dialog.gang_assignment_table.GetChildren()),
                     4,
                 )
+                self.assertEqual(
+                    [dialog.assignment_notebook.GetPageText(index)
+                     for index in range(dialog.assignment_notebook.GetPageCount())],
+                    ['Interposer', 'RF gangs', 'DC connectors'],
+                )
+                dialog.select_page(PAGES.index('Connector assignments'))
+                dialog.assignment_notebook.SetSelection(1)
+                dialog.Show()
+                dialog.Layout()
+                self.app.Yield()
                 read_only_cells = [
                     child for child in dialog.gang_assignment_table.GetChildren()
                     if isinstance(child, TableTextCell) and child.GetLabel() == 'J101'
@@ -1221,10 +1233,12 @@ class NativeDialogTests(unittest.TestCase):
                 dialog.assign_gang_symbol('J101', symbol_spec, symbol)
                 self.assertEqual(dialog.gang_assignment_all_controls['symbol'].selection, {})
                 self.assertFalse(dialog.gang_assignment_all_controls['footprint'].IsEnabled())
-                self.assertEqual(
-                    dialog.gang_assignment_all_controls['symbol'].GetBackgroundColour().Get()[:3],
-                    ui_palette().warning.Get()[:3],
-                )
+                # The bulk row is a shortcut, never a missing entry.
+                bulk_symbol = dialog.gang_assignment_all_controls['symbol']
+                self.assertFalse(bulk_symbol.needs_attention)
+                self.assertEqual(bulk_symbol.display.GetLabel(), 'Set for all…')
+                self.assertEqual(bulk_symbol.GetBackgroundColour().Get()[:3],
+                                 ui_palette().window.Get()[:3])
 
                 dialog.assign_all_dc_symbols(symbol_spec, symbol)
                 dialog.assign_all_dc_footprints(option)
@@ -1305,10 +1319,11 @@ class NativeDialogTests(unittest.TestCase):
                 controls = dialog.dc_assignment_controls['J1']
                 self.assertEqual(controls['symbol_pins'].GetLabel(), '1')
                 self.assertFalse(controls['footprint'].IsEnabled())
-                self.assertEqual(
-                    controls['symbol'].GetBackgroundColour().Get()[:3],
-                    ui_palette().warning.Get()[:3],
-                )
+                # A symbol that cannot serve the used pins is drawn as missing:
+                # white surface, red outline and the red X.
+                self.assertTrue(controls['symbol'].needs_attention)
+                self.assertEqual(controls['symbol'].GetBackgroundColour().Get()[:3],
+                                 ui_palette().window.Get()[:3])
                 self.assertEqual(dialog.dc_assignment_status.GetLabel(),
                                  '0 of 1 DC connectors assigned')
 
@@ -1464,7 +1479,8 @@ class NativeDialogTests(unittest.TestCase):
             self.assertEqual(dialog.transition_list.GetItemText(0), 'Not assigned')
             self.assertEqual(dialog.transition_page_status.GetLabel(),
                              '0 assigned · 1 unassigned (optional)')
-            self.assertFalse(dialog.open_transition_designer.IsEnabled())
+            self.assertEqual(dialog.transition_found.GetLabel(),
+                             'Found 0 transitions in the project folder')
             artifact = write_transition(
                 Path(temporary.name) / 'test.gppo-rf.json', 'Approved:GPPO',
                 part.sha256, netclass='CLOCK',
@@ -1714,6 +1730,92 @@ class NativeDialogTests(unittest.TestCase):
             self.assertIsNotNone(controller.preview)
             dialog.recovered({'status': 'RECOVERED'})
             self.assertTrue(dialog.status.GetLabel().startswith('Recovery complete'))
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
+    def test_pick_in_editor_takes_the_next_selection_and_outline_reports_closure(self):
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+
+        class Identity:
+            def __init__(self, value): self.value = value
+            def AsString(self): return self.value
+
+        class Item:
+            def __init__(self, value):
+                self.m_Uuid = Identity(value)
+                self.brightened = False
+            def SetBrightened(self): self.brightened = True
+            def ClearBrightened(self): self.brightened = False
+
+        class Board:
+            def __init__(self, items): self.items = items
+            def GetDrawings(self): return list(self.items)
+
+        class Editor:
+            selection, focused, refreshed = [], [], 0
+            board = None
+            @classmethod
+            def GetCurrentSelection(cls): return list(cls.selection)
+            @classmethod
+            def GetBoard(cls): return cls.board
+            @classmethod
+            def FocusOnItem(cls, item): cls.focused.append(item)
+            @classmethod
+            def Refresh(cls): cls.refreshed += 1
+
+        first, second = Item('a'), Item('b')
+        Editor.board = Board([first, second])
+        Editor.selection = [first]
+        dialog = WorkflowDialog(pcbnew_module=Editor)
+        try:
+            picked = []
+            dialog._arm_pick('a circle', lambda: picked.append(dialog._selection_ids()))
+            self.assertIn('Waiting for a circle', dialog.status.GetLabel())
+            dialog._poll_pick(None)
+            self.assertEqual(picked, [], 'An unchanged selection is not a pick')
+            Editor.selection = [second]
+            dialog._poll_pick(None)
+            self.assertEqual(picked, [('b',)])
+            self.assertIsNone(dialog._pick)
+            dialog._poll_pick(None)
+            self.assertEqual(len(picked), 1, 'A pick is taken once')
+
+            # Deselecting first lets the same item be picked again.
+            dialog._arm_pick('a circle', lambda: picked.append(dialog._selection_ids()))
+            Editor.selection = []
+            dialog._poll_pick(None)
+            Editor.selection = [second]
+            dialog._poll_pick(None)
+            self.assertEqual(picked[-1], ('b',))
+
+            dialog._show_in_editor(['a'])
+            self.assertTrue(first.brightened)
+            self.assertEqual(Editor.focused, [first])
+            dialog._show_in_editor(['b'])
+            self.assertFalse(first.brightened)
+            self.assertTrue(second.brightened)
+
+            square = [
+                {'start': [0, 0], 'end': [10, 0]}, {'start': [10, 0], 'end': [10, 10]},
+                {'start': [10, 10], 'end': [0, 10]}, {'start': [0, 10], 'end': [0, 0]},
+            ]
+            outline = dialog.controller.config['outline']
+            outline.update(enabled=True, outer_uuids=['1', '2', '3', '4'],
+                           source_preview={'outer': square})
+            dialog.refresh_outline()
+            self.assertEqual(dialog.outline_list.GetItemText(0, 1), '4')
+            self.assertEqual(dialog.outline_list.GetItemText(0, 2), 'Closed')
+            self.assertEqual(dialog.outline_list.GetItemText(1, 2), 'None')
+            outline['source_preview'] = {'outer': square[:3]}
+            dialog.refresh_outline()
+            self.assertEqual(dialog.outline_list.GetItemText(0, 2), 'Problem')
+            self.assertEqual(progress.checklist(dialog.controller, 'Board outline')[0].count,
+                             'problem')
+            dialog.outline_list.Select(0)
+            dialog.clear_outline(None)
+            self.assertEqual(dialog.outline_list.GetItemText(0, 1), '0')
+            self.assertIsNone(self.wx.FindWindowByLabel('Validate / accept outline selection', dialog))
         finally:
             dialog.Destroy()
             self.app.Yield()

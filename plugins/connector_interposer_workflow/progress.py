@@ -208,8 +208,17 @@ def _board_outline(controller):
         else Line(OPTIONAL, 'Centre cutout', 'none')
     if not outline.get('enabled'):
         return (Line(CAUTION, 'Outer boundary', 'none'), cutout)
-    return (Line(DONE, 'Outer boundary', 'set') if outline.get('outer_uuids')
-            else Line(MISSING, 'Outer boundary', 'not set'), cutout)
+    if not outline.get('outer_uuids'):
+        return (Line(MISSING, 'Outer boundary', 'not set'), cutout)
+    contours = outline.get('source_preview')
+    if contours:
+        from .core.outline import validate_outline
+        try:
+            validate_outline(contours.get('outer', []),
+                             [contours['cutout']] if contours.get('cutout') else [])
+        except (TypeError, ValueError, KeyError):
+            return (Line(MISSING, 'Outer boundary', 'problem'), cutout)
+    return (Line(DONE, 'Outer boundary', 'set'), cutout)
 
 
 def _review_lines(controller):
