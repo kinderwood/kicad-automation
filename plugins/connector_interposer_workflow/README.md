@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.6.5**, testing release. The package targets KiCad 10.0.0 through
+Version **0.7.0**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -17,10 +17,21 @@ this complete package directory into KiCad's user scripting `plugins` directory.
 Restart PCB Editor or refresh plugins, then choose **Tools → External Plugins →
 Connector to Interposer Workflow**. Save the project before opening the modeless
 native wx dialog. The dialog follows the operating system light or dark appearance;
-its task panels, assignment states, statuses, tables and previews derive their
+its guidance box, assignment states, statuses, tables and previews derive their
 colors from wx system colors. Python core modules also run without KiCad or wx
-dependencies. The blue task panel remains pinned when a long step needs to
-scroll; only that step's controls, previews and results move beneath it.
+dependencies.
+
+The window opens at 1280 × 800. A toolbar across the top uses KiCad's own icons:
+previous and next step, save, delete and reset workflow settings, a mil / mm
+switch for read-only values, and a toggle for the message log. The step list on
+the left groups the twelve steps under Nets & Layers, Parts, Geometry and Finish
+and shows one status icon per step: a green check when the step is complete, a
+red X when something required is missing or wrong, a yellow exclamation mark
+when something needed for a final board is not yet set, and a grey dash when the
+step is the designer's choice. Under the list, the About box describes the open
+step and lists what it needs, one line per concern. The message log opens below
+the window without moving the step; it records every status line for copying.
+Closing the window with unsaved workflow settings asks whether to save them.
 
 ## Saved-state workflow
 
@@ -131,7 +142,16 @@ files changed after the transaction.
    controls without reverting assignments already made. The workflow instantiates these librarian-authored parts; it
    does not generate library symbols or footprints. Placement and BOM overrides
    are not entered on this page.
-6. **Define RF gangs:** select an RF gang from the searchable netlist-derived list.
+6. **RF transitions:** optionally assign one immutable published transition to each unique
+   `(netclass, mapped KiCad layer, connector footprint)` requirement. One row can
+   cover locations in several gangs. Unassigned requirements do not block Review
+   Changes or board generation. Once assigned, the workflow validates the exact footprint
+   revision and mount type, board side, ordered copper stack, allowed netclass,
+   signal layer and artifact hash before Review changes. **Refresh transition
+   library** discovers published `.gppo-rf.json` files beneath the project;
+   **Browse artifact…** can select a catalog artifact elsewhere. **Open RF
+   Transition Designer…** is a disabled placeholder in this release.
+7. **Define RF gangs:** select an RF gang from the searchable netlist-derived list.
    On **Pattern**, add or remove rows, set the number of positions and X offset
    for each row, then set position and row pitch. Every linear input has its own
    `mm`, `mil`, `inch` or `um` selector, defaulting to `mil`; a suffix such as
@@ -151,15 +171,6 @@ files changed after the transaction.
    departure, not on each keystroke. New gangs remain
    **Not defined** until edited; incomplete or population-mismatched entries are
    **Invalid**. Copying settings never changes gang anchors or selected library parts.
-7. **RF transitions:** optionally assign one immutable published transition to each unique
-   `(netclass, mapped KiCad layer, connector footprint)` requirement. One row can
-   cover locations in several gangs. Unassigned requirements do not block Review
-   Changes or board generation. Once assigned, the workflow validates the exact footprint
-   revision and mount type, board side, ordered copper stack, allowed netclass,
-   signal layer and artifact hash before Review changes. **Refresh transition
-   library** discovers published `.gppo-rf.json` files beneath the project;
-   **Browse artifact…** can select a catalog artifact elsewhere. **Open RF
-   Transition Designer…** is a disabled placeholder in this release.
 8. **Mechanical placement:** import the complete mechanical drawing through
    KiCad's native **File → Import → Graphics**, select its user layer, and
    save the board. Click **Inspect saved drawing** before selecting anchors.

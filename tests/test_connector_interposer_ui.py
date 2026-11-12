@@ -147,6 +147,71 @@ class ControllerTests(unittest.TestCase):
             self.assertFalse(settings_path.exists())
             self.assertNotEqual(fresh.config['project_id'], project_id)
 
+    def test_step_checklists_report_fixed_lines_and_the_most_pressing_status(self):
+        from plugins.connector_interposer_workflow import progress
+        from plugins.connector_interposer_workflow.core.model import Issue
+        controller = self.controller
+        self.assertEqual([step for _group, steps in progress.GROUPS for step in steps],
+                         list(PAGES))
+        self.assertEqual(set(progress.ABOUT), set(PAGES))
+
+        def lines(step):
+            return [(line.status, line.label, line.count)
+                    for line in progress.checklist(controller, step)]
+
+        self.assertEqual(lines('Netlist source'), [
+            ('done', 'File selected', ''), ('done', 'Columns assigned', '7 of 7'),
+            ('done', 'Nets parsed', '3')])
+        self.assertEqual(lines('Netclass type'), [('done', 'Classified', '2 of 2')])
+        controller.config['netclass_types'].pop('Control')
+        self.assertEqual(lines('Netclass type'), [('missing', 'Classified', '1 of 2')])
+        self.assertEqual(progress.step_status(controller, 'Netclass type'), 'missing')
+        controller.set_netclass_type('Control', 'RF')
+
+        controller.set_layers(('F.Cu', 'In1.Cu', 'B.Cu'))
+        self.assertEqual(lines('Layer assignment'), [('missing', 'Assigned', '0 of 1')])
+        controller.set_layer_mapping('L1', 'In1.Cu')
+        self.assertEqual(lines('Layer assignment'), [('done', 'Assigned', '1 of 1')])
+
+        self.assertEqual(lines('Connector assignments'), [
+            ('missing', 'Interposer', '0 of 1'), ('missing', 'RF gangs', '0 of 2'),
+            ('optional', 'DC connectors', '0')])
+        self.assertEqual(lines('Define RF gangs'), [('missing', 'Gangs defined', '0 of 2')])
+        controller.set_gang('J202', {'row_lengths': [1], 'defined': True})
+        self.assertEqual(lines('Define RF gangs'), [('missing', 'Gangs defined', '1 of 2')])
+        self.assertEqual(lines('Mechanical placement')[0], ('missing', 'Drawing read', ''))
+        self.assertEqual(lines('Mechanical placement')[-1], ('optional', 'Mounting holes', '0'))
+
+        # Required for a final board but not blocking: caution, not missing.
+        self.assertEqual(lines('Board outline'), [
+            ('caution', 'Outer boundary', 'none'), ('optional', 'Centre cutout', 'none')])
+        controller.config['outline'] = {'enabled': True}
+        self.assertEqual(lines('Board outline')[0], ('missing', 'Outer boundary', 'not set'))
+        controller.config['outline'] = {'enabled': True, 'outer_uuids': ['a']}
+        self.assertEqual(progress.step_status(controller, 'Board outline'), 'done')
+        self.assertEqual(lines('Interposer microvias'), [('optional', 'Microvias', 'off')])
+        self.assertEqual(progress.step_status(controller, 'Interposer microvias'), 'optional')
+        transitions = lines('RF transitions')
+        self.assertEqual([line[1] for line in transitions],
+                         ['Assigned', 'Not assigned', 'Blocked'])
+        self.assertEqual(transitions[0][0], 'caution')
+        self.assertEqual(transitions[2], ('done', 'Blocked', '0'))
+
+        self.assertEqual(lines('Review changes')[0], ('missing', 'Review up to date', ''))
+        self.assertEqual(lines('Apply / results'), [
+            ('missing', 'Review up to date', ''), ('optional', 'Applied', 'not yet')])
+        controller.preview = {'conflicts': [], 'changes': [], 'warnings': ['w']}
+        controller.issues = (Issue('mpn_missing', 'no MPN', severity='warning'),)
+        self.assertEqual(lines('Review changes'), [
+            ('done', 'Review up to date', ''), ('done', 'Blocking problems', '0'),
+            ('caution', 'Warnings', '2'), ('done', 'Conflicts', '0')])
+        self.assertEqual(lines('Apply / results'), [
+            ('done', 'Review up to date', ''), ('missing', 'Applied', 'not yet')])
+        controller.applied = True
+        self.assertEqual(progress.step_status(controller, 'Apply / results'), 'done')
+        controller.changed()
+        self.assertFalse(controller.applied)
+
     def test_layer_policy_survives_stackup_and_class_growth(self):
         self.controller.set_rule('RF', 'F.Cu', False)
         self.controller.set_layers(('F.Cu', 'In1.Cu', 'B.Cu'))
@@ -380,16 +445,18 @@ class NativeDialogTests(unittest.TestCase):
                 self.assertGreaterEqual(contrast(palette.text, background), 4.5)
             self.assertGreaterEqual(contrast(palette.panel_text, palette.heading), 4.5)
 
-            task_box, task_controls = dialog._task_box_controls[0]
-            self.assertEqual(task_box.GetBackgroundColour().Get()[:3], palette.info.Get()[:3])
-            self.assertEqual(task_controls[0].GetForegroundColour().Get()[:3],
+            about_box = dialog.about_box
+            self.assertEqual(about_box.GetBackgroundColour().Get()[:3], palette.info.Get()[:3])
+            self.assertEqual(dialog.about_title.GetForegroundColour().Get()[:3],
                              palette.text.Get()[:3])
+            for status in ('done', 'missing', 'caution'):
+                self.assertGreaterEqual(contrast(palette.status[status], palette.window), 3)
             self.assertEqual(dialog.columns_status.GetBackgroundColour().Get()[:3],
                              palette.warning.Get()[:3])
 
-            task_box.SetBackgroundColour(self.wx.Colour(1, 2, 3))
+            about_box.SetBackgroundColour(self.wx.Colour(1, 2, 3))
             dialog.apply_theme()
-            self.assertEqual(task_box.GetBackgroundColour().Get()[:3],
+            self.assertEqual(about_box.GetBackgroundColour().Get()[:3],
                              ui_palette().info.Get()[:3])
         finally:
             dialog.Destroy()
@@ -412,23 +479,34 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(PAGES[2], 'Layer assignment')
         self.assertEqual(PAGES[3], 'Routing permissions')
         self.assertEqual(PAGES[4], 'Connector assignments')
-        self.assertEqual(PAGES[5], 'Define RF gangs')
-        self.assertEqual(PAGES[6], 'RF transitions')
+        self.assertEqual(PAGES[5], 'RF transitions')
+        self.assertEqual(PAGES[6], 'Define RF gangs')
         self.assertEqual(PAGES[7], 'Mechanical placement')
         self.assertEqual(PAGES[8], 'Interposer microvias')
         self.assertEqual(PAGES[9], 'Board outline')
         self.assertEqual(PAGES[10], 'Review changes')
         self.assertEqual(PAGES[11], 'Apply / results')
+        from plugins.connector_interposer_workflow import progress
         for page_index, page_name in enumerate(PAGES):
-            self.assertIsNotNone(
-                self.wx.FindWindowByLabel(page_name, dialog.page_hosts[page_index]),
-            )
-            task_box = dialog._task_box_controls[page_index][0]
-            self.assertIs(task_box.GetParent(), dialog.page_hosts[page_index])
+            # Guidance lives in the About box; a step starts with its controls.
             self.assertIs(dialog.pages[page_index].GetParent(), dialog.page_hosts[page_index])
             host_sizer = dialog.page_hosts[page_index].GetSizer()
-            self.assertIs(host_sizer.GetItem(0).GetWindow(), task_box)
-            self.assertIs(host_sizer.GetItem(1).GetWindow(), dialog.pages[page_index])
+            self.assertIs(host_sizer.GetItem(0).GetWindow(), dialog.pages[page_index])
+            dialog.select_page(page_index)
+            self.assertEqual(dialog.about_title.GetLabel(), page_name)
+            self.assertEqual(dialog.about_text.GetLabel().replace('\n', ' '),
+                             progress.ABOUT[page_name])
+            self.assertEqual([line.label for line in dialog.checklist.lines],
+                             [line.label for line in progress.checklist(dialog.controller, page_name)])
+        dialog.select_page(0)
+        self.assertEqual(dialog.step_list.headings,
+                         {0: 'Nets & Layers', 4: 'Parts', 6: 'Geometry', 10: 'Finish'})
+        self.assertEqual(dialog.step_list.statuses[0], 'missing')
+        self.assertEqual(dialog.step_list.statuses[PAGES.index('Interposer microvias')],
+                         'optional')
+        self.assertIsNone(self.wx.FindWindowByLabel('Previous', dialog))
+        self.assertIsNone(self.wx.FindWindowByLabel('Close', dialog))
+        self.assertIsNone(self.wx.FindWindowByLabel('Status', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Apply layer assignments', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Apply routing permissions', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Saved permissions retained.', dialog))
@@ -438,13 +516,21 @@ class NativeDialogTests(unittest.TestCase):
         longest_step = max(PAGES, key=len)
         step_extent = self.wx.ClientDC(dialog.step_list).GetTextExtent(longest_step)[0]
         self.assertGreater(dialog.step_list.GetSize().width, step_extent)
-        self.assertLess(dialog.step_list.GetSize().height, dialog.GetClientSize().height // 2)
+        self.assertLess(dialog.step_list.GetSize().height, dialog.GetClientSize().height)
+        self.assertGreater(dialog.about_box.GetSize().height, 120)
         self.assertEqual(dialog.step_list.GetBackgroundColour().Get()[:3],
-                         ui_palette().panel.Get()[:3])
+                         ui_palette().window.Get()[:3])
         self.assertEqual(dialog.step_list.item_font(0).GetWeight(), self.wx.FONTWEIGHT_BOLD)
         self.assertEqual(dialog.step_list.item_font(1).GetWeight(), self.wx.FONTWEIGHT_NORMAL)
         self.assertTrue(dialog.step_list.GetWindowStyleFlag() & self.wx.BORDER_SIMPLE)
-        self.assertIsNotNone(self.wx.FindWindowByLabel('Save workflow settings', dialog))
+        for control in (dialog.previous_button, dialog.next_button, dialog.save_button,
+                        dialog.delete_settings_button, dialog.reset_settings_button,
+                        dialog.messages_button):
+            self.assertIs(control.GetParent(), dialog.toolbar)
+            self.assertTrue(control.GetToolTipText())
+            self.assertTrue(control.GetBitmap().IsOk())
+        from plugins.connector_interposer_workflow import icons
+        self.assertIsNotNone(icons.archive_path(), "KiCad's icon archive must be found")
         self.assertEqual(
             tuple(dialog.placement_notebook.GetPageText(index)
                   for index in range(dialog.placement_notebook.GetPageCount())),
@@ -455,28 +541,41 @@ class NativeDialogTests(unittest.TestCase):
         self.assertIsNone(self.wx.FindWindowByLabel('Accept anchor', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Accept DC placement', dialog))
         self.assertIsNotNone(self.wx.FindWindowByLabel('Use selected origin circle', dialog))
-        self.assertIsNotNone(self.wx.FindWindowByLabel('Delete workflow settings', dialog))
-        self.assertIsNotNone(self.wx.FindWindowByLabel('Reset workflow settings', dialog))
         self.assertIn('without applying board changes', dialog.save_button.GetToolTipText())
         self.assertEqual(dialog.layer_map.GetRowLabelSize(), 0)
         self.assertEqual(dialog.layer_map.GetColLabelValue(0), 'Netlist layer')
         self.assertEqual(dialog.layer_map.GetColLabelValue(1), 'KiCad layer')
-        task_heading = self.wx.FindWindowByLabel('Layer assignment', dialog.page_hosts[2])
-        self.assertGreater(task_heading.GetFont().GetPointSize(), dialog.GetFont().GetPointSize())
         dialog.Show()
         self.app.Yield()
         display_index = self.wx.Display.GetFromWindow(dialog)
         display_area = self.wx.Display(display_index).GetClientArea()
-        expected_minimum_width = min(980, max(760, int(display_area.width * .65)))
-        expected_minimum_height = min(640, max(560, int(display_area.height * .62)))
-        self.assertLessEqual(
-            dialog.GetSize().width,
-            max(expected_minimum_width, min(1340, int(display_area.width * .86))),
-        )
-        self.assertLessEqual(
-            dialog.GetSize().height,
-            max(expected_minimum_height, min(800, int(display_area.height * .84))),
-        )
+        self.assertEqual(dialog.GetSize().width, min(1280, int(display_area.width * .95)))
+        self.assertEqual(dialog.GetSize().height, min(800, int(display_area.height * .92)))
+
+        # The message log docks under the window; the step area does not move.
+        book_rect = dialog.book.GetScreenRect()
+        height = dialog.GetSize().height
+        self.assertFalse(dialog.messages.IsShown())
+        dialog.status.SetLabel('First message')
+        dialog.messages_button.SetValue(True)
+        dialog.toggle_messages()
+        self.app.Yield()
+        self.assertTrue(dialog.messages.IsShown())
+        self.assertEqual(dialog.GetSize().height, height + dialog.MESSAGES_HEIGHT + 10)
+        self.assertEqual(dialog.book.GetScreenRect(), book_rect)
+        self.assertIn('First message', dialog.messages.GetValue())
+        self.assertEqual(dialog.status.GetLabel(), 'First message')
+        dialog.messages_button.SetValue(False)
+        dialog.toggle_messages()
+        self.app.Yield()
+        self.assertEqual(dialog.GetSize().height, height)
+        self.assertEqual(dialog.book.GetScreenRect(), book_rect)
+
+        # Unsaved settings are detected for the close prompt.
+        self.assertEqual(dialog._settings_snapshot(), dialog._saved_snapshot)
+        dialog.controller.config['mechanical']['layer'] = 'Cmts.User'
+        self.assertNotEqual(dialog._settings_snapshot(), dialog._saved_snapshot)
+        dialog.controller.config['mechanical']['layer'] = 'Dwgs.User'
         self.assertLessEqual(dialog.pages[0].GetVirtualSize().width,
                              dialog.pages[0].GetClientSize().width)
         self.assertFalse(dialog.view_button.IsEnabled())
@@ -729,7 +828,7 @@ class NativeDialogTests(unittest.TestCase):
                 ) + dialog.mapper.GetNumberCols() + 2
                 self.assertEqual(dialog.mapper.GetSize().width, expected_width)
                 self.assertLess(dialog.mapper.GetSize().width,
-                                dialog.book.GetClientSize().width * .9)
+                                dialog.book.GetClientSize().width)
 
                 dialog.ignored.ChangeValue('2')
                 dialog._parse_spreadsheet('mapping')
@@ -1294,21 +1393,21 @@ class NativeDialogTests(unittest.TestCase):
                 'library_id': 'Approved:GPPO', 'part_sha256': part.sha256,
             })
             dialog.refresh_gangs()
-            dialog.select_page(5)
+            dialog.select_page(PAGES.index('Define RF gangs'))
             dialog.Show()
             self.app.Yield()
             dialog.gang_notebook.SetSelection(1)
             self.app.Yield()
-            self.assertEqual(dialog.book.GetSelection(), 5)
-            self.assertEqual(dialog.step_list.GetSelection(), 5)
+            self.assertEqual(dialog.book.GetSelection(), PAGES.index('Define RF gangs'))
+            self.assertEqual(dialog.step_list.GetSelection(), PAGES.index('Define RF gangs'))
             dialog.gang_notebook.SetSelection(0)
             self.app.Yield()
-            self.assertEqual(dialog.book.GetSelection(), 5)
-            self.assertEqual(dialog.step_list.GetSelection(), 5)
+            self.assertEqual(dialog.book.GetSelection(), PAGES.index('Define RF gangs'))
+            self.assertEqual(dialog.step_list.GetSelection(), PAGES.index('Define RF gangs'))
             self.assertEqual(dialog.current_gang, 'J101')
             self.assertEqual(dialog.gang_list.GetItemText(0, 2), 'Not defined')
-            self.assertIsNone(self.wx.FindWindowByLabel('Apply definition', dialog.pages[5]))
-            self.assertIsNone(self.wx.FindWindowByLabel('Revert', dialog.pages[5]))
+            self.assertIsNone(self.wx.FindWindowByLabel('Apply definition', dialog.pages[PAGES.index('Define RF gangs')]))
+            self.assertIsNone(self.wx.FindWindowByLabel('Revert', dialog.pages[PAGES.index('Define RF gangs')]))
             self.assertEqual(dialog.gang_editor_title.GetLabel(), 'J101 Gang definition')
             self.assertEqual(dialog.gang_rows.GetNumberCols(), 3)
             self.assertEqual(dialog.gang_rows.GetColLabelValue(2), 'X offset')
@@ -1385,12 +1484,12 @@ class NativeDialogTests(unittest.TestCase):
             dialog.controller.table = parse_sheet(Worksheet('Signals', tuple(rows)))
             dialog.controller.set_netclass_type('RF', 'RF')
             dialog.refresh_gangs()
-            dialog.select_page(5)
+            dialog.select_page(PAGES.index('Define RF gangs'))
             dialog.Show()
             self.app.Yield()
             self.assertLessEqual(
-                dialog.pages[5].GetVirtualSize().width,
-                dialog.pages[5].GetClientSize().width,
+                dialog.pages[PAGES.index('Define RF gangs')].GetVirtualSize().width,
+                dialog.pages[PAGES.index('Define RF gangs')].GetClientSize().width,
             )
 
             dialog.gang_pitch_x.text.SetFocus()
@@ -1487,7 +1586,7 @@ class NativeDialogTests(unittest.TestCase):
             dialog.controller.table = parse_sheet(Worksheet('Signals', tuple(rows)))
             dialog.controller.set_netclass_type('RF', 'RF')
             dialog.refresh_gangs()
-            dialog.select_page(5)
+            dialog.select_page(PAGES.index('Define RF gangs'))
             dialog.Show()
             self.app.Yield()
 
@@ -1653,8 +1752,15 @@ class NativeDialogTests(unittest.TestCase):
                 'pose': [25.4, 2.54, 0], 'pose_units': ['inch', 'mil'],
             }]
             dialog.refresh_mounting_holes()
-            self.assertEqual(dialog.hole_list.GetItemText(0, 2), '1 inch')
+            # Readouts follow the toolbar unit, at full precision, in either unit.
+            self.assertEqual(dialog.hole_list.GetItemText(0, 2), '1000 mil')
             self.assertEqual(dialog.hole_list.GetItemText(0, 3), '100 mil')
+            dialog.set_readout_unit('mm')
+            self.assertEqual(dialog.hole_list.GetItemText(0, 2), '25.4 mm')
+            self.assertEqual(dialog.hole_list.GetItemText(0, 3), '2.54 mm')
+            self.assertFalse(dialog.unit_buttons['mil'].GetValue())
+            self.assertTrue(dialog.unit_buttons['mm'].GetValue())
+            dialog.set_readout_unit('mil')
             self.assertEqual(dialog._coordinate_text([25.4, 2.54]), '1000 mil, 100 mil')
             failure = (
                 'J101-1: center deviation from its drawing circle is '

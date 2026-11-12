@@ -402,6 +402,16 @@ table no longer labels mil values as mm, a completed recovery reports recovery
 instead of an apply, and typing a recovery journal path no longer discards the
 current review.
 
+Version 0.7.0 replaces the dialog shell with the one specified in Figma: a
+toolbar with KiCad's own icons, a grouped step list with one status icon per
+step, and an About box holding each step's description and checklist. The
+per-step blue task panels, the status strip and the footer buttons are gone;
+status lines go to a message log that docks below the window. RF transitions
+now precedes Define RF gangs. Read-only placement values follow a mil / mm
+switch. Closing with unsaved workflow settings asks whether to save. The steps
+themselves still use their previous layouts and are being brought into line
+with the Spec one at a time.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal

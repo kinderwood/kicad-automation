@@ -1,27 +1,33 @@
 # Workflow boundaries
 
 The native modeless wx dialog follows Netlist source → Netclass type → Layer assignment →
-Routing permissions → Connector assignments → Define RF gangs → RF transitions → Mechanical placement → Interposer microvias → Board outline →
-Review changes → Apply / results. A
-read-only virtual grid displays the complete parsed workbook in a separate
-popup. Every page begins with a blue task-description panel whose title exactly
-matches its navigation entry and uses a larger title than the supporting text.
-The task panel is a fixed sibling above that page's scrolling viewport. When a
-step is taller than the available window, only its controls, previews,
-validation and results scroll; the task and purpose remain visible.
-Step titles use sentence case; established acronyms such as RF remain uppercase.
-The dialog header names the tool without repeating a separate purpose subtitle;
-the left step list sizes itself to the native font, stops after the last step,
-uses the dialog background inside one list border and bolds the active step.
-The bordered page area and compact status/footer regions establish the
-layout without a full-height navigation pane. The Layer assignment grid fits
-its rows instead of consuming the remaining window. No browser, webview,
-authoring wizard or generative recipe editor is part of this package's layout
-flow.
+Routing permissions → Connector assignments → RF transitions → Define RF gangs →
+Mechanical placement → Interposer microvias → Board outline → Review changes →
+Apply / results. A read-only virtual grid displays the complete parsed workbook
+in a separate popup. Step titles use sentence case; established acronyms such
+as RF remain uppercase.
 
-The dialog opens at a nominal 1340×800 desktop size, bounded by the active
-display, with a smaller resize minimum and per-page scrolling. A page must not
-force a larger initial window merely to consume unused space.
+The shell follows the Figma Spec. A toolbar holds every window-level action
+with KiCad's own icons, loaded from the running installation's
+`share/kicad/resources/images.tar.gz` with wx stock art as the fallback:
+previous / next step, save / delete / reset workflow settings, the mil / mm
+readout switch and the message-log toggle. There is no footer and no Close
+button. The custom-drawn step list groups the steps under Nets & Layers, Parts,
+Geometry and Finish; each step's status icon sits in a gutter outside the
+system selection highlight so it keeps its colour. The About box under the
+list carries the step's one-sentence description and its checklist.
+`progress.py` computes both from the controller without wx: every checklist
+line is always present and only its status and count change, and a step's icon
+is the most pressing of its lines. Steps begin directly with their controls;
+there is no per-step task panel. The message log is a read-only text panel
+docked below the body; showing it grows the window by its own height so the
+step area keeps its position and size. Every former status-strip message is
+appended there. No browser, webview, authoring wizard or generative recipe
+editor is part of this package's layout flow.
+
+The dialog opens at 1280 × 800, bounded by the active display. A step that needs
+more room scrolls inside its own area. Closing with settings that differ from
+the last save asks whether to save.
 
 Custom surfaces use semantic colors derived from wx system colors. Text and
 ordinary native controls inherit the platform appearance; task panels,

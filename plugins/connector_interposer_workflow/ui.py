@@ -2,9 +2,11 @@
 from contextlib import contextmanager
 import json
 import math
+import time
 from pathlib import Path
 import wx
 import wx.grid as grid
+from . import icons, progress
 from .controller import HEADERS, PAGES, WorkflowController, library_id
 from .core.library_catalog import KiCadLibraryCatalog
 from .core.units import DIMENSION_UNITS, dimension_text, parse_dimension
@@ -55,6 +57,13 @@ class UiPalette:
         self.error_text = wx.Colour(255, 185, 178) if self.dark else wx.Colour(155, 35, 35)
         self.alternate = self.window.ChangeLightness(105 if self.dark else 96)
         self.heading = self.frame
+        self.muted = _mix_colour(self.text, self.window.Get()[:3], .40)
+        self.status = {
+            progress.DONE: wx.Colour(123, 216, 138) if self.dark else wx.Colour(46, 125, 50),
+            progress.MISSING: wx.Colour(255, 138, 128) if self.dark else wx.Colour(198, 40, 40),
+            progress.CAUTION: wx.Colour(255, 192, 77) if self.dark else wx.Colour(199, 119, 0),
+            progress.OPTIONAL: self.muted,
+        }
 
 
 def ui_palette():
@@ -75,16 +84,49 @@ def _overflow_tooltip(control, text, padding=2, available_width=None):
     return text if clipped != text else ''
 
 
+def draw_status_icon(dc, status, x, y, palette=None):
+    """Draw the 14 px status glyph: check, X, exclamation mark or dash."""
+    palette = palette or ui_palette()
+    colour = palette.status.get(status, palette.muted)
+    dc.SetPen(wx.Pen(colour, 2))
+    dc.SetBrush(wx.Brush(colour))
+    if status == progress.DONE:
+        dc.DrawLines([(x + 2, y + 8), (x + 5, y + 11), (x + 12, y + 3)])
+    elif status == progress.MISSING:
+        dc.DrawLine(x + 3, y + 3, x + 11, y + 11)
+        dc.DrawLine(x + 11, y + 3, x + 3, y + 11)
+    elif status == progress.CAUTION:
+        dc.DrawLine(x + 7, y + 2, x + 7, y + 8)
+        dc.DrawCircle(x + 7, y + 12, 1)
+    else:
+        dc.DrawLine(x + 3, y + 7, x + 11, y + 7)
+
+
 class StepList(wx.VListBox):
-    """Compact native navigation with one border and a bold active step."""
-    def __init__(self, parent, choices):
+    """Grouped steps with one status icon each.
+
+    The icon sits in a gutter outside the selection highlight, so it keeps its
+    colour on the selected step. Group headings are drawn above the first step
+    of each group and are not selectable.
+    """
+    GUTTER = 28
+
+    def __init__(self, parent, choices, groups=()):
         super().__init__(parent, style=wx.BORDER_SIMPLE | wx.WANTS_CHARS)
         self.choices = tuple(choices)
+        self.headings = {self.choices.index(steps[0]): title for title, steps in groups}
+        self.statuses = [progress.OPTIONAL] * len(self.choices)
         self.SetItemCount(len(self.choices))
         self.apply_theme()
 
     def GetCount(self):
         return len(self.choices)
+
+    def set_statuses(self, statuses):
+        statuses = list(statuses)
+        if statuses != self.statuses:
+            self.statuses = statuses
+            self.Refresh()
 
     def item_font(self, index):
         font = wx.Font(self.GetFont())
@@ -93,39 +135,138 @@ class StepList(wx.VListBox):
         )
         return font
 
-    def OnMeasureItem(self, index):
+    def heading_font(self):
+        font = wx.Font(self.GetFont())
+        font.SetWeight(wx.FONTWEIGHT_BOLD)
+        return font
+
+    def row_height(self):
+        return wx.ClientDC(self).GetCharHeight() + 8
+
+    def heading_height(self):
+        return wx.ClientDC(self).GetCharHeight() + 12
+
+    def best_size(self):
         dc = wx.ClientDC(self)
-        dc.SetFont(self.item_font(index))
-        return dc.GetCharHeight() + 8
+        dc.SetFont(self.heading_font())
+        width = max(dc.GetTextExtent(text)[0] for text in self.choices) + self.GUTTER + 22
+        height = sum(self.OnMeasureItem(index) for index in range(len(self.choices))) + 6
+        return width, height
+
+    def OnMeasureItem(self, index):
+        return self.row_height() + (self.heading_height() if index in self.headings else 0)
 
     def OnDrawBackground(self, dc, rect, index):
-        dc.SetPen(wx.Pen(ui_palette().panel))
-        dc.SetBrush(wx.Brush(ui_palette().panel))
+        dc.SetPen(wx.Pen(ui_palette().window))
+        dc.SetBrush(wx.Brush(ui_palette().window))
         dc.DrawRectangle(rect)
 
     def OnDrawItem(self, dc, rect, index):
         palette = ui_palette()
+        top = rect.y
+        if index in self.headings:
+            dc.SetFont(self.heading_font())
+            dc.SetTextForeground(palette.text)
+            dc.DrawText(self.headings[index], rect.x + 8, top + 7)
+            top += self.heading_height()
+        height = self.row_height()
+        draw_status_icon(dc, self.statuses[index], rect.x + 8, top + (height - 14) // 2, palette)
+        selected = index == self.GetSelection()
+        if selected:
+            dc.SetPen(wx.Pen(palette.highlight))
+            dc.SetBrush(wx.Brush(palette.highlight))
+            dc.DrawRectangle(rect.x + self.GUTTER, top + 1,
+                             rect.width - self.GUTTER - 4, height - 2)
         dc.SetFont(self.item_font(index))
-        dc.SetTextForeground(palette.panel_text)
-        _width, height = dc.GetTextExtent(self.choices[index])
-        dc.DrawText(self.choices[index], rect.x + 8,
-                    rect.y + max(0, (rect.height - height) // 2))
+        dc.SetTextForeground(palette.highlight_text if selected else palette.text)
+        _width, text_height = dc.GetTextExtent(self.choices[index])
+        dc.DrawText(self.choices[index], rect.x + self.GUTTER + 6,
+                    top + max(0, (height - text_height) // 2))
 
     def apply_theme(self):
         palette = ui_palette()
-        self.SetBackgroundColour(palette.panel)
-        self.SetForegroundColour(palette.panel_text)
+        self.SetBackgroundColour(palette.window)
+        self.SetForegroundColour(palette.text)
         self.Refresh()
 
 
+class ChecklistView(wx.Panel):
+    """The About-this-step checklist: every concern always listed, in place."""
+
+    def __init__(self, parent, on_select=None):
+        super().__init__(parent)
+        self.lines = ()
+        self.on_select = on_select
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.Bind(wx.EVT_PAINT, self.paint)
+        self.Bind(wx.EVT_LEFT_UP, self.clicked)
+
+    def row_height(self):
+        return self.GetCharHeight() + 8
+
+    def set_lines(self, lines):
+        lines = tuple(lines)
+        if lines != self.lines:
+            self.lines = lines
+            self.SetMinSize((-1, self.row_height() * max(1, len(lines))))
+            self.Refresh()
+
+    def clicked(self, event):
+        index = event.GetY() // self.row_height()
+        if self.on_select and 0 <= index < len(self.lines):
+            self.on_select(index, self.lines[index])
+        event.Skip()
+
+    def paint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        palette = ui_palette()
+        dc.SetBackground(wx.Brush(palette.info))
+        dc.Clear()
+        dc.SetFont(self.GetFont())
+        width, height = self.GetClientSize().width, self.row_height()
+        for index, line in enumerate(self.lines):
+            top = index * height
+            draw_status_icon(dc, line.status, 0, top + (height - 14) // 2, palette)
+            _w, text_height = dc.GetTextExtent(line.label)
+            dc.SetTextForeground(palette.text)
+            dc.DrawText(line.label, 20, top + (height - text_height) // 2)
+            if line.count:
+                dc.SetTextForeground(palette.muted)
+                dc.DrawText(line.count, width - dc.GetTextExtent(line.count)[0],
+                            top + (height - text_height) // 2)
+
+
+class MessageLog:
+    """The dialog's message sink: every status line, kept for copying."""
+
+    def __init__(self, view):
+        self.view = view
+        self.last = ''
+
+    def SetLabel(self, text):
+        self.last = str(text)
+        self.view.AppendText(f'{time.strftime("%H:%M:%S")}  {self.last}\n')
+
+    def GetLabel(self):
+        return self.last
+
+
 class StatusLabel(wx.StaticText):
-    """Status text that is never clipped by its own minimum width."""
+    """Status text that is never silently clipped.
+
+    A free-standing label grows to fit its text. A label that fills a box of
+    fixed width keeps that width and offers the complete text on hover.
+    """
     MINIMUM_WIDTH = 190
+    fit = True
 
     def SetLabel(self, label):
         super().SetLabel(label)
         width = self.GetTextExtent(label).width + 12
-        self.SetMinSize((max(self.MINIMUM_WIDTH, width), -1))
+        if self.fit:
+            self.SetMinSize((max(self.MINIMUM_WIDTH, width), -1))
+        else:
+            self.SetToolTip(label if width > self.GetSize().width else '')
         parent = self.GetParent()
         if parent is not None:
             parent.Layout()
@@ -1041,38 +1182,40 @@ class WorkflowDialog(wx.Dialog):
             'rf': {'names': (), 'symbol': {}, 'footprint': {}},
             'dc': {'names': (), 'symbol': {}, 'footprint': {}},
         }
-        self._task_box_controls = []
         self._status_labels = []
         self._persistent_headings = []
+        self.readout_unit = 'mil'
         outer = wx.BoxSizer(wx.VERTICAL)
-
-        heading = wx.StaticText(self, label='Connector to Interposer Workflow')
-        heading_font = heading.GetFont()
-        heading_font.SetPointSize(heading_font.GetPointSize() + 6)
-        heading_font.SetWeight(wx.FONTWEIGHT_BOLD)
-        heading.SetFont(heading_font)
-        outer.Add(heading, 0, wx.ALL, 14)
+        outer.Add(self._build_toolbar(), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
 
         body = wx.BoxSizer(wx.HORIZONTAL)
         navigation = wx.Panel(self)
         navigation_sizer = wx.BoxSizer(wx.VERTICAL)
-        steps = wx.StaticText(navigation, label='Steps')
-        steps_font = steps.GetFont()
-        steps_font.SetPointSize(steps_font.GetPointSize() + 2)
-        steps_font.SetWeight(wx.FONTWEIGHT_BOLD)
-        steps.SetFont(steps_font)
-        navigation_sizer.Add(steps, 0, wx.BOTTOM, 6)
-        self.step_list = StepList(navigation, PAGES)
-        dc = wx.ClientDC(self.step_list)
-        step_width = max(dc.GetTextExtent(title)[0] for title in PAGES) + 28
-        step_height = sum(self.step_list.OnMeasureItem(index) for index in range(len(PAGES))) + 2
+        self.step_list = StepList(navigation, PAGES, progress.GROUPS)
+        step_width, step_height = self.step_list.best_size()
+        step_width = max(236, step_width)
         self.step_list.SetMinSize((step_width, step_height))
         self.step_list.SetMaxSize((step_width, step_height))
         self.step_list.SetSelection(0)
         self.step_list.Bind(wx.EVT_LISTBOX, self.select_step)
         navigation_sizer.Add(self.step_list, 0)
+        self.about_box = wx.Panel(navigation, style=wx.BORDER_SIMPLE)
+        about_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.about_title = wx.StaticText(self.about_box, label=PAGES[0])
+        about_font = self.about_title.GetFont()
+        about_font.SetWeight(wx.FONTWEIGHT_BOLD)
+        self.about_title.SetFont(about_font)
+        about_sizer.Add(self.about_title, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        self.about_text = wx.StaticText(self.about_box, label=progress.ABOUT[PAGES[0]])
+        about_sizer.Add(self.about_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        self.checklist = ChecklistView(self.about_box)
+        about_sizer.Add(self.checklist, 0, wx.EXPAND | wx.ALL, 10)
+        self.about_box.SetSizer(about_sizer)
+        self.about_box.SetMinSize((step_width, -1))
+        self.about_box.SetMaxSize((step_width, -1))
+        navigation_sizer.Add(self.about_box, 1, wx.EXPAND | wx.TOP, 10)
         navigation.SetSizer(navigation_sizer)
-        body.Add(navigation, 0, wx.TOP | wx.BOTTOM | wx.LEFT | wx.RIGHT, 10)
+        body.Add(navigation, 0, wx.EXPAND | wx.ALL, 10)
 
         self.book = wx.Simplebook(self, style=wx.BORDER_SIMPLE)
         self.page_hosts = []
@@ -1088,76 +1231,34 @@ class WorkflowDialog(wx.Dialog):
             self.book.AddPage(host, title)
             self.page_hosts.append(host)
             self.pages.append(panel)
-        self.build_spreadsheet(self.pages[0])
-        self.build_netclass_types(self.pages[1])
-        self.build_layer_assignment(self.pages[2])
-        self.build_routing_permissions(self.pages[3])
-        self.build_connector_assignments(self.pages[4])
-        self.build_gangs(self.pages[5])
-        self.build_rf_transitions(self.pages[6])
-        self.build_anchors(self.pages[7])
-        self.build_microvias(self.pages[8])
-        self.build_outline(self.pages[9])
-        self.build_review(self.pages[10])
-        self.build_results(self.pages[11])
+        self.build_spreadsheet(self.pages[PAGES.index('Netlist source')])
+        self.build_netclass_types(self.pages[PAGES.index('Netclass type')])
+        self.build_layer_assignment(self.pages[PAGES.index('Layer assignment')])
+        self.build_routing_permissions(self.pages[PAGES.index('Routing permissions')])
+        self.build_connector_assignments(self.pages[PAGES.index('Connector assignments')])
+        self.build_gangs(self.pages[PAGES.index('Define RF gangs')])
+        self.build_rf_transitions(self.pages[PAGES.index('RF transitions')])
+        self.build_anchors(self.pages[PAGES.index('Mechanical placement')])
+        self.build_microvias(self.pages[PAGES.index('Interposer microvias')])
+        self.build_outline(self.pages[PAGES.index('Board outline')])
+        self.build_review(self.pages[PAGES.index('Review changes')])
+        self.build_results(self.pages[PAGES.index('Apply / results')])
         self.book.Bind(wx.EVT_BOOKCTRL_PAGE_CHANGED, self.page_changed)
-        body.Add(self.book, 1, wx.EXPAND | wx.RIGHT | wx.BOTTOM, 10)
-        outer.Add(body, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
+        body.Add(self.book, 1, wx.EXPAND | wx.TOP | wx.RIGHT | wx.BOTTOM, 10)
+        outer.Add(body, 1, wx.EXPAND)
 
-        status_panel = wx.Panel(self, style=wx.BORDER_SIMPLE)
-        self.status_panel = status_panel
-        status_panel.SetBackgroundColour(ui_palette().panel)
-        status_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        status_heading = wx.StaticText(status_panel, label='Status')
-        status_font = status_heading.GetFont()
-        status_font.SetWeight(wx.FONTWEIGHT_BOLD)
-        status_heading.SetFont(status_font)
-        status_sizer.Add(status_heading, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
-        self.status = wx.StaticText(
-            status_panel,
-            label='Ready',
-        )
-        self.status.Wrap(860)
-        status_sizer.Add(self.status, 1, wx.ALIGN_CENTER_VERTICAL)
-        status_panel.SetSizer(status_sizer)
-        outer.Add(status_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
-
-        footer = wx.BoxSizer(wx.HORIZONTAL)
-        self.save_button = self.button(self, 'Save workflow settings', self.save)
-        self.save_button.SetToolTip(
-            'Save the current workflow settings and accepted source snapshot without applying board changes.'
-        )
-        footer.Add(self.save_button, 0, wx.RIGHT, 8)
-        self.delete_settings_button = self.button(
-            self, 'Delete workflow settings', self.delete_workflow_settings,
-        )
-        self.delete_settings_button.SetToolTip(
-            'Delete the saved project settings sidecar. Current settings remain open until this dialog closes.'
-        )
-        footer.Add(self.delete_settings_button, 0, wx.RIGHT, 8)
-        self.reset_settings_button = self.button(
-            self, 'Reset workflow settings', self.reset_workflow_settings,
-        )
-        self.reset_settings_button.SetToolTip(
-            'Clear the current workflow to its initial state. The saved settings sidecar is unchanged.'
-        )
-        footer.Add(self.reset_settings_button, 0, wx.RIGHT, 8)
-        footer.AddStretchSpacer()
-        footer.Add(self.button(self, 'Previous', lambda e: self.navigate(-1)), 0, wx.RIGHT, 8)
-        footer.Add(self.button(self, 'Next', lambda e: self.navigate(1)), 0, wx.RIGHT, 8)
-        footer.Add(self.button(self, 'Close', self.close), 0)
-        outer.Add(footer, 0, wx.EXPAND | wx.ALL, 10)
+        self.messages.SetMinSize((-1, self.MESSAGES_HEIGHT))
+        self.messages.Hide()
+        outer.Add(self.messages, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         self.SetSizer(outer)
         display_index = wx.Display.GetFromPoint(wx.GetMousePosition())
         if display_index == wx.NOT_FOUND:
             display_index = 0
         display_area = wx.Display(display_index).GetClientArea()
-        minimum_width = min(980, max(760, int(display_area.width * .65)))
-        minimum_height = min(640, max(560, int(display_area.height * .62)))
-        self.SetMinSize((minimum_width, minimum_height))
-        initial_width = max(minimum_width, min(1340, int(display_area.width * .86)))
-        initial_height = max(minimum_height, min(800, int(display_area.height * .84)))
-        self.SetSize((initial_width, initial_height))
+        width = min(self.DEFAULT_SIZE[0], int(display_area.width * .95))
+        height = min(self.DEFAULT_SIZE[1], int(display_area.height * .92))
+        self.SetMinSize((min(980, width), min(640, height)))
+        self.SetSize((width, height))
         self.CentreOnScreen()
         self.Bind(wx.EVT_CLOSE, self.close)
         self.Bind(wx.EVT_SYS_COLOUR_CHANGED, self.system_colours_changed)
@@ -1167,10 +1268,109 @@ class WorkflowDialog(wx.Dialog):
         for page in self.pages:
             page.FitInside()
         self.refresh()
+        self._saved_snapshot = self._settings_snapshot()
+
+    DEFAULT_SIZE = (1280, 800)
+    MESSAGES_HEIGHT = 170
+
+    def _build_toolbar(self):
+        """Window-level actions, with KiCad's own icons and tooltips."""
+        toolbar = wx.Panel(self)
+        self.toolbar = toolbar
+        sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.messages = wx.TextCtrl(
+            self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL,
+        )
+        self.status = MessageLog(self.messages)
+        self.status.last = 'Ready'
+        bitmaps = icons.load(('left', 'right', 'save', 'trash', 'undo', 'info'),
+                             dark=ui_palette().dark)
+
+        def tool(name, tip, handler):
+            control = wx.BitmapButton(toolbar, bitmap=bitmaps[name], style=wx.BORDER_NONE)
+            control.SetToolTip(tip)
+            control.Bind(wx.EVT_BUTTON, self.guard(handler))
+            sizer.Add(control, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 2)
+            return control
+
+        def separator():
+            line = wx.StaticLine(toolbar, style=wx.LI_VERTICAL, size=(-1, 24))
+            sizer.Add(line, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, 8)
+
+        self.previous_button = tool('left', 'Previous step', lambda event: self.navigate(-1))
+        self.next_button = tool('right', 'Next step', lambda event: self.navigate(1))
+        separator()
+        self.save_button = tool(
+            'save', 'Save workflow settings without applying board changes', self.save,
+        )
+        self.delete_settings_button = tool(
+            'trash', 'Delete the saved workflow settings', self.delete_workflow_settings,
+        )
+        self.reset_settings_button = tool(
+            'undo', 'Reset the current workflow settings', self.reset_workflow_settings,
+        )
+        separator()
+        self.unit_buttons = {}
+        for unit in ('mil', 'mm'):
+            control = wx.ToggleButton(toolbar, label=unit, style=wx.BU_EXACTFIT)
+            control.SetToolTip(f'Show read-only values in {unit}')
+            control.SetValue(unit == self.readout_unit)
+            control.Bind(wx.EVT_TOGGLEBUTTON,
+                         self.guard(lambda event, value=unit: self.set_readout_unit(value)))
+            sizer.Add(control, 0, wx.ALIGN_CENTER_VERTICAL)
+            self.unit_buttons[unit] = control
+        separator()
+        self.messages_button = wx.BitmapToggleButton(
+            toolbar, wx.ID_ANY, bitmaps['info'], style=wx.BORDER_NONE,
+        )
+        self.messages_button.SetToolTip('Show messages')
+        self.messages_button.Bind(wx.EVT_TOGGLEBUTTON, self.toggle_messages)
+        sizer.Add(self.messages_button, 0, wx.ALIGN_CENTER_VERTICAL)
+        toolbar.SetSizer(sizer)
+        return toolbar
+
+    def set_readout_unit(self, unit):
+        """Switch the unit of read-only values; entry fields keep their own."""
+        self.readout_unit = unit
+        for name, control in self.unit_buttons.items():
+            control.SetValue(name == unit)
+        self.refresh_anchor_gangs()
+        self.refresh_dc_anchors()
+        self.refresh_mounting_holes()
+
+    def toggle_messages(self, event=None):
+        """Dock the message log under the window; step content does not move."""
+        show = self.messages_button.GetValue()
+        if show == self.messages.IsShown():
+            return
+        self.messages.Show(show)
+        width, height = self.GetSize()
+        delta = self.MESSAGES_HEIGHT + 10
+        self.SetSize((width, height + delta if show else height - delta))
+        self.Layout()
+
+    def _settings_snapshot(self):
+        return json.dumps(self.controller.config, sort_keys=True, default=str)
+
+    def _refresh_guidance(self):
+        """Step icons at a glance; description and checklist for the open step."""
+        statuses, current = [], PAGES[self.book.GetSelection()]
+        for step in PAGES:
+            lines = progress.checklist(self.controller, step)
+            statuses.append(progress.overall(lines))
+            if step == current:
+                self.checklist.set_lines(lines)
+        self.step_list.set_statuses(statuses)
+        if self.about_title.GetLabel() != current:
+            self.about_title.SetLabel(current)
+            self.about_text.SetLabel(progress.ABOUT[current])
+        self.about_text.Wrap(max(120, self.about_box.GetClientSize().width - 22))
+        self.about_box.Layout()
 
     def select_step(self, event):
         self.book.SetSelection(event.GetSelection())
         self.step_list.Refresh()
+        self._refresh_guidance()
 
     def page_changed(self, event):
         # Book events are command events and nested notebooks can propagate their
@@ -1426,14 +1626,11 @@ class WorkflowDialog(wx.Dialog):
         """Reapply semantic colours after startup or an operating-system theme change."""
         palette = ui_palette()
         self.step_list.apply_theme()
-        self.status_panel.SetBackgroundColour(palette.panel)
-        self.status_panel.SetForegroundColour(palette.panel_text)
-        self.status.SetForegroundColour(palette.panel_text)
-        for box, controls in self._task_box_controls:
-            box.SetBackgroundColour(palette.info)
-            box.SetForegroundColour(palette.text)
-            for control in controls:
-                control.SetForegroundColour(palette.text)
+        self.about_box.SetBackgroundColour(palette.info)
+        for control in (self.about_title, self.about_text):
+            control.SetBackgroundColour(palette.info)
+            control.SetForegroundColour(palette.text)
+        self.checklist.Refresh()
         for control in self._persistent_headings:
             self._style_heading(control)
         self._style_table_data_cell(self.interposer_ref_display)
@@ -1477,39 +1674,14 @@ class WorkflowDialog(wx.Dialog):
         return label
 
     def task_box(self, parent, title, subtitle, description):
-        host = getattr(parent, '_workflow_page_host', parent)
-        box = wx.Panel(host, style=wx.BORDER_SIMPLE)
-        palette = ui_palette()
-        box.SetBackgroundColour(palette.info)
-        box.SetForegroundColour(palette.text)
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        heading = wx.StaticText(box, label=title)
-        font = heading.GetFont()
-        font.SetPointSize(font.GetPointSize() + 1)
-        font.SetWeight(wx.FONTWEIGHT_BOLD)
-        heading.SetFont(font)
-        heading.SetForegroundColour(palette.text)
-        sizer.Add(heading, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
-        task = wx.StaticText(box, label=subtitle)
-        task_font = task.GetFont()
-        task_font.SetWeight(wx.FONTWEIGHT_BOLD)
-        task.SetFont(task_font)
-        task.SetForegroundColour(palette.text)
-        sizer.Add(task, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
-        detail = wx.StaticText(box, label=description)
-        detail.SetForegroundColour(palette.text)
-        detail.Wrap(820)
-        sizer.Add(detail, 0, wx.ALL, 10)
-        box.SetSizer(sizer)
-        if host is parent:
-            parent.GetSizer().Add(box, 0, wx.EXPAND | wx.ALL, 8)
-        else:
-            host.GetSizer().Insert(0, box, 0, wx.EXPAND | wx.ALL, 8)
-        self._task_box_controls.append((box, (heading, task, detail)))
-        return box
+        """Step guidance is shown in the About-this-step box, not on the page."""
+        return None
 
-    def status_label(self, parent, label):
+    def status_label(self, parent, label, fit=True):
         control = StatusLabel(parent, label='', style=wx.BORDER_SIMPLE)
+        control.fit = fit
+        if not fit:
+            control.SetMinSize((StatusLabel.MINIMUM_WIDTH, -1))
         font = control.GetFont()
         font.SetWeight(wx.FONTWEIGHT_BOLD)
         control.SetFont(font)
@@ -2120,7 +2292,7 @@ class WorkflowDialog(wx.Dialog):
         self.netclass_type_status.SetLabel(f'{assigned} of {len(names)} assigned')
         complete = bool(names) and assigned == len(names)
         self._style_status(self.netclass_type_status, 'success' if complete else 'warning')
-        self.pages[1].FitInside()
+        self.pages[PAGES.index('Netclass type')].FitInside()
 
     def _style_netclass_type_cell(self, row):
         assigned = self.netclass_type_grid.GetCellValue(row, 3) in ('RF', 'DC')
@@ -2282,7 +2454,7 @@ class WorkflowDialog(wx.Dialog):
                 'success' if names and assigned == len(names) else 'warning',
             )
             self.layer_map.GetParent().Layout()
-            self.pages[2].FitInside()
+            self.pages[PAGES.index('Layer assignment')].FitInside()
 
             if self.rules.GetNumberRows(): self.rules.DeleteRows(0, self.rules.GetNumberRows())
             count = self.rules.GetNumberCols()
@@ -2310,7 +2482,7 @@ class WorkflowDialog(wx.Dialog):
             else:
                 self.new_rules.SetLabel('')
                 self.new_rules.Hide()
-            self.pages[3].Layout()
+            self.pages[PAGES.index('Routing permissions')].Layout()
         finally:
             self._updating_layers = False
         if hasattr(self, 'transition_list'):
@@ -3096,7 +3268,7 @@ class WorkflowDialog(wx.Dialog):
             }
         self.dc_assignment_table.Layout()
         self.dc_assignment_rows.Layout()
-        self.pages[4].FitInside()
+        self.pages[PAGES.index('Connector assignments')].FitInside()
         self._refresh_assignment_status()
 
     def _refresh_assignment_status(self):
@@ -3247,17 +3419,16 @@ class WorkflowDialog(wx.Dialog):
         placement.AddGrowableCol(1, 1)
         self.gang_notebook.AddPage(placement_page, 'Numbering')
         editor.Add(self.gang_notebook, 1, wx.EXPAND | wx.ALL, 8)
-        self.gang_definition_status = self.status_label(editor_box, 'Select a gang')
+        self.gang_definition_status = self.status_label(editor_box, 'Select a gang', fit=False)
         editor.Add(self.gang_definition_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        body.Add(editor, 1, wx.EXPAND | wx.RIGHT, 8)
+        body.Add(editor, 0, wx.EXPAND | wx.RIGHT, 8)
 
         preview_box = wx.StaticBox(panel, label='Gang preview')
-        preview_box.SetMinSize((330, -1))
-        preview_box.SetMaxSize((430, -1))
+        preview_box.SetMinSize((250, -1))
         preview = wx.StaticBoxSizer(preview_box, wx.VERTICAL)
         self.pattern_view = PatternPreview(preview_box)
         preview.Add(self.pattern_view, 1, wx.EXPAND | wx.ALL | wx.FIXED_MINSIZE, 8)
-        self.gang_preview_status = self.status_label(preview_box, 'Select a gang')
+        self.gang_preview_status = self.status_label(preview_box, 'Select a gang', fit=False)
         preview.Add(self.gang_preview_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         body.Add(preview, 1, wx.EXPAND)
         panel.GetSizer().Add(body, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -3297,7 +3468,7 @@ class WorkflowDialog(wx.Dialog):
         self.gang_rows.SetMinSize((-1, height))
         self.gang_rows.SetMaxSize((-1, height))
         if hasattr(self, 'pages') and len(self.pages) > 5:
-            self.pages[5].FitInside()
+            self.pages[PAGES.index('Define RF gangs')].FitInside()
 
     def gang_cell_clicked(self, event):
         """Activate the composite dimension editor on the first click."""
@@ -3598,7 +3769,7 @@ class WorkflowDialog(wx.Dialog):
         self.gang_list.SetMinSize((230, height))
         self.gang_list.SetMaxSize((250, height))
         self.gang_list.GetParent().Layout()
-        self.pages[5].FitInside()
+        self.pages[PAGES.index('Define RF gangs')].FitInside()
 
     def select_dashboard_gang(self, event):
         name = self.gang_list.GetItemText(event.GetIndex())
@@ -3953,8 +4124,7 @@ class WorkflowDialog(wx.Dialog):
         )
         drawing.Add(drawing_actions, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         self.drawing_status = self.status_label(
-            drawing_box, 'Choose the imported drawing layer, then inspect the saved board.'
-        )
+            drawing_box, 'Choose the imported drawing layer, then inspect the saved board.', fit=False)
         self._style_status(self.drawing_status, 'warning')
         drawing.Add(self.drawing_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         drawing_box.SetMaxSize((660, -1))
@@ -4003,8 +4173,7 @@ class WorkflowDialog(wx.Dialog):
             0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8,
         )
         self.interposer_pose_status = self.status_label(
-            interposer_box, 'Select the interposer origin circle.'
-        )
+            interposer_box, 'Select the interposer origin circle.', fit=False)
         self._style_status(self.interposer_pose_status, 'warning')
         interposer.Add(self.interposer_pose_status, 0,
                        wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -4038,7 +4207,7 @@ class WorkflowDialog(wx.Dialog):
                         self.capture_circle),
             0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8,
         )
-        self.anchor_status = self.status_label(rf_editor_box, 'Select an RF gang.')
+        self.anchor_status = self.status_label(rf_editor_box, 'Select an RF gang.', fit=False)
         rf_editor.Add(self.anchor_status, 0,
                       wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         rf_editor_box.SetMaxSize((430, -1))
@@ -4089,7 +4258,7 @@ class WorkflowDialog(wx.Dialog):
                         self.capture_dc_circle),
             0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8,
         )
-        self.dc_anchor_status = self.status_label(dc_editor_box, 'Select a DC connector.')
+        self.dc_anchor_status = self.status_label(dc_editor_box, 'Select a DC connector.', fit=False)
         dc_editor.Add(self.dc_anchor_status, 0,
                       wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         dc_editor_box.SetMaxSize((430, -1))
@@ -4125,8 +4294,7 @@ class WorkflowDialog(wx.Dialog):
         hole_actions.Add(self.button(hole_box, 'Add mounting hole', self.add_hole), 0)
         hole_editor.Add(hole_actions, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         self.hole_status = self.status_label(
-            hole_box, 'Choose a footprint and position for the new mounting hole.'
-        )
+            hole_box, 'Choose a footprint and position for the new mounting hole.', fit=False)
         hole_editor.Add(self.hole_status, 0,
                         wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         hole_box.SetMaxSize((430, -1))
@@ -4445,11 +4613,7 @@ class WorkflowDialog(wx.Dialog):
                 )
                 self.anchor_gang_list.SetItem(
                     index, 1, self._coordinate_text(
-                        settings.get('anchor'),
-                        (
-                            settings.get('display_units', {}).get('anchor_x', 'mil'),
-                            settings.get('display_units', {}).get('anchor_y', 'mil'),
-                        ),
+                        settings.get('anchor'), (self.readout_unit, self.readout_unit),
                     ),
                 )
                 self.anchor_gang_list.SetItem(
@@ -4538,7 +4702,9 @@ class WorkflowDialog(wx.Dialog):
                     self.dc_anchor_list.GetItemCount(), name,
                 )
                 self.dc_anchor_list.SetItem(
-                    index, 1, self._coordinate_text(selection.get('anchor')),
+                    index, 1, self._coordinate_text(
+                        selection.get('anchor'), (self.readout_unit, self.readout_unit),
+                    ),
                 )
                 self.dc_anchor_list.SetItem(
                     index, 2,
@@ -4742,7 +4908,7 @@ class WorkflowDialog(wx.Dialog):
         self.hole_list.DeleteAllItems()
         for hole in self.controller.config.get('mounting_holes', []):
             pose = hole.get('pose', [0, 0, 0])
-            units = hole.get('pose_units', ['mil', 'mil'])
+            units = (self.readout_unit, self.readout_unit)
             index = self.hole_list.InsertItem(
                 self.hole_list.GetItemCount(), str(hole.get('reference', '')),
             )
@@ -5004,6 +5170,7 @@ class WorkflowDialog(wx.Dialog):
                 self.status.SetLabel('Save cancelled. Existing workflow settings were not changed.')
                 return False
         self.controller.save()
+        self._saved_snapshot = self._settings_snapshot()
         self.status.SetLabel('Workflow settings saved. Board files were not changed.')
         return True
 
@@ -5022,6 +5189,7 @@ class WorkflowDialog(wx.Dialog):
             self.status.SetLabel('Delete cancelled. Saved workflow settings were not changed.')
             return False
         if self.controller.delete_saved_settings():
+            self._saved_snapshot = None
             self.status.SetLabel(
                 'Saved workflow settings deleted. Current settings remain open and unsaved.'
             )
@@ -5268,6 +5436,7 @@ class WorkflowDialog(wx.Dialog):
         self.reset_settings_button.Enable(not self.controller.busy and not self._applying)
         self.book.Enable(not self._applying)
         self.step_list.Enable(not self._applying)
+        self._refresh_guidance()
 
     def navigate(self, step):
         self.select_page(self.book.GetSelection() + step)
@@ -5277,12 +5446,25 @@ class WorkflowDialog(wx.Dialog):
         self.book.SetSelection(selection)
         self.step_list.SetSelection(selection)
         self.step_list.Refresh()
+        self._refresh_guidance()
 
     def close(self, event):
         if self.controller.busy:
             self.status.SetLabel('Wait for the current operation, or cancel analysis before closing.')
             if isinstance(event, wx.CloseEvent): event.Veto()
             return
+        if self._settings_snapshot() != self._saved_snapshot:
+            with wx.MessageDialog(
+                self, 'Save workflow settings before closing?', self.GetTitle(),
+                wx.YES_NO | wx.CANCEL | wx.YES_DEFAULT | wx.ICON_QUESTION,
+            ) as dialog:
+                dialog.SetYesNoCancelLabels('Save', "Don't Save", 'Cancel')
+                answer = dialog.ShowModal()
+            if answer == wx.ID_CANCEL:
+                if isinstance(event, wx.CloseEvent): event.Veto()
+                return
+            if answer == wx.ID_YES:
+                self.controller.save()
         self._closing = True
         self._cancel_spreadsheet_timer()
         self.controller.cancel()

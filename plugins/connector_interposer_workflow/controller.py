@@ -12,7 +12,7 @@ from .core.layers import LayerRules, validate_layers
 from .core.model import HEADERS, Issue
 
 PAGES = ("Netlist source", "Netclass type", "Layer assignment", "Routing permissions",
-         "Connector assignments", "Define RF gangs", "RF transitions", "Mechanical placement",
+         "Connector assignments", "RF transitions", "Define RF gangs", "Mechanical placement",
          "Interposer microvias", "Board outline", "Review changes", "Apply / results")
 
 
@@ -97,6 +97,7 @@ class WorkflowController:
         self.preview_token = None
         self.issues = ()
         self.busy = False
+        self.applied = False
         self.cancelled = threading.Event()
         self._generation = 0
         if self.config_path and self.config_path.exists():
@@ -111,6 +112,7 @@ class WorkflowController:
         self._generation += 1
         self.preview = self.preview_token = None
         self.issues = ()
+        self.applied = False
 
     def reset_current(self):
         """Return the current workflow to defaults without changing project identity or disk."""
@@ -919,6 +921,7 @@ class WorkflowController:
             raise
         self.preview = self.preview_token = None
         self.save()
+        self.applied = True
         return result
 
 
