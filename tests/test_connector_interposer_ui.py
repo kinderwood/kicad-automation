@@ -204,6 +204,91 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(placement.reassociate(controller, circles, 'r3'))
         self.assertTrue(placement.stale(controller, controller.gang('J202')['anchor_circle']))
 
+    def test_review_tables_put_problems_and_changes_in_plain_words(self):
+        from plugins.connector_interposer_workflow import review
+        from plugins.connector_interposer_workflow.core.model import Issue
+        self.assertEqual(review.step_of('layer_unmapped'), 'Layer assignment')
+        self.assertEqual(review.step_of('duplicate_signal'), 'Netlist source')
+        self.assertEqual(review.step_of('microvia_size_missing'), 'Interposer microvias')
+        self.assertEqual(review.step_of('something_new'), 'Review changes')
+        for step in {review.step_of(code) for code in review._STEPS}:
+            self.assertIn(step, PAGES)
+
+        preview = {
+            'warnings': [{'code': 'interposer_pad_circles_missing', 'message': 'E1: no circles'}],
+            'conflicts': [{'kind': 'unowned-file', 'key': 'a.kicad_sch',
+                           'message': 'Generated output collides'},
+                          {'kind': 'ownership', 'uuid': 'u1', 'message': 'Owned object was edited'}],
+            'changes': [
+                {'key': 'J101-1', 'kind': 'add'},
+                {'key': 'J1', 'kind': 'update', 'side': {'before': 'F', 'after': 'B'},
+                 'pose': {'before': [0, 0, 0], 'after': [2.54, 0, 90]},
+                 'assignments': [{'pad': '1', 'before': 'A', 'after': 'B'}]},
+                {'key': 'J9', 'kind': 'remove'},
+                {'key': 'interposer-microvias', 'kind': 'add'},
+                {'key': 'board-outline', 'kind': 'outline'},
+                {'key': 'a.kicad_sch', 'kind': 'project-file'},
+                {'key': 'b.kicad_sch', 'kind': 'project-file'},
+                {'key': 'old.kicad_sch', 'kind': 'remove-project-file'},
+            ],
+            'desired': {
+                'instances': {'J101-1': {'footprint': {'library_id': 'Pinned:GPPO',
+                                                       'source_library_id': 'Lib:GPPO'},
+                                         'side': 'F', 'pose': [25.4, 2.54, 90]}},
+                'outline': {'enabled': True, 'cutout_uuids': ['c']},
+                'interposer_microvias': {'size': {'diameter': .3, 'drill': .1}},
+            },
+            'registry': {
+                'instances': {'J9': {'spec': {'footprint': {'library_id': 'Lib:DSub'},
+                                              'side': 'B', 'pose': [0, 0, 0],
+                                              'anchor': {'pad': '1', 'at': [5, 6]}}}},
+                'generated_files': {'a.kicad_sch': 'x', 'old.kicad_sch': 'y'},
+            },
+        }
+        issues = [Issue('mpn_missing', 'J101: no part number', severity='warning'),
+                  Issue('required', 'Signal is required', source_row=7)]
+        rows = review.problems(issues, preview, 'The board is open elsewhere')
+        self.assertEqual([(row.level, row.step, row.message) for row in rows], [
+            ('Error', 'Netlist source', 'Row 7: Signal is required'),
+            ('Error', 'Review changes', 'The board is open elsewhere'),
+            ('Conflict', 'Review changes', 'a.kicad_sch: Generated output collides'),
+            ('Conflict', 'Review changes',
+             'A board item the workflow owns: Owned object was edited'),
+            ('Warning', 'Connector assignments', 'J101: no part number'),
+            ('Warning', 'Mechanical placement', 'E1: no circles'),
+        ])
+
+        groups = review.summary(preview, lambda value: f'{value:g} mm')
+        self.assertEqual([(label, len(changes)) for label, changes in groups], [
+            ('Part to add', 1), ('Part to change', 1), ('Part to remove', 1),
+            ('Interposer microvia set to update', 1), ('Board outline to update', 1),
+            ('Project files to write', 2), ('Project file to remove', 1)])
+        details = {label: [(c.item, c.before, c.after) for c in changes]
+                   for label, changes in groups}
+        self.assertEqual(details['Part to add'],
+                         [('J101-1', '—', 'Lib:GPPO, front, 90°, at 25.4 mm, 2.54 mm')])
+        self.assertEqual(details['Part to change'], [(
+            'J1', 'at 0 mm, 0 mm, 0°, front, 1 pad net',
+            'at 2.54 mm, 0 mm, 90°, back, 1 pad net reassigned')])
+        self.assertEqual(details['Part to remove'],
+                         [('J9', 'Lib:DSub, back, 0°, pin 1 at 5 mm, 6 mm', '—')])
+        self.assertEqual(details['Interposer microvia set to update'],
+                         [('Interposer microvias', 'none', '0.3 mm pad, 0.1 mm hole')])
+        self.assertEqual(details['Board outline to update'],
+                         [('Board outline', 'none', 'managed outline with centre cutout')])
+        self.assertEqual(details['Project files to write'], [
+            ('a.kicad_sch', 'written by an earlier Apply', 'written'),
+            ('b.kicad_sch', '—', 'written')])
+        self.assertEqual(details['Project file to remove'],
+                         [('old.kicad_sch', 'written by an earlier Apply', 'removed')])
+        self.assertEqual(
+            review.headline(groups),
+            '1 part to add, 1 part to change, 1 part to remove, '
+            '1 interposer microvia set to update, 1 board outline to update, '
+            '2 project files to write, 1 project file to remove')
+        self.assertEqual(review.summary(None), [])
+        self.assertEqual(review.headline([]), 'nothing to change')
+
     def test_step_checklists_report_fixed_lines_and_the_most_pressing_status(self):
         from plugins.connector_interposer_workflow import progress
         from plugins.connector_interposer_workflow.core.model import Issue
@@ -439,7 +524,7 @@ class ControllerTests(unittest.TestCase):
         self.controller.preview = {'reviewed': True}
         self.controller.preview_token = self.controller.token()
         artifact.write_text('{"revision":"B"}')
-        with self.assertRaisesRegex(ValueError, 'stale'): self.controller.apply()
+        with self.assertRaisesRegex(ValueError, 'out of date'): self.controller.apply()
         self.assertIsNone(self.controller.preview)
 
     def test_every_persisted_workflow_change_invalidates_preview_token(self):
@@ -468,7 +553,7 @@ class ControllerTests(unittest.TestCase):
         proceed.set()
         self.assertTrue(finished.wait(3))
         self.assertEqual(results, [])
-        self.assertIn('cancelled', errors[0])
+        self.assertIn('Settings changed while this ran', errors[0])
 
 
 class NativeDialogTests(unittest.TestCase):
@@ -1808,8 +1893,10 @@ class NativeDialogTests(unittest.TestCase):
             dialog.journal.SetValue('/tmp/journal.json')
             self.app.Yield()
             self.assertIsNotNone(controller.preview)
-            dialog.recovered({'status': 'RECOVERED'})
-            self.assertTrue(dialog.status.GetLabel().startswith('Recovery complete'))
+            with mock.patch.object(self.wx, 'MessageBox') as message:
+                dialog.recovered({'status': 'RECOVERED'})
+                message.assert_called_once()
+            self.assertTrue(dialog.status.GetLabel().startswith('Recovery finished'))
         finally:
             dialog.Destroy()
             self.app.Yield()
@@ -2062,6 +2149,179 @@ class NativeDialogTests(unittest.TestCase):
             dialog.Destroy()
             self.app.Yield()
 
+    def test_review_asks_before_saving_and_apply_confirms_then_shows_named_stages(self):
+        from plugins.connector_interposer_workflow.core.model import Issue
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+
+        saved, asked, answers = [], [], []
+
+        class Editor:
+            @staticmethod
+            def GetBoard(): return object()
+            @staticmethod
+            def SaveBoard(path, board, flag): return saved.append(path) is None
+            @staticmethod
+            def Refresh(): pass
+
+        dialog = WorkflowDialog(pcbnew_module=Editor)
+
+        def settle():
+            deadline = time.time() + 10
+            while dialog.controller.busy and time.time() < deadline:
+                time.sleep(.01)
+            self.app.Yield()
+
+        def rows(view):
+            return [tuple(view.GetItemText(row, column)
+                          for column in range(view.GetColumnCount()))
+                    for row in range(view.GetItemCount())]
+
+        def stages():
+            return [(line.status, line.count) for line in dialog.stage_view.lines]
+
+        try:
+            controller = dialog.controller
+            preview = {
+                'status': 'READY', 'conflicts': [], 'warnings': [],
+                'changes': [{'key': 'J101-1', 'kind': 'add'}, {'key': 'J101-2', 'kind': 'add'},
+                            {'key': 'J1', 'kind': 'update',
+                             'side': {'before': 'F', 'after': 'B'}},
+                            {'key': 'a.kicad_sch', 'kind': 'project-file'}],
+                'desired': {'instances': {
+                    key: {'footprint': {'library_id': 'Lib:GPPO'}, 'side': 'F',
+                          'pose': [25.4, 2.54, 90]} for key in ('J101-1', 'J101-2')}},
+                'registry': {},
+            }
+            blocking = Issue('part_missing', 'J102: select an approved connector footprint')
+            warning = Issue('mpn_missing', 'J101: no manufacturer part number',
+                            severity='warning')
+            found = [[blocking, warning]]
+
+            def validate():
+                controller.issues = list(found[0])
+                return controller.issues
+
+            def review():
+                controller.preview = preview
+                return preview
+
+            controller.validate, controller.review = validate, review
+            dialog.save = lambda event: True
+            dialog._ask = lambda message, yes, title=None: (
+                asked.append(yes) or answers.pop(0))
+            dialog.select_page(PAGES.index('Review changes'))
+            self.assertEqual(dialog.review_button.GetLabel(), 'Review Changes')
+            self.assertEqual(dialog.review_status.GetLabel(), 'Not reviewed yet.')
+            self.assertFalse(dialog.apply_button.IsEnabled())
+            self.assertIsNone(self.wx.FindWindowByLabel(
+                'I reviewed these live-project changes', dialog))
+            self.assertIsNone(self.wx.FindWindowByLabel('Cancel analysis', dialog))
+
+            # Saving the PCB is the drafter's decision.
+            answers.append(False)
+            dialog.review_changes(None)
+            self.assertEqual((asked, saved), (['Save and Review'], []))
+            self.assertEqual(dialog.problem_list.GetItemCount(), 0)
+
+            # Blocking problems stop the review and name the step that fixes them.
+            answers.append(True)
+            with self.assertRaisesRegex(ValueError, '1 problem blocks the review'):
+                dialog.review_changes(None)
+            self.assertEqual(len(saved), 1)
+            dialog.refresh()
+            self.assertEqual(dialog.review_status.GetLabel(),
+                             'Blocked. Fix the problems below, then review again.')
+            self.assertEqual(rows(dialog.problem_list)[0][:3], (
+                'Error', 'Connector assignments',
+                'J102: select an approved connector footprint'))
+            self.assertEqual(rows(dialog.problem_list)[1][0], 'Warning')
+            self.assertFalse(dialog.goto_step_button.IsEnabled())
+            dialog.problem_list.Select(0)
+            self.app.Yield()
+            self.assertTrue(dialog.goto_step_button.IsEnabled())
+            dialog.goto_problem_step(None)
+            self.assertEqual(PAGES[dialog.book.GetSelection()], 'Connector assignments')
+
+            # A clean review lists what Apply will do, in future tense.
+            found[0] = [warning]
+            answers.append(True)
+            dialog.review_changes(None)
+            self.assertEqual(dialog.review_status.GetLabel(),
+                             'Reading the saved board and libraries…')
+            settle()
+            self.assertEqual(dialog.review_status.GetLabel(),
+                             'Review is up to date with your settings.')
+            self.assertEqual(rows(dialog.change_summary), [
+                ('Parts to add', '2'), ('Part to change', '1'),
+                ('Project file to write', '1')])
+            self.assertEqual(dialog.change_detail_title.GetLabel(), 'Parts to add — 2 items')
+            self.assertEqual(rows(dialog.change_detail)[0], (
+                'J101-1', '—', 'Lib:GPPO, front, 90°, at 1000 mil, 100 mil'))
+            dialog.change_summary.Select(1)
+            self.app.Yield()
+            self.assertEqual(dialog.change_detail_title.GetLabel(), 'Part to change — 1 item')
+            self.assertEqual(rows(dialog.change_detail), [('J1', 'front', 'back')])
+            self.assertEqual(dialog.apply_lead.GetLabel(), 'Ready to apply:')
+            self.assertEqual(dialog.apply_headline.GetLabel(),
+                             '2 parts to add, 1 part to change, 1 project file to write')
+            self.assertTrue(dialog.apply_button.IsEnabled())
+            self.assertEqual(stages(), [('optional', '')] * 5)
+
+            # Apply asks once, then shows each named stage as it runs.
+            answers.append(False)
+            dialog.apply(None)
+            self.assertEqual(asked[-1], 'Apply')
+            self.assertFalse(dialog._applying)
+            seen = []
+
+            def publish(prepared, pcbnew_module, progress=None):
+                seen.append(stages())
+                progress()
+                seen.append(stages())
+                controller.preview = None
+                controller.applied = True
+                return {'status': 'APPLIED', 'board_path': '/project/board.kicad_pcb',
+                        'report_path': '/project/report.json',
+                        'journal': '/project/journal.json', 'registry': {}}
+
+            controller.apply = lambda: {'status': 'PREPARED'}
+            controller.publish = publish
+            answers.append(True)
+            dialog.apply(None)
+            self.assertEqual(stages()[0], ('caution', 'running'))
+            settle()
+            self.assertEqual(seen[0][:4], [('done', ''), ('done', ''),
+                                           ('caution', 'running'), ('optional', '')])
+            self.assertEqual(seen[1][2:4], [('done', ''), ('caution', 'running')])
+            self.assertEqual(stages(), [('done', '')] * 5)
+            self.assertEqual(dialog.apply_gauge.GetValue(), 5)
+            self.assertEqual(dialog.result_fields['board'].GetLabel(),
+                             '/project/board.kicad_pcb (updated and saved)')
+            self.assertEqual(dialog.result_fields['report'].GetLabel(), '/project/report.json')
+            self.assertEqual(dialog.journal.GetValue(), '/project/journal.json')
+            self.assertEqual(PAGES[dialog.book.GetSelection()], 'Apply / results')
+            self.assertTrue(dialog.status.GetLabel().startswith('Apply finished'))
+            self.assertIn('"status": "APPLIED"', dialog.messages.GetValue())
+
+            # A failure stops at its stage and is reported in a pop-up.
+            controller.preview = preview
+
+            def refuse():
+                raise RuntimeError('The schematic is open')
+
+            controller.apply = refuse
+            answers.append(True)
+            with mock.patch.object(self.wx, 'MessageBox') as message:
+                dialog.apply(None)
+                settle()
+                self.assertEqual(message.call_args[0][:2],
+                                 ('The schematic is open', 'Apply stopped'))
+            self.assertEqual(stages()[0], ('missing', 'stopped'))
+            self.assertFalse(dialog._applying)
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
     def test_dimension_inputs_normalize_suffixes_and_store_connector_placement_in_mm(self):
         from plugins.connector_interposer_workflow.core.model import HEADERS
         from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
@@ -2120,10 +2380,14 @@ class NativeDialogTests(unittest.TestCase):
                 'J101-1: center deviation from its drawing circle is '
                 '0.01 mm (0.393701 mil); limit is 0.00762 mm (0.3 mil)'
             )
-            dialog.failed(ValueError(failure))
-            row = dialog.validation.GetItemCount() - 1
-            self.assertEqual(dialog.validation.GetItemText(row, 2), 'COMPARE_FAILED')
-            self.assertEqual(dialog.validation.GetItemText(row, 3), failure)
+            # A failed review is a pop-up and a row under Problems, in plain words.
+            with mock.patch.object(self.wx, 'MessageBox') as message:
+                dialog.failed(ValueError(failure))
+                self.assertEqual(message.call_args[0][:2], (failure, 'Review stopped'))
+            row = dialog.problem_list.GetItemCount() - 1
+            self.assertEqual(
+                [dialog.problem_list.GetItemText(row, column) for column in range(3)],
+                ['Error', 'Review changes', failure])
         finally:
             dialog.Destroy()
             self.app.Yield()

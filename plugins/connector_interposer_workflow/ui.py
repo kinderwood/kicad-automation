@@ -193,10 +193,11 @@ class StepList(wx.VListBox):
 class ChecklistView(wx.Panel):
     """The About-this-step checklist: every concern always listed, in place."""
 
-    def __init__(self, parent, on_select=None):
+    def __init__(self, parent, on_select=None, background='info'):
         super().__init__(parent)
         self.lines = ()
         self.on_select = on_select
+        self.background = background
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.Bind(wx.EVT_PAINT, self.paint)
         self.Bind(wx.EVT_LEFT_UP, self.clicked)
@@ -208,7 +209,8 @@ class ChecklistView(wx.Panel):
         lines = tuple(lines)
         if lines != self.lines:
             self.lines = lines
-            self.SetMinSize((-1, self.row_height() * max(1, len(lines))))
+            self.SetMinSize((self.GetMinSize().width,
+                             self.row_height() * max(1, len(lines))))
             self.Refresh()
 
     def clicked(self, event):
@@ -220,7 +222,7 @@ class ChecklistView(wx.Panel):
     def paint(self, event):
         dc = wx.AutoBufferedPaintDC(self)
         palette = ui_palette()
-        dc.SetBackground(wx.Brush(palette.info))
+        dc.SetBackground(wx.Brush(getattr(palette, self.background)))
         dc.Clear()
         dc.SetFont(self.GetFont())
         width, height = self.GetClientSize().width, self.row_height()
@@ -249,6 +251,10 @@ class MessageLog:
 
     def GetLabel(self):
         return self.last
+
+    def log(self, text):
+        """Record detail for the log only; the last status line stays as it is."""
+        self.view.AppendText(str(text) + '\n')
 
 
 class CircleNotSaved(ValueError):
@@ -5285,171 +5291,359 @@ class WorkflowDialog(wx.Dialog):
         self.refresh_outline()
         self.status.SetLabel(json.dumps(self.controller.config['outline'], sort_keys=True))
 
+    def _heading(self, parent, text):
+        label = wx.StaticText(parent, label=text)
+        font = label.GetFont()
+        font.SetWeight(wx.FONTWEIGHT_BOLD)
+        label.SetFont(font)
+        return label
+
+    def _report_list(self, parent, columns, height, single=True):
+        style = wx.LC_REPORT | wx.LC_HRULES | wx.LC_VRULES
+        view = wx.ListCtrl(parent, style=style | (wx.LC_SINGLE_SEL if single else 0))
+        for column, (heading, width) in enumerate(columns):
+            view.InsertColumn(column, heading, width=width)
+        view.SetMinSize((-1, height))
+        return view
+
+    @staticmethod
+    def _fill_report_list(view, rows):
+        view.DeleteAllItems()
+        alternate = ui_palette().alternate
+        for values in rows:
+            index = view.InsertItem(view.GetItemCount(), str(values[0]))
+            for column, value in enumerate(values[1:], 1):
+                view.SetItem(index, column, str(value))
+            if index % 2:
+                view.SetItemBackgroundColour(index, alternate)
+
     def build_review(self, panel):
-        self.task_box(
-            panel, 'Review changes', 'Validate and compare the desired-state delta',
-            'Validate the complete workflow, then compare desired state against saved board ownership. Configuration errors, conflicts, stale inputs and affected designer routing block Apply.',
-        )
-        validation_box = wx.StaticBox(panel, label='Workflow validation')
-        validation = wx.StaticBoxSizer(validation_box, wx.VERTICAL)
-        self.validation = wx.ListCtrl(validation_box, style=wx.LC_REPORT, size=(-1, 135))
-        for column, (name, width) in enumerate(
-            (('Severity', 80), ('Source row', 85), ('Code', 170), ('Details', 620)),
-        ):
-            self.validation.InsertColumn(column, name, width=width)
-        validation.Add(self.validation, 1, wx.EXPAND | wx.ALL, 8)
-        panel.GetSizer().Add(validation, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        self.diff_list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        for col, (name, width) in enumerate((('Gang', 90), ('Connector / file', 280), ('Change', 150), ('Status', 230))):
-            self.diff_list.InsertColumn(col, name, width=width)
-        self.diff_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.show_change)
-        panel.GetSizer().Add(self.diff_list, 1, wx.EXPAND | wx.ALL, 8)
-        self.review_view = wx.TextCtrl(panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL)
-        panel.GetSizer().Add(self.review_view, 1, wx.EXPAND | wx.ALL, 8)
-        self.review_button = self.button(panel, 'Compare changes', self.compare)
-        panel.GetSizer().Add(self.review_button, 0, wx.ALL, 8)
-        self.confirm_review = wx.CheckBox(panel, label='I reviewed these live-project changes')
-        panel.GetSizer().Add(self.confirm_review, 0, wx.ALL, 8)
-        self.apply_button = self.button(panel, 'Apply reviewed changes', self.apply)
-        panel.GetSizer().Add(self.apply_button, 0, wx.ALL, 8)
-        self.confirm_review.Bind(wx.EVT_CHECKBOX, lambda e: self.refresh())
+        sizer = panel.GetSizer()
+        actions = wx.BoxSizer(wx.HORIZONTAL)
+        self.review_button = self.button(panel, 'Review Changes', self.review_changes)
+        actions.Add(self.review_button, 0, wx.RIGHT, 12)
+        self.review_status = wx.StaticText(panel, label='Not reviewed yet.')
+        self.review_status.SetForegroundColour(ui_palette().muted)
+        actions.Add(self.review_status, 0, wx.ALIGN_CENTER_VERTICAL)
+        sizer.Add(actions, 0, wx.ALL, 8)
+
+        sizer.Add(self._heading(panel, 'Problems'), 0, wx.LEFT | wx.RIGHT, 8)
+        self.problem_list = self._report_list(
+            panel, (('Level', 100), ('Step', 200), ('Problem', 690)), 180)
+        sizer.Add(self.problem_list, 0, wx.EXPAND | wx.ALL, 8)
+        self.goto_step_button = self.button(panel, 'Go to Step', self.goto_problem_step)
+        self.goto_step_button.Disable()
+        sizer.Add(self.goto_step_button, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
+        sizer.Add(self._heading(panel, 'Changes Apply will make'), 0, wx.LEFT | wx.RIGHT, 8)
+        changes = wx.BoxSizer(wx.HORIZONTAL)
+        summary = wx.BoxSizer(wx.VERTICAL)
+        hint = wx.StaticText(panel, label='Select a line to list its items')
+        hint.SetForegroundColour(ui_palette().muted)
+        summary.Add(hint, 0, wx.BOTTOM, 6)
+        self.change_summary = self._report_list(panel, (('Change', 220), ('Count', 76)), 150)
+        self.change_summary.SetMinSize((302, 150))
+        summary.Add(self.change_summary, 1, wx.EXPAND)
+        changes.Add(summary, 0, wx.EXPAND | wx.RIGHT, 16)
+        detail = wx.BoxSizer(wx.VERTICAL)
+        self.change_detail_title = self._heading(panel, '')
+        detail.Add(self.change_detail_title, 0, wx.BOTTOM, 6)
+        self.change_detail = self._report_list(
+            panel, (('Item', 130), ('Before', 220), ('After', 330)), 150)
+        detail.Add(self.change_detail, 1, wx.EXPAND)
+        changes.Add(detail, 1, wx.EXPAND)
+        sizer.Add(changes, 1, wx.EXPAND | wx.ALL, 8)
+
+        self._problems, self._change_groups = [], []
+        self._review_failure = ''
+        self._reviewed = ''
+        self._reviewing = False
+        self.problem_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self._problem_selected)
+        self.problem_list.Bind(wx.EVT_LIST_ITEM_DESELECTED, self._problem_selected)
+        self.change_summary.Bind(wx.EVT_LIST_ITEM_SELECTED, self.show_change)
 
     def build_results(self, panel):
-        self.task_box(
-            panel, 'Apply / results', 'Apply to the open PCB and inspect results',
-            'Apply updates and saves the open PCB, regenerates only the managed schematic hierarchy, and records a recovery journal. Keep the Schematic Editor closed during Apply.',
-        )
-        self.results = wx.TextCtrl(panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL)
-        panel.GetSizer().Add(self.results, 1, wx.EXPAND | wx.ALL, 8)
-        self.journal = self.field(panel, 'Recovery journal', picker=True, invalidate=False)
-        panel.GetSizer().Add(self.button(panel, 'Recover with all project editors closed', self.recover), 0, wx.ALL, 8)
-        self.abort_button = self.button(panel, 'Cancel analysis', self.abort)
-        panel.GetSizer().Add(self.abort_button, 0, wx.ALL, 8)
+        from . import review
+        self.results_notebook = wx.Notebook(panel)
+        panel.GetSizer().Add(self.results_notebook, 1, wx.EXPAND | wx.ALL, 8)
 
-    def compare(self, event):
-        if self.pcbnew is not None and self.pcbnew.GetBoard() is not None:
-            board = self.pcbnew.GetBoard()
+        page = wx.Panel(self.results_notebook)
+        page.SetSizer(wx.BoxSizer(wx.VERTICAL))
+        ready = wx.BoxSizer(wx.HORIZONTAL)
+        self.apply_lead = wx.StaticText(page, label='Nothing to apply yet:')
+        ready.Add(self.apply_lead, 0, wx.RIGHT, 6)
+        self.apply_headline = self._heading(page, 'review the changes first')
+        ready.Add(self.apply_headline, 1)
+        page.GetSizer().Add(ready, 0, wx.EXPAND | wx.ALL, 8)
+        self.apply_button = self.button(page, 'Apply to Board…', self.apply)
+        page.GetSizer().Add(self.apply_button, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        page.GetSizer().Add(self._heading(page, 'Progress'), 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        self.apply_gauge = wx.Gauge(page, range=len(review.STAGES), size=(520, 16))
+        page.GetSizer().Add(self.apply_gauge, 0, wx.ALL, 8)
+        self.stage_view = ChecklistView(page, background='window')
+        self.stage_view.SetMinSize((520, -1))
+        page.GetSizer().Add(self.stage_view, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        page.GetSizer().Add(self._heading(page, 'Result'), 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        results = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
+        results.AddGrowableCol(1, 1)
+        self.result_fields = {}
+        for key, label in (('board', 'Board:'), ('report', 'Report:'),
+                           ('journal', 'Recovery journal:')):
+            results.Add(wx.StaticText(page, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+            self.result_fields[key] = wx.StaticText(
+                page, label='—', style=wx.ST_ELLIPSIZE_MIDDLE)
+            results.Add(self.result_fields[key], 1, wx.EXPAND)
+        page.GetSizer().Add(results, 0, wx.EXPAND | wx.ALL, 8)
+        self.results_notebook.AddPage(page, 'Apply')
+
+        recovery = wx.Panel(self.results_notebook)
+        recovery.SetSizer(wx.BoxSizer(wx.VERTICAL))
+        recovery.GetSizer().Add(wx.StaticText(
+            recovery,
+            label=('Use this only if Apply was interrupted. It puts the project files back '
+                   'as they were before that Apply.')), 0, wx.ALL, 8)
+        self.journal = self.field(recovery, 'Recovery journal:', picker=True, invalidate=False)
+        recovery.GetSizer().Add(
+            self.button(recovery, 'Recover Project…', self.recover), 0,
+            wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        note = wx.StaticText(recovery, label='Close this project in every KiCad editor first.')
+        note.SetForegroundColour(ui_palette().muted)
+        recovery.GetSizer().Add(note, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.results_notebook.AddPage(recovery, 'Recovery')
+        self._set_stages(-1)
+
+    # --- Review changes -------------------------------------------------------
+
+    def _ask(self, message, yes, title=None):
+        """A yes/cancel question with the action named on its button."""
+        with wx.MessageDialog(
+            self, message, title or self.GetTitle(),
+            wx.YES_NO | wx.YES_DEFAULT | wx.ICON_QUESTION,
+        ) as dialog:
+            dialog.SetYesNoLabels(yes, 'Cancel')
+            return dialog.ShowModal() == wx.ID_YES
+
+    def review_changes(self, event):
+        board = self.pcbnew.GetBoard() if self.pcbnew is not None else None
+        if board is not None and hasattr(self.pcbnew, 'SaveBoard'):
+            # Review reads the saved board, so saving is the drafter's decision.
+            if not self._ask('Review reads the saved board.\n\nSave the PCB now?',
+                             'Save and Review'):
+                return
             if not self.pcbnew.SaveBoard(str(self.controller.board_path), board, True):
-                raise ValueError('KiCad could not save the open PCB before comparison')
+                raise ValueError('KiCad could not save the PCB')
         if not self.save(None):
             return
-        self.confirm_review.SetValue(False)
+        self._review_failure = ''
         issues = self.controller.validate()
-        self.render_validation(issues)
-        blocking = [issue for issue in issues if issue.severity == 'error']
+        self.render_review(None)
+        blocking = sum(issue.severity == 'error' for issue in issues)
+        self._reviewed = 'blocked' if blocking else 'done'
         if blocking:
-            self.status.SetLabel(f'{len(blocking)} blocking validation errors. Review the issue table.')
-            raise ValueError(f'Resolve {len(blocking)} listed workflow validation errors before comparing changes')
-        self.status.SetLabel('Analysing saved project and library inputs…')
+            noun = 'problem blocks' if blocking == 1 else 'problems block'
+            raise ValueError(f'{blocking} {noun} the review. Fix what is listed under '
+                             'Problems, then review again.')
+
         def complete(preview):
-            if self._closing: return
-            self.render_changes(preview)
-            warning_count = len(preview.get('warnings', []))
-            self.status.SetLabel(
-                'Comparison complete' +
-                (f' with {warning_count} warning{("" if warning_count == 1 else "s")}'
-                 if warning_count else '') +
-                '. Review conflicts and changes before Apply.'
-            )
+            if self._closing:
+                return
+            self.render_review(preview)
+            self.status.SetLabel('Review finished.')
             self.refresh()
+
+        self._reviewing = True
+        self.status.SetLabel('Review: reading the saved board and libraries.')
         self.controller.run_async(self.controller.review, complete, self.failed)
         self.refresh()
 
-    def render_validation(self, issues):
-        self.validation.DeleteAllItems()
-        for issue in issues:
-            index = self.validation.InsertItem(self.validation.GetItemCount(), issue.severity)
-            for column, value in enumerate((issue.source_row or '', issue.code, issue.message), 1):
-                self.validation.SetItem(index, column, str(value))
+    def render_review(self, preview):
+        """Fill Problems and the change summary from the last review."""
+        from . import review
+        self._reviewing = False
+        self._problems = review.problems(
+            self.controller.issues, preview, self._review_failure)
+        self._fill_report_list(
+            self.problem_list,
+            [(row.level, row.step, row.message) for row in self._problems])
+        self.goto_step_button.Disable()
+        self._change_groups = review.summary(preview, self._length_text)
+        self._fill_report_list(
+            self.change_summary,
+            [(label, len(changes)) for label, changes in self._change_groups])
+        if self._change_groups:
+            self.change_summary.Select(0)
+        else:
+            self.show_change(None)
+        if preview is not None:
+            # The complete record is for the message log, not for these tables.
+            self.status.log(json.dumps(
+                {name: preview.get(name) for name in ('status', 'changes', 'conflicts',
+                                                      'warnings')},
+                indent=2, default=str))
 
-    def render_changes(self, preview):
-        for warning in preview.get('warnings', []):
-            row = self.validation.InsertItem(self.validation.GetItemCount(), 'warning')
-            self.validation.SetItem(row, 2, warning.get('code', 'NATIVE_WARNING'))
-            self.validation.SetItem(row, 3, warning.get('message', ''))
-        self.diff_list.DeleteAllItems()
-        self._review_details = []
-        conflicts = preview.get('conflicts', [])
-        for change in preview.get('changes', []):
-            key = change.get('key', '')
-            instance = preview.get('desired', {}).get('instances', {}).get(key, {})
-            prior = preview.get('registry', {}).get('instances', {}).get(key, {}).get('spec', {})
-            affected = [c for c in conflicts if c.get('key') == key]
-            row = self.diff_list.InsertItem(self.diff_list.GetItemCount(), instance.get('gang', prior.get('gang', '')))
-            for col, value in enumerate((key, change.get('kind', ''), 'BLOCKED' if affected else 'Ready'), 1): self.diff_list.SetItem(row, col, str(value))
-            self._review_details.append({'change': change, 'before': prior, 'after': instance, 'conflicts': affected})
-        for conflict in conflicts:
-            row = self.diff_list.InsertItem(self.diff_list.GetItemCount(), '')
-            for col, value in enumerate((conflict.get('key', conflict.get('uuid', 'Project')), conflict.get('kind', ''), 'BLOCKED'), 1): self.diff_list.SetItem(row, col, str(value))
-            self._review_details.append(conflict)
-        self.review_view.ChangeValue(f"{preview.get('status', '')}: {len(preview.get('changes', []))} changes, {len(conflicts)} conflicts.\nSelect a connector or file for before/after detail.")
+    def _problem_selected(self, event):
+        index = self.problem_list.GetFirstSelected()
+        self.goto_step_button.Enable(
+            0 <= index < len(self._problems) and self._problems[index].step in PAGES and
+            self._problems[index].step != 'Review changes')
+        event.Skip()
+
+    def goto_problem_step(self, event):
+        index = self.problem_list.GetFirstSelected()
+        if not 0 <= index < len(self._problems):
+            raise ValueError('Select a problem first')
+        self.select_page(PAGES.index(self._problems[index].step))
 
     def show_change(self, event):
-        index = event.GetIndex()
-        if 0 <= index < len(self._review_details):
-            self.review_view.ChangeValue(json.dumps(self._review_details[index], indent=2, default=str))
+        """The selected summary line lists its items on the right."""
+        index = self.change_summary.GetFirstSelected()
+        if not 0 <= index < len(self._change_groups):
+            self.change_detail_title.SetLabel('')
+            self.change_detail.DeleteAllItems()
+            return
+        label, changes = self._change_groups[index]
+        noun = 'item' if len(changes) == 1 else 'items'
+        self.change_detail_title.SetLabel(f'{label} — {len(changes)} {noun}')
+        self._fill_report_list(
+            self.change_detail,
+            [(change.item, change.before, change.after) for change in changes])
+        # Full text in every column; the list scrolls sideways when it must.
+        for column, minimum in ((0, 130), (1, 120), (2, 330)):
+            self.change_detail.SetColumnWidth(column, wx.LIST_AUTOSIZE)
+            self.change_detail.SetColumnWidth(
+                column, max(minimum, self.change_detail.GetColumnWidth(column) + 8))
+
+    # --- Apply ----------------------------------------------------------------
+
+    def _set_stages(self, active, failed=False):
+        """Show the named stages: done before ``active``, pending after it."""
+        from . import review
+        lines = []
+        for index, name in enumerate(review.STAGES):
+            if index < active:
+                lines.append(progress.Line(progress.DONE, name))
+            elif index == active:
+                lines.append(progress.Line(
+                    progress.MISSING if failed else progress.CAUTION, name,
+                    'stopped' if failed else 'running'))
+            else:
+                lines.append(progress.Line(progress.OPTIONAL, name))
+        self._stage = active
+        self.stage_view.set_lines(lines)
+        self.apply_gauge.SetValue(max(0, min(active, len(review.STAGES))))
+        self.stage_view.Update()
+        self.apply_gauge.Update()
 
     def apply(self, event):
-        if not self.confirm_review.GetValue(): raise ValueError('Review and explicitly accept the current change list first')
+        from . import review
+        if self.controller.preview is None:
+            raise ValueError('Review the changes first')
         if self.pcbnew is None or self.pcbnew.GetBoard() is None:
             raise ValueError('The reviewed PCB is no longer open')
-        self.status.SetLabel('Staging and verifying the reviewed live-project delta…')
+        if not self._ask(
+                'Apply these changes to the open board?\n\n' +
+                review.headline(self._change_groups).capitalize() + '.\n\n'
+                'The board and the managed schematic sheets are saved. Keep the '
+                'Schematic Editor closed while this runs.', 'Apply'):
+            return
+        for field in self.result_fields.values():
+            field.SetLabel('—')
         self._applying = True
+        self._set_stages(0)
+        self.status.SetLabel('Apply: staging and verifying the changes.')
         self.controller.run_async(self.controller.apply, self.publish_prepared, self.failed)
         self.refresh()
 
     def publish_prepared(self, prepared):
         if self._closing:
             return
+        # Staging and verification both happened in the background step.
+        self._set_stages(2)
         try:
-            result = self.controller.publish(prepared, self.pcbnew)
+            result = self.controller.publish(
+                prepared, self.pcbnew, progress=lambda: self._set_stages(3))
         except Exception as error:
             self.failed(error)
             return
         self.applied(result)
 
+    def _show_result(self, result):
+        result = result if isinstance(result, dict) else {}
+        unchanged = result.get('status') == 'NOOP'
+        values = {
+            'board': ('No changes were needed' if unchanged
+                      else f'{result.get("board_path", "—")} (updated and saved)'),
+            'report': result.get('report_path') or '—',
+            'journal': result.get('journal') or '—',
+        }
+        for key, value in values.items():
+            self.result_fields[key].SetLabel(str(value))
+            self.result_fields[key].SetToolTip(str(value))
+        self.status.log(json.dumps(
+            {name: value for name, value in result.items() if name != 'registry'},
+            indent=2, default=str))
+
     def applied(self, result):
+        from . import review
         self._applying = False
-        if self._closing: return
+        if self._closing:
+            return
         if self.pcbnew is not None and hasattr(self.pcbnew, 'Refresh'):
             self.pcbnew.Refresh()
-        self.results.ChangeValue(json.dumps(result, indent=2, default=str))
+        self._set_stages(len(review.STAGES))
+        self._show_result(result)
         self.select_page(PAGES.index('Apply / results'))
-        self.status.SetLabel('Open PCB and managed schematic hierarchy updated and saved.')
-        if isinstance(result, dict) and result.get('journal'): self.journal.ChangeValue(str(result['journal']))
+        self.status.SetLabel('Apply finished. The board and the managed schematic sheets '
+                             'are updated and saved.')
+        if isinstance(result, dict) and result.get('journal'):
+            self.journal.ChangeValue(str(result['journal']))
         self.refresh()
 
     def recovered(self, result):
         self._applying = False
-        if self._closing: return
-        self.results.ChangeValue(json.dumps(result, indent=2, default=str))
+        if self._closing:
+            return
+        self._show_result({})
+        self.status.log(json.dumps(result, indent=2, default=str))
         self.select_page(PAGES.index('Apply / results'))
-        self.status.SetLabel('Recovery complete. Project files were restored from the journal.')
+        self.status.SetLabel('Recovery finished. The project files are as they were '
+                             'before that Apply.')
+        wx.MessageBox(self.status.GetLabel(), self.GetTitle(), wx.OK | wx.ICON_INFORMATION, self)
         self.refresh()
 
     def failed(self, error):
-        failure_code = 'APPLY_FAILED' if self._applying else 'COMPARE_FAILED'
+        applying = self._applying
         self._applying = False
-        if self._closing: return
+        self._reviewing = False
+        if self._closing:
+            return
         message = str(error)
-        row = self.validation.InsertItem(self.validation.GetItemCount(), 'error')
-        self.validation.SetItem(row, 2, failure_code)
-        self.validation.SetItem(row, 3, message)
         self.status.SetLabel(message)
-        self.results.ChangeValue('Operation stopped safely:\n' + message)
+        if applying:
+            if self._stage >= 0:
+                self._set_stages(self._stage, failed=True)
+        else:
+            self._review_failure = message
+            self.render_review(None)
         self.refresh()
+        wx.MessageBox(message,
+                      'Review stopped' if not applying
+                      else 'Apply stopped' if self._stage >= 0 else 'Recovery stopped',
+                      wx.OK | wx.ICON_ERROR, self)
 
     def recover(self, event):
         from .recovery import recover
-        with wx.MessageDialog(self, 'Close this project in PCB Editor, Schematic Editor, and all other KiCad editors before recovery. Recover the selected journal now?', 'Recover project', wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING) as dialog:
-            if dialog.ShowModal() == wx.ID_YES:
-                self._applying = True
-                self.controller.run_async(lambda: recover(self.journal.GetValue(), closed_project=True), self.recovered, self.failed)
-                self.refresh()
-
-    def abort(self, event):
-        self.controller.cancel()
-        self.status.SetLabel('Analysis cancelled; pending results will be discarded.')
+        if not self.journal.GetValue().strip():
+            raise ValueError('Choose the recovery journal of the interrupted Apply')
+        if self._ask('Close this project in the PCB Editor, the Schematic Editor and every '
+                     'other KiCad editor first.\n\nRecover the project from this journal now?',
+                     'Recover', 'Recover project'):
+            self._applying = True
+            self._set_stages(-1)
+            self.controller.run_async(
+                lambda: recover(self.journal.GetValue(), closed_project=True),
+                self.recovered, self.failed)
+            self.refresh()
 
     def save(self, event):
         if self.controller.config_path and self.controller.config_path.exists():
@@ -5514,7 +5708,6 @@ class WorkflowDialog(wx.Dialog):
         self.current_anchor_gang = None
         self.current_dc_anchor = None
         self._gang_invalid_edits.clear()
-        self._review_details = []
 
         self._updating_spreadsheet = True
         try:
@@ -5588,11 +5781,12 @@ class WorkflowDialog(wx.Dialog):
         self.outline_status.SetLabel('Managed outline disabled. No Edge.Cuts changes requested.')
         self.outline_view.show({})
         self.refresh_outline()
-        self.validation.DeleteAllItems()
-        self.diff_list.DeleteAllItems()
-        self.review_view.ChangeValue('')
-        self.confirm_review.SetValue(False)
-        self.results.ChangeValue('')
+        self._review_failure = ''
+        self._reviewed = ''
+        self.render_review(None)
+        self._set_stages(-1)
+        for field in self.result_fields.values():
+            field.SetLabel('—')
 
         self.refresh_layers()
         self.refresh_gangs()
@@ -5693,8 +5887,33 @@ class WorkflowDialog(wx.Dialog):
             self._style_status(self.columns_status, 'warning')
             self._style_status(self.nets_status, 'warning')
         self.review_button.Enable(not self.controller.busy)
-        self.apply_button.Enable(not self.controller.busy and self.controller.preview is not None and not self.controller.preview.get('conflicts') and self.confirm_review.GetValue())
-        self.abort_button.Enable(self.controller.busy and not self._applying)
+        preview = self.controller.preview
+        self.apply_button.Enable(
+            not self.controller.busy and preview is not None and not preview.get('conflicts'))
+        from . import review
+        if getattr(self, '_reviewing', False):
+            review_status = 'Reading the saved board and libraries…'
+        elif preview is not None:
+            review_status = 'Review is up to date with your settings.'
+        elif self._review_failure:
+            review_status = 'The review stopped. See Problems.'
+        elif self._reviewed == 'blocked':
+            review_status = 'Blocked. Fix the problems below, then review again.'
+        elif self._reviewed:
+            review_status = 'Settings changed since the last review.'
+        else:
+            review_status = 'Not reviewed yet.'
+        if self.review_status.GetLabel() != review_status:
+            self.review_status.SetLabel(review_status)
+        ready = preview is not None and not preview.get('conflicts')
+        lead = 'Ready to apply:' if ready else 'Nothing to apply yet:'
+        headline = (review.headline(self._change_groups) if ready
+                    else 'resolve the conflicts first' if preview is not None
+                    else 'review the changes first')
+        if (self.apply_lead.GetLabel(), self.apply_headline.GetLabel()) != (lead, headline):
+            self.apply_lead.SetLabel(lead)
+            self.apply_headline.SetLabel(headline)
+            self.apply_lead.GetParent().Layout()
         self.save_button.Enable(not self.controller.busy and not self._applying)
         self.delete_settings_button.Enable(
             not self.controller.busy and not self._applying
@@ -5718,7 +5937,7 @@ class WorkflowDialog(wx.Dialog):
 
     def close(self, event):
         if self.controller.busy:
-            self.status.SetLabel('Wait for the current operation, or cancel analysis before closing.')
+            self.status.SetLabel('Wait for the current operation to finish before closing.')
             if isinstance(event, wx.CloseEvent): event.Veto()
             return
         if self._settings_snapshot() != self._saved_snapshot:

@@ -657,7 +657,7 @@ class WorkflowController:
                 if detail:
                     issues.append(Issue('part_incompatible', detail))
                 if not gang.get('symbol_mpn') and not gang.get('footprint_mpn'):
-                    issues.append(Issue('mpn_missing', f'{name}: selected library parts have no MPN metadata', severity='warning'))
+                    issues.append(Issue('mpn_missing', f'{name}: the chosen library parts have no manufacturer part number', severity='warning'))
                 if (gang.get('symbol_mpn') and gang.get('footprint_mpn') and
                         gang['symbol_mpn'] != gang['footprint_mpn']):
                     issues.append(Issue('mpn_conflict', f'{name}: symbol and footprint MPN metadata disagree'))
@@ -733,7 +733,7 @@ class WorkflowController:
                     )
                 if not selection.get('symbol_mpn') and not selection.get('footprint_mpn'):
                     issues.append(Issue('mpn_missing',
-                                        f'{name}: selected library parts have no MPN metadata',
+                                        f'{name}: the chosen library parts have no manufacturer part number',
                                         severity='warning'))
                 if (selection.get('symbol_mpn') and selection.get('footprint_mpn') and
                         selection['symbol_mpn'] != selection['footprint_mpn']):
@@ -793,7 +793,7 @@ class WorkflowController:
                         f'{reference}: choose Front or Back in Mechanical placement',
                     ))
                 if not selection.get('symbol_mpn') and not selection.get('footprint_mpn'):
-                    issues.append(Issue('mpn_missing', f'{reference}: selected library parts have no MPN metadata', severity='warning'))
+                    issues.append(Issue('mpn_missing', f'{reference}: the chosen library parts have no manufacturer part number', severity='warning'))
                 if (selection.get('symbol_mpn') and selection.get('footprint_mpn') and
                         selection['symbol_mpn'] != selection['footprint_mpn']):
                     issues.append(Issue('mpn_conflict', f'{reference}: symbol and footprint MPN metadata disagree'))
@@ -895,7 +895,7 @@ class WorkflowController:
             try:
                 result = operation()
                 if pinned and (self.cancelled.is_set() or self._generation != generation):
-                    raise RuntimeError('Analysis cancelled or inputs changed; compare again')
+                    raise RuntimeError('Settings changed while this ran; review the changes again')
             except Exception as error:
                 self.busy = False
                 self.dispatch(failed, error)
@@ -918,23 +918,24 @@ class WorkflowController:
         before = self.token()
         preview = self.backend.preview(self)
         if before != self.token():
-            raise RuntimeError('Inputs changed during comparison; compare again')
+            raise RuntimeError('Settings changed during the review; review the changes again')
         self.preview, self.preview_token = preview, before
         return preview
 
     def apply(self):
         if self.preview is None or self.preview_token != self.token():
             self.preview = None
-            raise ValueError('Preview is stale; compare changes again')
+            raise ValueError('The review is out of date; review the changes again')
         result = self.backend.apply(self, self.preview)
         return result
 
-    def publish(self, prepared, pcbnew_module):
+    def publish(self, prepared, pcbnew_module, progress=None):
+        """Update the open board, then write the files; ``progress`` marks the hand-over."""
         if self.preview is None or self.preview_token != self.token():
-            raise ValueError('Preview became stale before live publication')
+            raise ValueError('The review is out of date; review the changes again')
         try:
             result = self.backend.publish_live(
-                self, self.preview, prepared, pcbnew_module,
+                self, self.preview, prepared, pcbnew_module, progress,
             )
         except Exception:
             self.preview = self.preview_token = None
@@ -1484,7 +1485,7 @@ __import__("os")._exit(0)
         if controller.cancelled.is_set(): raise RuntimeError('Apply cancelled before starting')
         return self.call('prepare_live', preview=preview)
 
-    def publish_live(self, controller, preview, prepared, pcbnew_module):
+    def publish_live(self, controller, preview, prepared, pcbnew_module, progress=None):
         from .backend import NativeBackend
         if controller.cancelled.is_set():
             raise RuntimeError('Apply cancelled before live publication')
@@ -1492,5 +1493,5 @@ __import__("os")._exit(0)
         if board is None:
             raise RuntimeError('The reviewed PCB is no longer open')
         return NativeBackend(pcbnew_module).publish_live(
-            board, preview, prepared,
+            board, preview, prepared, progress,
         )

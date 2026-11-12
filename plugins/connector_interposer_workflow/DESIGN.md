@@ -177,6 +177,18 @@ The placed-hole list supports removal before Review changes. All source
 geometry is revalidated during Review and Apply; live UI updates do not weaken
 that boundary.
 
+Review changes and Apply / results show outcomes, not records. The Review
+Changes button asks before it saves the PCB, because Review reads the saved
+board. Problems are one table: level, the step that fixes the problem, and a
+plain sentence, with Go to Step beside it. What Apply will do is written in
+future tense as a short summary; selecting a summary line lists its items
+with their before and after in the table to its right, whose title repeats
+the selected line so the link is visible. There is no acceptance tick box:
+Apply to Board… states what will happen and asks once. A running Apply shows
+its named stages; there is no stop button because a half-applied board is
+worse than a finished one. Blocking failures are pop-ups. Raw JSON, UUIDs and
+complete records belong to the message log only.
+
 UI copy follows a control-ownership rule. The blue task box carries the page's
 short purpose and any cross-page consequence. Labels name controls; tooltips
 hold uncommon details that do not need to stay visible. Do not add nearby prose

@@ -237,7 +237,7 @@ class NativeBackend:
         if {key: len(value) for key, value in live.items()} != {
                 key: len(value) for key, value in saved.items()}:
             raise BackendError(
-                'The live PCB drawing content differs from its saved file; save and compare again'
+                'The live PCB drawing content differs from its saved file; save the board and review the changes again'
             )
 
         changes = []
@@ -1639,7 +1639,7 @@ class NativeBackend:
             raise BackendError("Preview token is invalid")
         fresh = self.preview(preview["source"], preview["desired"], preview["registry"])
         if fresh["token"] != preview["token"]:
-            raise BackendError("Stale preview; compare again before applying")
+            raise BackendError("The review is out of date; review the changes again")
         if fresh["conflicts"]:
             raise BackendError("Unresolved reconciliation conflicts")
         if fresh["status"] == "NOOP":
@@ -1805,8 +1805,11 @@ class NativeBackend:
             'token': preview['token'],
         }
 
-    def publish_live(self, live_board, preview, prepared):
-        """Reconcile the active BOARD, then atomically publish staged files."""
+    def publish_live(self, live_board, preview, prepared, progress=None):
+        """Reconcile the active BOARD, then atomically publish staged files.
+
+        ``progress`` is called once, between the board update and the file write.
+        """
         if prepared.get('status') == 'NOOP':
             return prepared
         if (prepared.get('status') != 'PREPARED' or
@@ -1817,13 +1820,13 @@ class NativeBackend:
             raise BackendError('The active PCB is not the reviewed Workflow board')
         disk_board = self._load(source)
         if board_content_state(live_board, self.p) != board_content_state(disk_board, self.p):
-            raise BackendError('The live PCB differs from its saved file; save and compare again')
+            raise BackendError('The live PCB differs from its saved file; save the board and review the changes again')
         initial = board_state(live_board, self.p)
         missing_owned = set(preview['registry'].get('expected', {})) - set(initial)
         if missing_owned:
             raise BackendError(
                 'The live PCB does not contain the reviewed managed identities; '
-                'reload the board and compare again'
+                'reload the board and review the changes again'
             )
         old_owned = set(preview['registry'].get('expected', {}))
         retag_ids = set(preview['desired'].get('route_retags', {}))
@@ -1860,6 +1863,8 @@ class NativeBackend:
                           'microvia_group', 'outline_objects', 'outline_group'):
                 if result.get(field) != staged.get(field):
                     raise BackendError('Live PCB identities differ from the staged transaction')
+            if progress is not None:
+                progress()
             committed = commit_prepared(
                 prepared['journal'], live_project=True,
             )

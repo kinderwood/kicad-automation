@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.7.5**, testing release. The package targets KiCad 10.0.0 through
+Version **0.7.6**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -223,19 +223,28 @@ files changed after the transaction.
    imported outer-boundary segments and optional center-cutout segments
    separately. Review validates exact closure, intersections and ownership.
    Only managed outline objects are replaced; designer Edge.Cuts stay intact.
-11. **Review changes:** compare the full desired population, review additions,
-   removals, placement/electrical/RF changes and conflicts. Accept the current
-   change list before Apply. Input changes make the preview stale. Physical or
-   topology changes affecting designer copper block application. An unchanged,
-   isolated exact-endpoint designer track/via component may retain its UUID and
-   geometry when all boundary pads move together to one new net; the reviewed
-   comparison shows that net-only retag. Zones, net-bearing shapes and ambiguous
+11. **Review changes:** click **Review Changes**. Review reads the saved
+   board, so it first asks whether to save the PCB. **Problems** lists what
+   was found, each with its level (Error, Conflict or Warning) and the step
+   that fixes it; select a row and click **Go to Step**. Errors and conflicts
+   block Apply; warnings do not. **Changes Apply will make** summarises what
+   will happen (parts to add, change or remove, interposer microvias, board
+   outline, project files to write or remove); select a summary line to list
+   its items with what they are before and after. Changing any setting makes
+   the review out of date. Physical or topology changes affecting designer
+   copper block Apply. An unchanged, isolated exact-endpoint designer
+   track/via component may keep its UUID and geometry when all boundary pads
+   move together to one new net; zones, net-bearing shapes and ambiguous
    routes remain blocking.
-12. **Apply / results:** inspect the updated open board, managed schematic
-   hierarchy, individual-component BOM, registry, report and recovery journal.
-   The complete file transaction is staged before the live board changes. If
-   publication fails after in-memory reconciliation, close PCB Editor without
-   saving and recover the named journal with the project closed.
+12. **Apply / results:** **Apply to Board…** shows what is about to happen and
+   asks once. Progress then names each stage: staging the changes, verifying
+   the staged board, updating the open board, writing project files. The
+   result lists the board, the report and the recovery journal. The complete
+   file transaction is staged before the live board changes. If Apply is
+   interrupted after the open board was updated, close the PCB Editor without
+   saving and use the **Recovery** tab with the project closed in every KiCad
+   editor. The full records of a review or an Apply are in the message log
+   (the **i** button), not in these tables.
 
 The source `.connector-interposer-workflow.json` sidecar stores project identity
 and workflow settings,

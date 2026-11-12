@@ -460,6 +460,16 @@ their circle is the same object in the same place; otherwise the row shows
 Pick again. Mounting holes are added first and placed like any other row.
 Visiting the step no longer invalidates a current review.
 
+Version 0.7.6 rebuilds Review changes and Apply / results to the Spec. The
+button is Review Changes and asks before saving the PCB. Problems are listed
+in plain words with their level and the step that fixes them (Go to Step),
+and the changes are a future-tense summary whose selected line lists its
+items with before and after (`review.py`, wx-free). The acceptance tick box,
+the raw JSON panes and the Cancel analysis button are gone: Apply to Board…
+asks once, then shows named stages and a readable result, with Recovery on
+its own tab. Failed reviews and applies are reported in a pop-up. Complete
+records go to the message log.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal
