@@ -210,44 +210,43 @@ protection properties are explicitly untreated: not tented, covered, plugged,
 filled or capped. The step does not claim fill/cap processing, final GND-plane
 connectivity, fabricator acceptance or end-to-end board DRC.
 
-The editable [UI Design Guide](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=135-37)
-records the current workflow, product principles, approved and retired patterns,
-page anatomy, interaction states and open prototypes. Its **Entry controls,
-tables, and scrolling** section names the assignment-cell and value-entry-cell
-patterns. The file's Read me page defines the page roles: Foundations
-(variables named after `ui_palette()`), Components (each recurring control,
-with its code counterpart in the description), Spec, Proposal, Guide, Reference
-and Archive. It records durable design decisions and reasons; implementation
-history remains in repository documentation.
-Its editable Layer assignment pattern is at
-[section 08](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=148-37).
-The implemented Define RF gangs and RF transitions patterns are at
-[section 09](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=177-37)
-and [section 10](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=178-46).
-The curated entry-control and scrolling rules are in
-[section 11](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=200-60).
-
 ## Design source and standing rules
 
-The design file is <https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l>; its
-Read me page defines each page's role and repeats the rules below. Agents read
-and edit it through the Figma MCP server.
+The design file is <https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l>. Agents read and edit it through the Figma MCP server.
+Its **Read me** page defines each page's role and repeats the rules below; its
+**Decisions log** page records every decision and deferred item and is the
+first thing to read.
+
+The target for all twelve steps is drawn on three Spec pages, one 1280 × 800
+frame per step with every further tab beside it:
+
+- [Spec — Nets & Layers](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=251-2): Netlist source, Netclass type,
+  Layer assignment, Routing permissions.
+- [Spec — Parts & Geometry](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=283-2): Connector assignments, RF
+  transitions, Define RF gangs, Mechanical placement, Interposer microvias,
+  Board outline.
+- [Spec — Finish](https://www.figma.com/design/0AlFgdUMXXgdWwcJDLmx7l?node-id=325-2): Review changes, Apply / results.
+
+The plugin is being brought into line with the Spec, shell first and then step
+by step. Until a step is implemented, the paragraphs above describe the code
+as it runs and the Spec describes where it is going; where they differ, the
+Spec wins for new work.
 
 Working with the file:
 
-- The current plugin UI is work in progress and is not the specification. A
-  step is a target only once it has an approved **Spec** frame; until then use
-  the open **Proposal** and the **Guide**.
+- Any frame on a Spec page is binding. `Proposal — <topic>` pages are open
+  exploration and are not a target. Never edit **Reference** or **Archive**
+  pages; the old Guide and its mock-ups are archived.
 - Read text content and a screenshot; layer names can be stale.
 - A Spec binds layout, grouping, wording, states and colour by token. It is
   not pixel-exact: controls are native wx and differ between platforms.
+  Stand-alone drop-downs are the system's own control and draw grey.
 - Change the Figma frame and the code in the same task. Every user-facing
-  string appears in Figma exactly as shipped.
+  string appears in Figma exactly as shipped. Record new decisions in the
+  Decisions log.
 - Draw with **Components** instances and **Foundations** variables only. Name a
   component's code counterpart in its description. Colour variable names
   mirror `ui_palette()`.
-- New ideas go on a `Proposal — <topic>` page. Never edit **Reference** or
-  **Archive** pages.
 
 Standing rules:
 
@@ -257,23 +256,33 @@ Standing rules:
   size. Nothing appears, disappears or shifts with state; change content in
   place.
 - Predictable buttons: a button always does the same thing and keeps its
-  label. Next goes to the next step.
+  label.
 - Glance, then detail: one status icon per step in the step list; the
   About-this-step box under it holds the description and a checklist with one
-  line and count per concern. No other status areas.
+  line per concern. No other status areas.
+- Four statuses. Green check: active and all good. Red X: a problem, or
+  something required now is not set. Yellow !: required for a final board, not
+  set, not blocking. Grey dash: the drafter's choice.
+- Entry versus readout in tables: entry cells are white with a blue outline; a
+  missing entry has a red outline and a red X in an always-reserved slot. A
+  readout sharing a row with entries is flat grey; a fully read-only table is
+  white with striped rows. Stand-alone fields use the normal border.
+- Colour is deliberate: no monochrome or low-chrome styling. Selection uses
+  the system highlight and status icons keep their colour.
 - Motion aids continuity: clicking a checklist line fades a highlight outline
   in over the section, holds it for a few seconds and fades it out, with no
-  layout change. If the section is off screen, scroll to it smoothly inside
-  the page's own scroll area; never jump. No blinking.
+  layout change. Scroll smoothly inside the step's own scroll area; never
+  jump. No blinking.
 - Columns separate kinds of thing (pick, edit, see); inside a column, content
   reads top to bottom.
 - Do not repeat a value already shown on the page.
-- Editable looks like a control; displayed values are plain text. Colour never
-  marks editability.
+- Units: entry fields carry their own unit; readouts follow the toolbar's
+  mil / mm switch and are never rounded.
 - Keep user-facing text short: state the condition and the action, nothing a
-  button label already says.
-- Stock wxPython and KiCad conventions only; nothing beyond what KiCad
-  installs.
+  button label already says. Internal identifiers, hashes and raw data appear
+  only in Messages.
+- Stock wxPython, KiCad's own icons and conventions only; nothing beyond what
+  KiCad installs.
 
 `WorkflowController` owns UI drafts and preview invalidation. Core records,
 workbook parsing, geometry, validation and schematic generation stay independent
