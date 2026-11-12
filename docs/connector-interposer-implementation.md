@@ -441,6 +441,13 @@ Show in Editor and Clear. Pick in Editor takes the next selection made in the
 PCB Editor; Show in Editor highlights the saved items and moves the view to
 them.
 
+Version 0.7.4 makes RF gangs start empty: a new gang has no rows and no
+pitch, shows Not defined, and becomes Defined once its rows, pitch and
+numbering match the netlist. A single-row gang needs no row pitch. The gang
+preview draws a connector-orientation tick on every circle and places the
+position numbers either inside every circle or beside every one. The step
+description under the step list now wraps to its full height.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal

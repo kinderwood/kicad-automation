@@ -178,7 +178,8 @@ class ControllerTests(unittest.TestCase):
             ('missing', 'Interposer', '0 of 1'), ('missing', 'RF gangs', '0 of 2'),
             ('optional', 'DC connectors', '0')])
         self.assertEqual(lines('Define RF gangs'), [('missing', 'Gangs defined', '0 of 2')])
-        controller.set_gang('J202', {'row_lengths': [1], 'defined': True})
+        controller.set_gang('J202', {'row_lengths': [1], 'pitch_x': 2.54, 'pitch_y': 2.54,
+                                     'defined': True})
         self.assertEqual(lines('Define RF gangs'), [('missing', 'Gangs defined', '1 of 2')])
         self.assertEqual(lines('Mechanical placement')[0], ('missing', 'Drawing read', ''))
         self.assertEqual(lines('Mechanical placement')[-1], ('optional', 'Mounting holes', '0'))
@@ -313,12 +314,18 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn('size', self.controller.config['microvias'])
 
     def test_independent_gangs_and_explicit_copy_preserve_anchors(self):
+        # A new gang carries no placeholder pattern.
+        self.assertEqual(self.controller.gang('J101')['row_lengths'], [])
+        self.assertIsNone(self.controller.gang('J101')['pitch_x'])
+        self.assertFalse(self.controller.gang('J101')['defined'])
         self.controller.set_gang('J101', {
+            'row_lengths': [2], 'pitch_y': 4,
             'pitch_x': 4, 'anchor': [30, 20], 'anchor_accepted': True,
             'display_units': {'pitch_x': 'mil', 'pitch_y': 'mm', 'row_offsets': [],
                               'anchor_x': 'inch', 'anchor_y': 'inch'},
         })
         self.controller.set_gang('J202', {
+            'row_lengths': [1], 'pitch_y': 9,
             'pitch_x': 9, 'anchor': [80, 40], 'anchor_accepted': True,
             'display_units': {'pitch_x': 'mm', 'pitch_y': 'mm', 'row_offsets': [],
                               'anchor_x': 'um', 'anchor_y': 'mil'},
@@ -1413,7 +1420,6 @@ class NativeDialogTests(unittest.TestCase):
             dialog.controller.set_layers(('F.Cu', 'B.Cu'))
             dialog.controller.set_layer_mapping('L1', 'F.Cu')
             dialog.controller.set_gang('J101', {
-                'row_lengths': [2], 'pitch_x': 2.54,
                 'part_id': str(part_path),
                 'library_id': 'Approved:GPPO', 'part_sha256': part.sha256,
             })
@@ -1436,22 +1442,32 @@ class NativeDialogTests(unittest.TestCase):
             self.assertEqual(dialog.gang_editor_title.GetLabel(), 'J101 Gang definition')
             self.assertEqual(dialog.gang_rows.GetNumberCols(), 3)
             self.assertEqual(dialog.gang_rows.GetColLabelValue(2), 'X offset')
+            self.assertLess(
+                sum(dialog.gang_list.GetColumnWidth(column) for column in range(3)),
+                dialog.gang_list.GetClientSize().width,
+            )
+            self.assertLess(dialog.gang_list.GetSize().height, 200)
+            # A new gang starts empty: no rows, no pitch, nothing drawn.
+            self.assertEqual(dialog.gang_rows.GetNumberRows(), 0)
+            self.assertEqual(dialog.gang_pitch_x.GetValue(), '')
+            self.assertEqual(dialog.gang_definition_status.GetLabel(), 'Not defined')
+            self.assertEqual(dialog.pattern_view.points, {})
+            dialog.add_gang_row(None)
+            self.assertIn('Row 1: enter a position count',
+                          dialog.gang_definition_status.GetLabel())
             self.assertEqual(dialog.gang_rows.GetCellValue(0, 2), '0 mil')
             self.assertEqual(dialog.gang_notebook.GetPageText(1), 'Numbering')
             self.assertEqual(dialog.gang_pitch_x.units.GetStringSelection(), 'mil')
-            self.assertEqual(dialog.gang_pitch_x.GetValue(), '100')
             renderer = dialog.gang_rows.GetCellRenderer(0, 2)
             editor = dialog.gang_rows.GetCellEditor(0, 2)
             self.assertIsInstance(renderer, DimensionCellRenderer)
             self.assertIsInstance(editor, DimensionCellEditor)
             renderer.DecRef()
             editor.DecRef()
-            self.assertLess(
-                sum(dialog.gang_list.GetColumnWidth(column) for column in range(3)),
-                dialog.gang_list.GetClientSize().width,
-            )
-            self.assertLess(dialog.gang_list.GetSize().height, 200)
             dialog.gang_rows.SetCellValue(0, 1, '3')
+            dialog.gang_draft_changed()
+            self.assertIn('Enter the position pitch', dialog.gang_definition_status.GetLabel())
+            dialog.gang_pitch_x.ChangeValue('100')
             dialog.gang_draft_changed()
             self.assertEqual(len(dialog.pattern_view.points), 3)
             self.assertIn('Needs input', dialog.gang_definition_status.GetLabel())
@@ -1518,6 +1534,7 @@ class NativeDialogTests(unittest.TestCase):
                 dialog.pages[PAGES.index('Define RF gangs')].GetClientSize().width,
             )
 
+            dialog.add_gang_row(None)
             dialog.gang_pitch_x.text.SetFocus()
             dialog.gang_pitch_x.text.SetValue('200 mil')
             dialog.gang_pitch_y.text.SetFocus()
@@ -1615,6 +1632,11 @@ class NativeDialogTests(unittest.TestCase):
             dialog.select_page(PAGES.index('Define RF gangs'))
             dialog.Show()
             self.app.Yield()
+            dialog.add_gang_row(None)
+            dialog.gang_rows.SetCellValue(0, 1, '19')
+            dialog.gang_pitch_x.ChangeValue('100')
+            dialog.gang_draft_changed()
+            self.assertTrue(dialog.controller.gang('J501')['defined'])
 
             def press_enter(control):
                 event = self.wx.CommandEvent(self.wx.wxEVT_TEXT_ENTER, control.GetId())
@@ -1628,11 +1650,9 @@ class NativeDialogTests(unittest.TestCase):
                     self.app.Yield()
                 self.assertEqual(refresh.call_count, 0)
                 self.assertEqual(dialog.controller.gang('J501')['rotation'], 0)
-                self.assertFalse(dialog.controller.gang('J501')['defined'])
                 press_enter(rotation)
                 self.assertEqual(refresh.call_count, 1)
                 self.assertEqual(dialog.controller.gang('J501')['rotation'], 270)
-                self.assertTrue(dialog.controller.gang('J501')['defined'])
                 press_enter(rotation)
                 self.assertEqual(refresh.call_count, 1)
 
@@ -1655,6 +1675,7 @@ class NativeDialogTests(unittest.TestCase):
                 dialog.guard(dialog.add_gang_row)(None)
                 self.assertEqual(refresh.call_count, 4)
                 dialog.gang_rows.SetCellValue(1, 1, '9')
+                dialog.gang_pitch_y.ChangeValue('100')
                 dialog.gang_draft_changed()
                 self.assertEqual(refresh.call_count, 5)
                 self.assertEqual(dialog.controller.gang('J501')['row_lengths'], [10, 9])

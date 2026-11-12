@@ -347,9 +347,11 @@ class WorkflowController:
 
     def gang(self, name):
         if name not in self.config['gangs']:
-            count = sum(r.connector == name for r in self.table.records) if self.table else 0
-            self.config['gangs'][name] = {"gang": name, "row_lengths": [max(count, 1)], "pitch_x": 2.54,
-                "pitch_y": 2.54, "row_offsets": [], "numbering": [], "traversal": "row-major",
+            # A new gang has no pattern: any default would be a placeholder that
+            # looks meaningful. It becomes defined when its rows, pitch and
+            # numbering are entered and match the netlist.
+            self.config['gangs'][name] = {"gang": name, "row_lengths": [], "pitch_x": None,
+                "pitch_y": None, "row_offsets": [], "numbering": [], "traversal": "row-major",
                 "rotation": 0, "connector_rotation": 0, "mirror": False, "anchor": [0, 0],
                 "display_units": {"pitch_x": "mil", "pitch_y": "mil", "row_offsets": [],
                                   "anchor_x": "mil", "anchor_y": "mil"},
@@ -512,10 +514,26 @@ class WorkflowController:
         self.changed()
 
     def pattern(self, name):
+        return self.gang_definition(self.gang(name)).positions()
+
+    @staticmethod
+    def gang_definition(values):
+        """Build the geometry of a gang; a pitch with nothing to space is not needed."""
         from .core.geometry import GangDefinition
-        values = self.gang(name)
+        values = dict(values)
+        rows = values.get('row_lengths') or []
+        if not rows:
+            raise ValueError('add a row and enter its positions')
+        if values.get('pitch_x') is None and max(rows) == 1:
+            values['pitch_x'] = values.get('pitch_y') or 1.0
+        if values.get('pitch_y') is None and len(rows) == 1:
+            values['pitch_y'] = values.get('pitch_x')
+        if values.get('pitch_x') is None:
+            raise ValueError('enter the position pitch')
+        if values.get('pitch_y') is None:
+            raise ValueError('enter the row pitch')
         fields = GangDefinition.__dataclass_fields__
-        return GangDefinition(**{k: v for k, v in values.items() if k in fields}).positions()
+        return GangDefinition(**{k: v for k, v in values.items() if k in fields})
 
     def copy_gang(self, source, targets):
         values = self.gang(source)
@@ -652,13 +670,14 @@ class WorkflowController:
                     stale_circle(
                         f'{name} RF location 1', gang.get('anchor_circle', {}),
                     )
-                try:
-                    pins = set(self.pattern(name))
-                    expected = {r.connector_pin for r in self.table.records if r.connector == name}
-                    if {str(p) for p in pins} != expected:
-                        issues.append(Issue('gang_population', f'{name}: numbering must exactly match workbook locations'))
-                except (ValueError, TypeError) as error:
-                    issues.append(Issue('gang_pattern', f'{name}: {error}'))
+                if gang.get('defined'):
+                    try:
+                        pins = set(self.pattern(name))
+                        expected = {r.connector_pin for r in self.table.records if r.connector == name}
+                        if {str(p) for p in pins} != expected:
+                            issues.append(Issue('gang_population', f'{name}: numbering must exactly match workbook locations'))
+                    except (ValueError, TypeError) as error:
+                        issues.append(Issue('gang_pattern', f'{name}: {error}'))
             for requirement in self.rf_transition_requirements():
                 if not requirement.get('assignment', {}).get('path'):
                     continue

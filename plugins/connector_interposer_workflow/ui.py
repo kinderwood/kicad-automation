@@ -326,6 +326,8 @@ class DimensionInput(wx.Panel):
         return value_mm
 
     def selected_unit(self):
+        if not self.text.GetValue().strip():
+            return self.units.GetStringSelection()
         _value_mm, unit, _number_text = parse_dimension(
             self.text.GetValue(), self.units.GetStringSelection(),
         )
@@ -334,7 +336,7 @@ class DimensionInput(wx.Panel):
     def set_mm(self, value_mm, unit=None):
         unit = unit or self.units.GetStringSelection() or 'mm'
         self.units.SetStringSelection(unit)
-        self.text.ChangeValue(dimension_text(value_mm, unit))
+        self.text.ChangeValue('' if value_mm is None else dimension_text(value_mm, unit))
 
     def ChangeValue(self, value):
         self.text.ChangeValue(str(value))
@@ -646,6 +648,7 @@ class PatternPreview(wx.Panel):
         # its viewport. Keep only a useful minimum and let the sizer expand it.
         self.SetMinSize((250, 300))
         self.name, self.points = '', {}
+        self.orientation = 0
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.Bind(wx.EVT_PAINT, self.paint)
 
@@ -674,6 +677,12 @@ class PatternPreview(wx.Panel):
             radius, len(screen_points), label_font.GetPointSize(),
         ))
         dc.SetFont(label_font)
+        # One placement for the whole gang: inside every circle, or beside every one.
+        inside = all(self.label_fits(*dc.GetTextExtent(str(pin)), radius)
+                     for pin in screen_points)
+        # Connector orientation: 0 degrees points up, positive turns counter-clockwise.
+        angle = math.radians(float(self.orientation or 0))
+        tick = (-math.sin(angle), -math.cos(angle))
         for pin, (px, py) in screen_points.items():
             colour = anchor if str(pin) == '1' else geometry
             dc.SetPen(wx.Pen(colour, 2))
@@ -681,16 +690,29 @@ class PatternPreview(wx.Panel):
             # where the stock transparent brush can inherit a light fill.
             dc.SetBrush(wx.Brush(background))
             dc.DrawCircle(px, py, radius)
-            dc.SetTextForeground(colour)
+            dc.DrawLine(round(px + tick[0] * radius), round(py + tick[1] * radius),
+                        round(px + tick[0] * (radius + 6)), round(py + tick[1] * (radius + 6)))
+            dc.SetTextForeground(foreground)
             label = str(pin)
             label_width, label_height = dc.GetTextExtent(label)
-            dc.DrawText(label, px-label_width//2, py-label_height//2)
+            if inside:
+                dc.DrawText(label, px - label_width // 2, py - label_height // 2)
+            else:
+                # Beside the circle, away from the orientation tick.
+                dc.DrawText(label,
+                            round(px - tick[0] * (radius + 4) - (label_width if tick[0] > .5 else 0 if tick[0] < -.5 else label_width / 2)),
+                            round(py - tick[1] * (radius + 4) - (label_height if tick[1] > .5 else 0 if tick[1] < -.5 else label_height / 2)))
+
+    @staticmethod
+    def label_fits(label_width, label_height, radius):
+        """A number is drawn inside its circle only when it clears the outline."""
+        return math.hypot(label_width, label_height) <= 2 * radius - 3
 
     @staticmethod
     def label_point_size(radius, count, default_size):
         """Keep multi-digit labels distinct when dense gangs shrink their markers."""
         if count > 12 or radius <= 6:
-            return max(7, min(default_size, radius + 2))
+            return max(8, min(default_size, radius + 2))
         return default_size
 
     def screen_layout(self, width, height):
@@ -705,8 +727,8 @@ class PatternPreview(wx.Panel):
             for pin, point in self.points.items()
         }
         canvas_center = (width / 2, 40 + max(20, height - 56) / 2)
-        half_width = max(10, width / 2 - 26)
-        half_height = max(10, (height - 56) / 2 - 14)
+        half_width = max(10, width / 2 - 40)
+        half_height = max(10, (height - 56) / 2 - 30)
         extent_x = max(abs(point[0]) for point in relative.values())
         extent_y = max(abs(point[1]) for point in relative.values())
         scales = []
@@ -1436,9 +1458,14 @@ class WorkflowDialog(wx.Dialog):
         width = max(120, self.about_box.GetClientSize().width - 22)
         if getattr(self, '_about_wrapped', None) != (current, width):
             self._about_wrapped = (current, width)
-            self.about_text.SetLabel(progress.ABOUT[current])
-            self.about_text.Wrap(width)
-            self.about_text.SetMinSize((-1, self.about_text.GetBestSize().height))
+            # Wrap here: GTK's own wrapping reports a stale best height.
+            from wx.lib.wordwrap import wordwrap
+            dc = wx.ClientDC(self.about_text)
+            dc.SetFont(self.about_text.GetFont())
+            text = '\n'.join(line.rstrip() for line in
+                             wordwrap(progress.ABOUT[current], width, dc).split('\n'))
+            self.about_text.SetLabel(text)
+            self.about_text.SetMinSize((-1, dc.GetMultiLineTextExtent(text)[1] + 4))
         self.about_box.Layout()
 
     def select_step(self, event):
@@ -3588,6 +3615,18 @@ class WorkflowDialog(wx.Dialog):
             )
             row_offsets.append(offset_mm)
             row_offset_units.append(offset_unit)
+        if not row_lengths:
+            raise ValueError('Add a row and enter its positions')
+        # A pitch is only needed when there is something to space.
+        pitch_x = pitch_y = None
+        if self.gang_pitch_x.GetValue().strip():
+            pitch_x = self.gang_pitch_x.value_mm()
+        elif max(row_lengths) > 1:
+            raise ValueError('Enter the position pitch')
+        if self.gang_pitch_y.GetValue().strip():
+            pitch_y = self.gang_pitch_y.value_mm()
+        elif len(row_lengths) > 1:
+            raise ValueError('Enter the row pitch')
         mode = self.gang_numbering_mode.GetSelection()
         traversals = ('row-major', 'serpentine', 'column-major')
         numbering = []
@@ -3598,8 +3637,8 @@ class WorkflowDialog(wx.Dialog):
         return {
             'row_lengths': row_lengths,
             'row_offsets': row_offsets,
-            'pitch_x': self.gang_pitch_x.value_mm(),
-            'pitch_y': self.gang_pitch_y.value_mm(),
+            'pitch_x': pitch_x,
+            'pitch_y': pitch_y,
             'display_units': {
                 'pitch_x': self.gang_pitch_x.selected_unit(),
                 'pitch_y': self.gang_pitch_y.selected_unit(),
@@ -3656,15 +3695,10 @@ class WorkflowDialog(wx.Dialog):
         self.mirror.SetValue(edit['mirror'])
 
     def _preview_gang_values(self, values):
-        from .core.geometry import GangDefinition
-        applied = self.controller.gang(self.current_gang)
-        fields = GangDefinition.__dataclass_fields__
-        combined = dict(applied)
+        combined = dict(self.controller.gang(self.current_gang))
         combined.update(values)
         combined['gang'] = self.current_gang
-        definition = GangDefinition(**{key: value for key, value in combined.items()
-                                       if key in fields})
-        return definition.positions()
+        return self.controller.gang_definition(combined).positions()
 
     def _validate_gang_population(self, points):
         expected = {record.connector_pin for record in self.controller.table.records
@@ -3675,8 +3709,17 @@ class WorkflowDialog(wx.Dialog):
             )
 
     def _show_gang_definition(self, values, defined, clear_preview=False):
+        self.pattern_view.orientation = values.get('connector_rotation', 0)
         if clear_preview:
             self.pattern_view.show(self.current_gang, {})
+        if not defined and not values.get('row_lengths'):
+            # A gang nobody has described yet: nothing to draw and nothing wrong.
+            self.gang_position_total.SetLabel('0 positions total')
+            self.gang_definition_status.SetLabel('Not defined')
+            self._style_status(self.gang_definition_status, 'warning')
+            self.gang_preview_status.SetLabel('Not defined')
+            self._style_status(self.gang_preview_status, 'warning')
+            return False
         points = None
         try:
             points = self._preview_gang_values(values)
@@ -3770,7 +3813,7 @@ class WorkflowDialog(wx.Dialog):
         try:
             row = self.gang_rows.GetNumberRows()
             self._resize_gang_rows(row + 1)
-            self.gang_rows.SetCellValue(row, 1, '1')
+            self.gang_rows.SetCellValue(row, 1, '')
             self.gang_rows.SetCellValue(row, 2, '0 mil')
         finally:
             self._loading_gang = False
@@ -3824,15 +3867,11 @@ class WorkflowDialog(wx.Dialog):
             if name in self._gang_invalid_edits:
                 status = 'Invalid'
             else:
-                try:
-                    gang = self.controller.gang(name)
-                    points = self.controller.pattern(name)
-                    expected = {record.connector_pin for record in self.controller.table.records
-                                if record.connector == name}
-                    status = ('Defined' if gang.get('defined') and set(points) == expected
-                              else 'Not defined' if not gang.get('defined') else 'Invalid')
-                except (TypeError, ValueError):
-                    status = 'Invalid'
+                if not self.controller.gang(name).get('defined'):
+                    status = 'Not defined'
+                else:
+                    status = ('Defined' if progress.gang_defined(self.controller, name)
+                              else 'Invalid')
             index = self.gang_list.InsertItem(self.gang_list.GetItemCount(), name)
             self.gang_list.SetItem(index, 1, str(count))
             self.gang_list.SetItem(index, 2, status)
@@ -3877,7 +3916,7 @@ class WorkflowDialog(wx.Dialog):
             if self.current_gang in self._gang_invalid_edits:
                 self._restore_gang_edit(self._gang_invalid_edits[self.current_gang])
             else:
-                rows = list(applied.get('row_lengths') or [1])
+                rows = list(applied.get('row_lengths') or [])
                 offsets = list(applied.get('row_offsets') or [0] * len(rows))
                 if len(offsets) != len(rows):
                     offsets = [0] * len(rows)
@@ -3892,9 +3931,9 @@ class WorkflowDialog(wx.Dialog):
                     self.gang_rows.SetCellValue(
                         row, 2, f'{dimension_text(offset, unit)} {unit}',
                     )
-                self.gang_pitch_x.set_mm(applied.get('pitch_x', 2.54),
+                self.gang_pitch_x.set_mm(applied.get('pitch_x'),
                                          units.get('pitch_x', 'mil'))
-                self.gang_pitch_y.set_mm(applied.get('pitch_y', 2.54),
+                self.gang_pitch_y.set_mm(applied.get('pitch_y'),
                                          units.get('pitch_y', 'mil'))
                 numbering = applied.get('numbering', [])
                 traversal_index = {'row-major': 0, 'serpentine': 1, 'column-major': 2}.get(
@@ -5452,8 +5491,8 @@ class WorkflowDialog(wx.Dialog):
             self._resize_gang_rows(1)
             self.gang_rows.SetCellValue(0, 1, '1')
             self.gang_rows.SetCellValue(0, 2, '0 mil')
-            self.gang_pitch_x.set_mm(2.54, 'mil')
-            self.gang_pitch_y.set_mm(2.54, 'mil')
+            self.gang_pitch_x.set_mm(None, 'mil')
+            self.gang_pitch_y.set_mm(None, 'mil')
             self.gang_numbering_mode.SetSelection(0)
             self.gang_custom_numbering.ChangeValue('')
             self.gang_custom_numbering.Enable(False)

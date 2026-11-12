@@ -132,8 +132,12 @@ that selector when the field is committed; new fields default to `mil`. A grid
 dimension keeps its number left aligned and its unit selector right aligned in
 the same cell and follows the value-entry-cell commit behavior above. Gang
 definitions update live after validation; their list state
-is Not defined, Defined or Invalid. The preview uses hollow connector circles,
-with pin 1 distinguished by colour only, and does not own apply/revert state.
+is Not defined, Defined or Invalid. A new gang starts with no rows and no
+pitch, so nothing that looks like a real definition appears before the drafter
+enters one. The preview uses hollow connector circles, each with a tick showing
+connector orientation, with pin 1 distinguished by colour only, and does not
+own apply/revert state. Position numbers sit inside every circle or, when one
+would not fit, beside every circle.
 It maps the gang centroid to the preview center, so rotation is visually stable,
 and recomputes zoom, marker radius and label font size after each render to keep
 dense patterns and multi-digit identifiers legible inside the available canvas.
