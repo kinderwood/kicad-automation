@@ -470,6 +470,14 @@ asks once, then shows named stages and a readable result, with Recovery on
 its own tab. Failed reviews and applies are reported in a pop-up. Complete
 records go to the message log.
 
+Version 0.7.7 makes the About-this-step checklist clickable. A click brings
+the tab of the line's control forward, scrolls the step smoothly if the
+control is out of view, and draws a blue outline that fades in, holds for
+three seconds and fades out (`Spotlight`). Nothing is selected or moved, and
+leaving the step removes the outline. Show in Editor and the proposal
+highlight also find a live circle whose in-memory UUID differs from the saved
+one, by its position on the drawing layer.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal

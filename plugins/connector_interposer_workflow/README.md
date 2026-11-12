@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.7.6**, testing release. The package targets KiCad 10.0.0 through
+Version **0.7.7**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -29,7 +29,8 @@ and shows one status icon per step: a green check when the step is complete, a
 red X when something required is missing or wrong, a yellow exclamation mark
 when something needed for a final board is not yet set, and a grey dash when the
 step is the designer's choice. Under the list, the About box describes the open
-step and lists what it needs, one line per concern. The message log opens below
+step and lists what it needs, one line per concern. Click a line to have its
+control outlined for a few seconds. The message log opens below
 the window without moving the step; it records every status line for copying.
 Closing the window with unsaved workflow settings asks whether to save them.
 

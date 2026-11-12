@@ -18,7 +18,11 @@ system selection highlight so it keeps its colour. The About box under the
 list carries the step's one-sentence description and its checklist.
 `progress.py` computes both from the controller without wx: every checklist
 line is always present and only its status and count change, and a step's icon
-is the most pressing of its lines. Steps begin directly with their controls;
+is the most pressing of its lines. Clicking a line points at its control: the
+control's tab comes forward and `Spotlight` draws a blue outline of four thin
+strip windows around it that fades in, holds for three seconds and fades out,
+after scrolling the step smoothly when the control is out of view. It selects
+and moves nothing. Steps begin directly with their controls;
 there is no per-step task panel. The message log is a read-only text panel
 docked below the body; showing it grows the window by its own height so the
 step area keeps its position and size. Every former status-strip message is

@@ -238,6 +238,94 @@ class ChecklistView(wx.Panel):
                             top + (height - text_height) // 2)
 
 
+class Spotlight:
+    """Point at a control: a blue outline fades in, holds, and fades out.
+
+    The page scrolls smoothly to the control first when it is out of view.
+    Nothing is selected and nothing moves. The outline is four thin strips in
+    the margin around the control: real windows, so every platform paints
+    them, and they are removed afterwards.
+    """
+    TICK, FADE_IN, HOLD, FADE_OUT, SCROLL_STEPS = 40, 300, 3000, 600, 8
+
+    def __init__(self, owner):
+        self.target, self.elapsed, self.scroll, self.strips = None, 0, [], []
+        self.timer = wx.Timer(owner)
+        owner.Bind(wx.EVT_TIMER, self._tick, self.timer)
+
+    @classmethod
+    def strength(cls, elapsed):
+        """Outline opacity, 0 to 1, at ``elapsed`` milliseconds."""
+        if elapsed < cls.FADE_IN:
+            return max(0.0, elapsed / cls.FADE_IN)
+        if elapsed <= cls.FADE_IN + cls.HOLD:
+            return 1.0
+        return max(0.0, 1 - (elapsed - cls.FADE_IN - cls.HOLD) / cls.FADE_OUT)
+
+    def show(self, target):
+        self.stop()
+        self.target, self.elapsed = target, 0
+        self.scroll = self._scroll_plan(target)
+        self.timer.Start(self.TICK)
+
+    def stop(self):
+        self.timer.Stop()
+        self.target = None
+        for strip in self.strips:
+            if strip:
+                strip.Destroy()
+        self.strips = []
+
+    def _place(self):
+        """Create or move the four strips to sit just outside the control."""
+        rect = self.target.GetRect()
+        rect.Inflate(4, 4)
+        edges = ((rect.x, rect.y, rect.width, 2), (rect.x, rect.Bottom - 1, rect.width, 2),
+                 (rect.x, rect.y, 2, rect.height), (rect.Right - 1, rect.y, 2, rect.height))
+        if not self.strips:
+            parent = self.target.GetParent()
+            self.strips = [wx.Window(parent, size=(2, 2)) for _edge in edges]
+        for strip, (x, y, width, height) in zip(self.strips, edges):
+            strip.SetSize(x, y, width, height)
+
+    def _scroll_plan(self, target):
+        """Scroll positions that bring ``target`` into view in a few even steps."""
+        page = target.GetParent()
+        while page is not None and not isinstance(page, wx.ScrolledWindow):
+            page = page.GetParent()
+        if page is None:
+            return []
+        self.page = page
+        top = page.ScreenToClient(target.ClientToScreen((0, 0))).y
+        height = page.GetClientSize().height
+        if 0 <= top and top + target.GetSize().height <= height:
+            return []
+        unit = max(1, page.GetScrollPixelsPerUnit()[1])
+        x, start = page.GetViewStart()
+        end = max(0, start + (top - 20) // unit)
+        return [(x, round(start + (end - start) * step / self.SCROLL_STEPS))
+                for step in range(1, self.SCROLL_STEPS + 1)]
+
+    def _tick(self, event):
+        if not self.target:
+            self.stop()
+            return
+        if self.scroll:
+            self.page.Scroll(*self.scroll.pop(0))
+            return
+        self.elapsed += self.TICK
+        if self.elapsed >= self.FADE_IN + self.HOLD + self.FADE_OUT:
+            self.stop()
+            return
+        parent = self.target.GetParent()
+        colour = _mix_colour(parent.GetBackgroundColour(), ui_palette().accent.Get()[:3],
+                             self.strength(self.elapsed))
+        self._place()
+        for strip in self.strips:
+            strip.SetBackgroundColour(colour)
+            strip.Refresh()
+
+
 class MessageLog:
     """The dialog's message sink: every status line, kept for copying."""
 
@@ -1309,7 +1397,8 @@ class WorkflowDialog(wx.Dialog):
         about_sizer.Add(self.about_title, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
         self.about_text = wx.StaticText(self.about_box, label=progress.ABOUT[PAGES[0]])
         about_sizer.Add(self.about_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
-        self.checklist = ChecklistView(self.about_box)
+        self.checklist = ChecklistView(self.about_box, on_select=self._checklist_selected)
+        self.spotlight = Spotlight(self)
         about_sizer.Add(self.checklist, 0, wx.EXPAND | wx.ALL, 10)
         self.about_box.SetSizer(about_sizer)
         self.about_box.SetMinSize((step_width, -1))
@@ -1485,8 +1574,47 @@ class WorkflowDialog(wx.Dialog):
         self._refresh_guidance()
         self._step_shown()
 
+    def _checklist_target(self, step, index):
+        """The control a checklist line is about; its tab is brought forward."""
+        def tab(notebook, page, control):
+            notebook.SetSelection(page)
+            return control
+        targets = {
+            'Netlist source': (self.workbook_browse, self.mapper, self.mapper),
+            'Netclass type': (self.netclass_type_grid,),
+            'Layer assignment': (self.layer_map,),
+            'Routing permissions': (self.rules,),
+            'Connector assignments': tuple(
+                (lambda page=page: tab(self.assignment_notebook, page,
+                                       self.assignment_notebook.GetPage(page)))
+                for page in range(3)),
+            'RF transitions': (self.transition_list,) * 3,
+            'Define RF gangs': (self.gang_list,),
+            'Mechanical placement': (
+                self.user_layer,
+                lambda: tab(self.placement_notebook, 0, self.interposer_list),
+                lambda: tab(self.placement_notebook, 1, self.anchor_gang_list),
+                lambda: tab(self.placement_notebook, 2, self.dc_anchor_list),
+                lambda: tab(self.placement_notebook, 3, self.hole_list)),
+            'Interposer microvias': (self.microvia_enable,),
+            'Board outline': (self.outline_list,) * 2,
+            'Review changes': (self.review_button,) + (self.problem_list,) * 3,
+            'Apply / results': (lambda: tab(self.results_notebook, 0, self.apply_button),) * 2,
+        }.get(step, ())
+        if not 0 <= index < len(targets):
+            return None
+        target = targets[index]
+        return target() if callable(target) else target
+
+    def _checklist_selected(self, index, line):
+        """Clicking a checklist line points at its control; nothing else changes."""
+        target = self._checklist_target(PAGES[self.book.GetSelection()], index)
+        if target is not None:
+            self.spotlight.show(target)
+
     def _step_shown(self):
         """Work a step does by itself when it opens."""
+        self.spotlight.stop()
         if PAGES[self.book.GetSelection()] == 'Mechanical placement':
             self._placement_shown()
         else:
@@ -5238,12 +5366,43 @@ class WorkflowDialog(wx.Dialog):
             except (RuntimeError, AttributeError):
                 pass
         wanted = set(uuids)
-        found = [item for item in self.pcbnew.GetBoard().GetDrawings()
-                 if item.m_Uuid.AsString() in wanted] if wanted else []
+        drawings = list(self.pcbnew.GetBoard().GetDrawings()) if wanted else []
+        found = [item for item in drawings if item.m_Uuid.AsString() in wanted]
+        missing = wanted - {item.m_Uuid.AsString() for item in found}
+        if missing:
+            found.extend(self._live_circles(drawings, missing))
         for item in found:
             item.SetBrightened()
         self._shown_in_editor = found
         self.pcbnew.Refresh()
+        return found
+
+    def _live_circles(self, drawings, uuids):
+        """Live circles standing where the saved circles ``uuids`` are.
+
+        A graphic imported in this editor session can carry another UUID in
+        memory than in the saved file, so position on the drawing layer decides.
+        """
+        centres = [circle['center'] for circle in self._inspected_circles
+                   if circle['uuid'] in uuids]
+        if not centres:
+            return []
+        tolerance = self.controller.config['mechanical']['feature_tolerance_mm']
+        layer = self.user_layer.GetValue().strip()
+        board = self.pcbnew.GetBoard()
+        found = []
+        for item in drawings:
+            try:
+                if (not isinstance(item, self.pcbnew.PCB_SHAPE) or
+                        item.GetShape() != self.pcbnew.SHAPE_T_CIRCLE or
+                        board.GetLayerName(item.GetLayer()) != layer):
+                    continue
+                centre = item.GetCenter()
+            except (AttributeError, TypeError):
+                continue
+            position = (centre.x / 1e6, centre.y / 1e6)
+            if any(math.dist(position, saved) <= tolerance for saved in centres):
+                found.append(item)
         return found
 
     def _show_in_editor(self, uuids, first=None):
@@ -5954,6 +6113,7 @@ class WorkflowDialog(wx.Dialog):
                 self.controller.save()
         self._closing = True
         self._disarm_pick()
+        self.spotlight.stop()
         for item in self._shown_in_editor:
             try:
                 item.ClearBrightened()

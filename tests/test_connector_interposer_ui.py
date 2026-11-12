@@ -2121,6 +2121,13 @@ class NativeDialogTests(unittest.TestCase):
             self.assertEqual(dialog.anchor_gang_list.GetItemText(0, 5), 'Placed')
             dialog.show_hole(None)
             self.assertTrue(unsaved.brightened)
+            # A live circle whose in-memory UUID differs from the saved one is
+            # still found, by its position on the drawing layer.
+            unsaved.m_Uuid = SimpleNamespace(AsString=lambda: 'transient')
+            unsaved.brightened = False
+            dialog.show_hole(None)
+            self.assertTrue(unsaved.brightened)
+            unsaved.m_Uuid = SimpleNamespace(AsString=lambda: 'c9')
 
             # Picking takes the editor selection; anything but a drawing circle is refused.
             Editor.selection = []
@@ -2318,6 +2325,69 @@ class NativeDialogTests(unittest.TestCase):
                                  ('The schematic is open', 'Apply stopped'))
             self.assertEqual(stages()[0], ('missing', 'stopped'))
             self.assertFalse(dialog._applying)
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
+    def test_checklist_line_points_at_its_control_with_a_fading_outline(self):
+        from plugins.connector_interposer_workflow.ui import Spotlight, WorkflowDialog
+
+        # Fade in, hold a few seconds, fade out: no blinking, no jump.
+        self.assertEqual(Spotlight.strength(0), 0)
+        self.assertEqual(Spotlight.strength(Spotlight.FADE_IN / 2), .5)
+        self.assertEqual(Spotlight.strength(Spotlight.FADE_IN), 1)
+        self.assertEqual(Spotlight.strength(Spotlight.FADE_IN + Spotlight.HOLD), 1)
+        self.assertEqual(
+            Spotlight.strength(Spotlight.FADE_IN + Spotlight.HOLD + Spotlight.FADE_OUT / 2), .5)
+        self.assertEqual(
+            Spotlight.strength(Spotlight.FADE_IN + Spotlight.HOLD + Spotlight.FADE_OUT), 0)
+        self.assertTrue(1000 <= Spotlight.HOLD < 10000)
+
+        dialog = WorkflowDialog()
+        try:
+            dialog.Show()
+            self.app.Yield()
+            for step in PAGES:
+                dialog.select_page(PAGES.index(step))
+                for index, line in enumerate(progress.checklist(dialog.controller, step)):
+                    target = dialog._checklist_target(step, index)
+                    self.assertIsNotNone(target, f'{step}: {line.label}')
+                    self.assertTrue(target.IsShownOnScreen(), f'{step}: {line.label}')
+                self.assertIsNone(dialog._checklist_target(step, 99))
+
+            dialog.select_page(PAGES.index('Mechanical placement'))
+            selection = dialog.step_list.GetSelection()
+            dialog.checklist.on_select(2, dialog.checklist.lines[2])
+            self.assertEqual(dialog.placement_notebook.GetSelection(), 1)
+            self.assertIs(dialog.spotlight.target, dialog.anchor_gang_list)
+            self.assertTrue(dialog.spotlight.timer.IsRunning())
+            self.assertEqual(dialog.step_list.GetSelection(), selection)
+            ticks = 0
+            while dialog.spotlight.target is not None and ticks < 1000:
+                dialog.spotlight._tick(None)
+                ticks += 1
+            total = Spotlight.FADE_IN + Spotlight.HOLD + Spotlight.FADE_OUT
+            self.assertEqual(ticks, math.ceil(total / Spotlight.TICK))
+            self.assertFalse(dialog.spotlight.timer.IsRunning())
+
+            # A control out of view is reached in several even scroll steps.
+            page = dialog.pages[PAGES.index('Mechanical placement')]
+            self.app.Yield()
+            page.SetScrollbars(8, 8, 100, 500)
+            page.Scroll(0, 300)
+            self.assertEqual(page.GetViewStart()[1], 300)
+            plan = dialog.spotlight._scroll_plan(dialog.user_layer)
+            self.assertEqual(len(plan), Spotlight.SCROLL_STEPS)
+            self.assertEqual(plan[-1][1], 0)
+            self.assertEqual([y for _x, y in plan], sorted((y for _x, y in plan), reverse=True))
+            dialog.spotlight.show(dialog.user_layer)
+            for _ in range(Spotlight.SCROLL_STEPS):
+                dialog.spotlight._tick(None)
+            self.assertEqual(page.GetViewStart()[1], 0)
+
+            # Leaving the step removes the outline at once.
+            dialog.select_page(PAGES.index('Board outline'))
+            self.assertIsNone(dialog.spotlight.target)
         finally:
             dialog.Destroy()
             self.app.Yield()
