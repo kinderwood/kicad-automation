@@ -12,7 +12,7 @@ from .core.library_catalog import KiCadLibraryCatalog
 from .core.units import DIMENSION_UNITS, dimension_text, parse_dimension
 
 WORKBOOK_SUFFIXES = ('.xlsx', '.csv', '.txt')
-SPREADSHEET_PREVIEW_ROWS = 5
+SPREADSHEET_PREVIEW_ROWS = 12
 
 
 def _system_colour(name, fallback):
@@ -474,7 +474,15 @@ class DimensionCellEditor(grid.GridCellEditor):
 
 
 class AssignmentRenderer(grid.GridCellStringRenderer):
-    """Keep assignment cells visibly interactive when their editor is inactive."""
+    """Draw a table entry cell: white, blue outline, chevron.
+
+    The cell's attribute background still records its state (assigned, missing
+    or conflicting) for the workflow, but it is never painted as a fill. A
+    missing or conflicting entry gets a red outline and the red X in a slot
+    that is always reserved, so the text does not shift when it appears.
+    """
+    SLOT = 20
+
     def __init__(self, arrow=True):
         super().__init__()
         self.arrow = arrow
@@ -482,29 +490,48 @@ class AssignmentRenderer(grid.GridCellStringRenderer):
     def Clone(self):
         return AssignmentRenderer(self.arrow)
 
+    @staticmethod
+    def needs_attention(colour, palette=None):
+        palette = palette or ui_palette()
+        return colour.Get()[:3] in (palette.warning.Get()[:3], palette.error.Get()[:3])
+
     def Draw(self, table, attr, dc, rect, row, column, selected):
-        background = table.GetSelectionBackground() if selected else attr.GetBackgroundColour()
-        foreground = table.GetSelectionForeground() if selected else attr.GetTextColour()
-        dc.SetPen(wx.Pen(background))
-        dc.SetBrush(wx.Brush(background))
-        dc.DrawRectangle(rect)
-        dc.SetFont(attr.GetFont())
-        dc.SetTextForeground(foreground)
+        palette = ui_palette()
         value = table.GetCellValue(row, column)
-        text_width = max(0, rect.width - (28 if self.arrow else 12))
-        clipped = wx.Control.Ellipsize(value, dc, wx.ELLIPSIZE_END, text_width)
+        dc.SetFont(attr.GetFont())
+        if not self.arrow:
+            background = table.GetLabelBackgroundColour()
+            dc.SetPen(wx.Pen(background))
+            dc.SetBrush(wx.Brush(background))
+            dc.DrawRectangle(rect)
+            dc.SetTextForeground(table.GetLabelTextColour())
+            _, text_height = dc.GetTextExtent(value)
+            dc.DrawText(value, rect.x + 6, rect.y + max(1, (rect.height - text_height) // 2))
+            return
+        problem = self.needs_attention(attr.GetBackgroundColour(), palette)
+        dc.SetPen(wx.Pen(palette.window))
+        dc.SetBrush(wx.Brush(palette.window))
+        dc.DrawRectangle(rect)
+        dc.SetPen(wx.Pen(palette.status[progress.MISSING] if problem else palette.highlight, 2))
+        dc.SetBrush(wx.TRANSPARENT_BRUSH)
+        dc.DrawRectangle(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2)
+        if problem:
+            draw_status_icon(dc, progress.MISSING, rect.x + 5,
+                             rect.y + (rect.height - 14) // 2, palette)
+        text = value or 'Select…'
+        dc.SetTextForeground(palette.text if value else palette.muted)
+        clipped = wx.Control.Ellipsize(text, dc, wx.ELLIPSIZE_END,
+                                       max(0, rect.width - self.SLOT - 24))
         _, text_height = dc.GetTextExtent(clipped)
-        dc.DrawText(clipped, rect.x + 6, rect.y + max(1, (rect.height - text_height) // 2))
-        if self.arrow:
-            center_x = rect.GetRight() - 12
-            center_y = rect.y + rect.height // 2
-            dc.SetPen(wx.Pen(foreground))
-            dc.SetBrush(wx.Brush(foreground))
-            dc.DrawPolygon((wx.Point(center_x - 4, center_y - 2),
-                            wx.Point(center_x + 4, center_y - 2),
-                            wx.Point(center_x, center_y + 3)))
-        dc.SetPen(wx.Pen(ui_palette().accent, 2))
-        dc.DrawLine(rect.x, rect.GetBottom() - 1, rect.GetRight(), rect.GetBottom() - 1)
+        dc.DrawText(clipped, rect.x + self.SLOT + 4,
+                    rect.y + max(1, (rect.height - text_height) // 2))
+        center_x = rect.GetRight() - 12
+        center_y = rect.y + rect.height // 2
+        dc.SetPen(wx.Pen(palette.text))
+        dc.SetBrush(wx.Brush(palette.text))
+        dc.DrawPolygon((wx.Point(center_x - 4, center_y - 2),
+                        wx.Point(center_x + 4, center_y - 2),
+                        wx.Point(center_x, center_y + 3)))
 
 
 class TableTextCell(wx.Panel):
@@ -1363,8 +1390,12 @@ class WorkflowDialog(wx.Dialog):
         self.step_list.set_statuses(statuses)
         if self.about_title.GetLabel() != current:
             self.about_title.SetLabel(current)
+        width = max(120, self.about_box.GetClientSize().width - 22)
+        if getattr(self, '_about_wrapped', None) != (current, width):
+            self._about_wrapped = (current, width)
             self.about_text.SetLabel(progress.ABOUT[current])
-        self.about_text.Wrap(max(120, self.about_box.GetClientSize().width - 22))
+            self.about_text.Wrap(width)
+            self.about_text.SetMinSize((-1, self.about_text.GetBestSize().height))
         self.about_box.Layout()
 
     def select_step(self, event):
@@ -1645,6 +1676,8 @@ class WorkflowDialog(wx.Dialog):
         for view in (self.mapper, self.netclass_type_grid, self.layer_map, self.rules,
                      self.gang_rows):
             self._style_grid(view)
+        for view in (self.netclass_type_grid, self.layer_map):
+            view.SetDefaultCellBackgroundColour(palette.panel)
         self._style_mapper_theme()
         if hasattr(self, 'spreadsheet_feedback'):
             self._set_spreadsheet_feedback(
@@ -1841,8 +1874,10 @@ class WorkflowDialog(wx.Dialog):
         row.Add(self.columns_status, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         self.nets_status = self.status_label(mapping_box, '0 nets parsed')
         row.Add(self.nets_status, 0, wx.ALIGN_CENTER_VERTICAL)
+        self.columns_status.Hide()
+        self.nets_status.Hide()
         row.AddStretchSpacer()
-        self.view_button = self.button(mapping_box, 'Open full table…', self.view_data)
+        self.view_button = self.button(mapping_box, 'Open Full Table…', self.view_data)
         row.Add(self.view_button, 0, wx.ALIGN_CENTER_VERTICAL)
         mapping.Add(row, 0, wx.EXPAND | wx.ALL, 8)
         panel.GetSizer().Add(mapping, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -2231,7 +2266,7 @@ class WorkflowDialog(wx.Dialog):
         sizer = wx.StaticBoxSizer(box, wx.VERTICAL)
         instruction = wx.BoxSizer(wx.HORIZONTAL)
         instruction.AddStretchSpacer()
-        self.netclass_auto_assign = self.button(box, 'Auto assign', self.auto_assign_netclass_types)
+        self.netclass_auto_assign = self.button(box, 'Auto Assign', self.auto_assign_netclass_types)
         self.netclass_auto_assign.SetToolTip(
             'Fill blank types from exact J# / J### reference conventions and the exact DC netclass; preserve manual selections.'
         )
@@ -2257,6 +2292,7 @@ class WorkflowDialog(wx.Dialog):
         sizer.Add(self.netclass_type_grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
         self.netclass_type_status = self.status_label(box, '0 of 0 assigned')
         sizer.Add(self.netclass_type_status, 0, wx.ALL, 8)
+        self.netclass_type_status.Hide()
         panel.GetSizer().Add(sizer, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
     def refresh_netclass_types(self):
@@ -2387,7 +2423,7 @@ class WorkflowDialog(wx.Dialog):
         layer_sizer = wx.StaticBoxSizer(layer_box, wx.VERTICAL)
         instruction = wx.BoxSizer(wx.HORIZONTAL)
         instruction.AddStretchSpacer()
-        self.layer_auto_assign = self.button(layer_box, 'Auto assign', self.auto_assign_layers)
+        self.layer_auto_assign = self.button(layer_box, 'Auto Assign', self.auto_assign_layers)
         self.layer_auto_assign.SetToolTip(
             'Fill blank mappings with unambiguous layer-number matches; preserve manual selections.'
         )
@@ -2407,6 +2443,7 @@ class WorkflowDialog(wx.Dialog):
         status_row = wx.BoxSizer(wx.HORIZONTAL)
         self.layer_mapping_status = self.status_label(layer_box, '0 of 0 assigned')
         status_row.Add(self.layer_mapping_status, 0, wx.ALIGN_CENTER_VERTICAL)
+        self.layer_mapping_status.Hide()
         status_row.AddStretchSpacer()
         layer_sizer.Add(status_row, 0, wx.EXPAND | wx.ALL, 8)
         panel.GetSizer().Add(layer_sizer, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -2426,7 +2463,7 @@ class WorkflowDialog(wx.Dialog):
         self.rules = grid.Grid(panel)
         self.rules.CreateGrid(0, 1)
         self.rules.Bind(grid.EVT_GRID_CELL_CHANGED, self.routing_permission_changed)
-        panel.GetSizer().Add(self.rules, 1, wx.EXPAND | wx.ALL, 8)
+        panel.GetSizer().Add(self.rules, 0, wx.ALL, 8)
         self.new_rules = self.note(panel, '')
         self.new_rules.Hide()
 
@@ -2474,15 +2511,20 @@ class WorkflowDialog(wx.Dialog):
                         row, col,
                         '1' if self.controller.config['layer_rules'][netclass].get(layer, True) else '',
                     )
-            if self.controller.new_rules:
-                self.new_rules.SetLabel(
-                    f'{len(self.controller.new_rules)} new combinations require review.'
-                )
-                self.new_rules.Show()
-            else:
-                self.new_rules.SetLabel('')
-                self.new_rules.Hide()
+            self.new_rules.SetLabel(
+                f'{len(self.controller.new_rules)} new combinations require review.'
+                if self.controller.new_rules else ''
+            )
+            size = (
+                self.rules.GetRowLabelSize() + 2 + sum(
+                    self.rules.GetColSize(col) for col in range(self.rules.GetNumberCols())),
+                self.rules.GetColLabelSize() + 2 + sum(
+                    self.rules.GetRowSize(row) for row in range(self.rules.GetNumberRows())),
+            )
+            self.rules.SetMinSize(size)
+            self.rules.SetMaxSize(size)
             self.pages[PAGES.index('Routing permissions')].Layout()
+            self.pages[PAGES.index('Routing permissions')].FitInside()
         finally:
             self._updating_layers = False
         if hasattr(self, 'transition_list'):

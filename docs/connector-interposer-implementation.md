@@ -412,6 +412,16 @@ switch. Closing with unsaved workflow settings asks whether to save. The steps
 themselves still use their previous layouts and are being brought into line
 with the Spec one at a time.
 
+Version 0.7.1 brings the Nets & Layers steps closer to the Spec. Entry cells in
+tables are drawn white with a blue outline and a chevron; a missing or
+conflicting entry has a red outline and the red X in an always-reserved slot.
+Readouts that share a row with entries are flat grey. The per-section status
+strips on Netlist source, Netclass type and Layer assignment are gone, since
+the About-box checklist reports the same counts, and the routing "new
+combinations" note no longer appears and disappears. The netlist preview shows
+twelve rows, the routing grid is sized to its content, and button labels use
+KiCad's title case.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal

@@ -581,10 +581,10 @@ class NativeDialogTests(unittest.TestCase):
         self.assertFalse(dialog.view_button.IsEnabled())
         self.assertFalse(dialog.apply_button.IsEnabled())
         self.assertFalse(dialog.workbook_path.IsShown())
-        self.assertEqual(dialog.mapper.GetNumberRows(), 6)
+        self.assertEqual(dialog.mapper.GetNumberRows(), 13)
         self.assertEqual(dialog.mapper.GetNumberCols(), 9)
         self.assertIsInstance(dialog.mapper.GetCellRenderer(0, 2), AssignmentRenderer)
-        self.assertIsNotNone(self.wx.FindWindowByLabel('Open full table…', dialog))
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Open Full Table…', dialog))
         self.assertIsInstance(dialog.interposer_symbol_assignment, SymbolAssignmentCtrl)
         self.assertIsInstance(dialog.interposer_footprint_assignment, FootprintAssignmentCtrl)
         self.assertIsInstance(dialog.hole_path, LibrarySelectionCtrl)
@@ -664,13 +664,22 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(dialog.netclass_type_status.GetLabel(), '1 of 1 assigned')
         self.assertEqual(dialog.netclass_type_grid.GetCellBackgroundColour(0, 3).Get()[:3],
                          palette.assigned.Get()[:3])
-        self.assertTrue(dialog.new_rules.IsShown())
-        self.assertIn('new combinations require review', dialog.new_rules.GetLabel())
+        # Nothing appears on the step; the checklist carries the reminder.
+        self.assertFalse(dialog.new_rules.IsShown())
+        routing = progress.checklist(dialog.controller, 'Routing permissions')[0]
+        self.assertEqual((routing.status, routing.label), ('caution', 'New combinations to review'))
+        self.assertGreater(int(routing.count), 0)
+        for hidden in (dialog.columns_status, dialog.nets_status,
+                       dialog.netclass_type_status, dialog.layer_mapping_status):
+            self.assertFalse(hidden.IsShown())
+        self.assertTrue(AssignmentRenderer.needs_attention(palette.warning))
+        self.assertTrue(AssignmentRenderer.needs_attention(palette.error))
+        self.assertFalse(AssignmentRenderer.needs_attention(palette.assigned))
         self.assertEqual(dialog.layer_map.GetNumberRows(), 1)
         self.assertIsInstance(dialog.layer_map.GetCellRenderer(0, 1), AssignmentRenderer)
         self.assertEqual(dialog.layer_map.GetCellBackgroundColour(0, 1).Get()[:3],
                          palette.warning.Get()[:3])
-        self.assertIsNotNone(self.wx.FindWindowByLabel('Auto assign', dialog.pages[2]))
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Auto Assign', dialog.pages[2]))
         self.assertLess(dialog.layer_map.GetSize().height, 100)
         self.assertEqual(
             dialog.layer_map.GetSize().height,
