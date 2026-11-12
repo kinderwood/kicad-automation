@@ -448,6 +448,18 @@ preview draws a connector-orientation tick on every circle and places the
 position numbers either inside every circle or beside every one. The step
 description under the step list now wraps to its full height.
 
+Version 0.7.5 rebuilds Mechanical placement to the Spec. The drawing layer
+(default `User.Drawings`) sits above Interposer / RF gangs / DC connectors /
+Mounting holes / Advanced tabs. The saved drawing is read automatically, so
+the Inspect button, the circle inventory table and the per-tab status text
+are gone. Parts are placed with Pick in Editor (the next editor selection),
+checked with Show in Editor, or accepted with Use Proposed Match, which is
+offered when exactly one place fits the part's whole pattern on free circles
+(`placement.py`, wx-free). Placements carry over to a re-read drawing when
+their circle is the same object in the same place; otherwise the row shows
+Pick again. Mounting holes are added first and placed like any other row.
+Visiting the step no longer invalidates a current review.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal

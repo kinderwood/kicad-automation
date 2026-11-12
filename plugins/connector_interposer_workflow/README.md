@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.7.4**, testing release. The package targets KiCad 10.0.0 through
+Version **0.7.5**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -175,42 +175,39 @@ files changed after the transaction.
    the netlist; incomplete or population-mismatched entries are
    **Invalid**. Copying settings never changes gang anchors or selected library parts.
 8. **Mechanical placement:** import the complete mechanical drawing through
-   KiCad's native **File → Import → Graphics**, select its user layer, and
-   save the board. Click **Inspect saved drawing** before selecting anchors.
-   Inspection fingerprints the complete imported layer, including native object
-   UUIDs. Every selected circle is accepted only for that exact drawing revision.
-   When KiCad exposes a different transient UUID for the selected live graphic,
-   the explicit click is resolved uniquely to the current inspected saved circle
-   and stores that saved UUID. Apply also aligns transient live drawing UUIDs to
-   those reviewed saved identities so a later PCB Editor save does not make an
-   unchanged imported drawing appear to be a new revision.
-   Reimporting or replacing a DXF therefore requires a new inspection and explicit
-   reselection, even when its visible geometry is identical. A unique geometry
-   match may be shown as a suggestion but is never silently accepted. Five native tabs separate drawing inventory, interposer,
-   RF anchor, DC connector and mounting-hole work. The bounded drawing
-   inventory lists saved circles, lines/arcs and optional text. Text is
-   shown only as drawing context and is never parsed for identity or placement.
-   Select the interposer origin circle, orientation and Front/Back mounting
-   side.
-   Select RF gangs and DC connectors from compact lists; a selected location-1
-   or pin-1 circle is applied immediately. Valid numeric, orientation, side,
-   source-layer and center-tolerance edits also update the current workflow on commit,
-   with no separate acceptance buttons. The native backend measures the
-   footprint's transformed pad-1 offset and places that pad at the circle center
-   regardless of library origin. The drawing-wide center tolerance defaults to
-   0.3 mil and applies to calculated RF locations, every DC electrical pad
-   (including NC pins), and interposer pads when the imported drawing contains
-   a complete interposer pad-circle set. Interposer pad circles are detected
-   automatically: an absent or partial set produces a Review warning and does
-   not block Apply, while a complete set receives the same one-to-one center
-   validation as DC pads. Unmatched extra circles are ignored. Missing RF or DC
-   feature circles and duplicate or ambiguous matches block Review. Failed checks report the measured center deviation
-   and configured limit; ambiguous matches remain blocking. Mounting holes use
-   selected-circle capture and a removable placed-hole list. They use approved
-   footprints from the loaded KiCad libraries and are board-only, excluded from
-   BOM and position files. Linear entry boxes use the same compact number and
-   independent unit selector as Define RF gangs. Coordinate lists include units
-   in each value instead of assuming a fixed display unit.
+   KiCad's native **File → Import → Graphics** and save the board. Choose its
+   **Drawing layer** (default `User.Drawings`). The workflow reads that layer
+   of the saved board by itself when the step opens and shows how many circles
+   it found. The **Interposer**, **RF gangs** and **DC connectors** tabs each
+   list their parts with full-precision X and Y, side, rotation and status.
+   Select a row, then:
+   - **Pick in Editor**, then click the part's circle in the PCB Editor (the
+     interposer origin, RF location 1 or DC pin 1). If the circle is not in
+     the saved board yet, save the board and pick again.
+   - **Use Proposed Match** when the workflow found the one place where the
+     part's whole pattern fits free drawing circles. The proposed circles are
+     highlighted in the PCB Editor. When a part fits several places, pick one.
+   - **Show in Editor** highlights the circles a placed part occupies.
+
+   Interposer and DC connector side and rotation are set under their tables;
+   RF gang side and rotation come from Define RF gangs. On **Mounting holes**,
+   enter a reference, choose a footprint and **Add**, then place the row with
+   **Pick in Editor**. Mounting holes use approved footprints from the loaded
+   KiCad libraries and are board-only, excluded from BOM and position files.
+   **Advanced** holds the centre tolerance (default 0.3 mil): how far a
+   drawing circle may be from its calculated position and still count as a
+   match. It applies to calculated RF locations, every DC electrical pad
+   (including NC pins), and interposer pads when the drawing contains a
+   complete interposer pad-circle set. An absent or partial interposer set
+   produces a Review warning and does not block Apply. Missing RF or DC
+   feature circles and duplicate or ambiguous matches block Review, reporting
+   the measured centre deviation and the limit. Drawing text is never used for
+   identity or placement. Placements belong to the drawing they were made on:
+   a circle that is still the same object in the same place carries over when
+   the drawing is read again, while a moved or re-imported circle shows
+   **Pick again**. Apply aligns transient live drawing UUIDs to the reviewed
+   saved identities so a later PCB Editor save does not make an unchanged
+   drawing look new.
 9. **Interposer microvias:** optionally choose one eligible predefined Board
    Setup via size for all interposer locations. The workflow creates native,
    locked, adjacent-layer microvias coincident with the placed interposer pads.

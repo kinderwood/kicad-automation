@@ -169,25 +169,37 @@ def _define_rf_gangs(controller):
 
 
 def _mechanical_placement(controller):
+    from . import placement
     config = controller.config
     reference = controller.interposer_reference()
-    interposer = config['interposers'].get(reference, {}) if reference else {}
     gangs = controller.gang_names()
     connectors = controller.dc_connector_names()
-    holes = len(config.get('mounting_holes', []))
-    needs_drawing = bool(reference or gangs or connectors)
+    holes = config.get('mounting_holes', [])
+    needs_drawing = bool(reference or gangs or connectors or holes)
     read = bool(config['mechanical'].get('inspected_revision'))
+    records = [placement.circle_record(controller, *part) for part in placement.parts(controller)]
+    records += [hole.get('pose_circle') or {} for hole in holes]
+    changed = any(placement.stale(controller, record) for record in records)
+
+    def placed(kind, names):
+        return _counted(
+            {placement.INTERPOSER: 'Interposer', placement.GANG: 'RF gangs',
+             placement.DC: 'DC connectors'}[kind],
+            sum(placement.anchor(controller, kind, name) is not None and
+                not placement.stale(controller, placement.circle_record(controller, kind, name))
+                for name in names),
+            len(names))
+
     return (
-        Line(DONE if read else MISSING if needs_drawing else OPTIONAL, 'Drawing read'),
-        _counted('Interposer', int(bool(interposer.get('pose_accepted'))),
-                 int(bool(reference))),
-        _counted('RF gangs',
-                 sum(bool(controller.gang(name).get('anchor_accepted')) for name in gangs),
-                 len(gangs)),
-        _counted('DC connectors',
-                 sum(bool(controller.dc_connector(name).get('anchor_accepted'))
-                     for name in connectors), len(connectors)),
-        Line(DONE if holes else OPTIONAL, 'Mounting holes', str(holes)),
+        Line(MISSING if changed or (needs_drawing and not read)
+             else DONE if read else OPTIONAL, 'Drawing unchanged'),
+        placed(placement.INTERPOSER, [reference] if reference else []),
+        placed(placement.GANG, gangs),
+        placed(placement.DC, connectors),
+        _counted('Mounting holes',
+                 sum(bool((hole.get('pose_circle') or {}).get('uuid')) and
+                     not placement.stale(controller, hole.get('pose_circle'))
+                     for hole in holes), len(holes)),
     )
 
 

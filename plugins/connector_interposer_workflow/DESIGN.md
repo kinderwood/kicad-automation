@@ -143,36 +143,36 @@ and recomputes zoom, marker radius and label font size after each render to keep
 dense patterns and multi-digit identifiers legible inside the available canvas.
 
 Mechanical placement owns the imported-drawing source settings and every
-board-space part origin derived from that drawing. A native notebook separates
-**Imported drawing**, **Interposer**, **RF anchors**, **DC connectors** and
-**Mounting holes** so project-wide inventory, single-part placement,
-repeatable connector placement and optional board-only parts do not compete in
-one flat form. The notebook and focused editors are width-bounded; linear
-fields use the same compact number-plus-unit control as Define RF gangs, and
-coordinate lists include the saved display unit with each value. RF gangs and
-DC connectors use compact, searchable selection lists beside one focused
-editor, following the stable-selection pattern from Define RF gangs.
+board-space part origin derived from that drawing. The drawing layer sits above
+a notebook with **Interposer**, **RF gangs**, **DC connectors**, **Mounting
+holes** and **Advanced** tabs; the layer defaults to KiCad's own name for its
+drawing layer, `User.Drawings`, and the centre tolerance is on Advanced because
+it rarely changes. Each part tab is a read-only table of full-precision X and
+Y readouts (never rounded, in the toolbar's mil/mm unit) with Side, Rotation
+and Status, over the same three buttons. RF gang side and rotation belong to
+Define RF gangs and are only shown here.
 
-Valid orientation, side, drawing-layer and center-tolerance edits update
-the current workflow when their complete value is committed. There are no
-separate interposer, RF-anchor or DC-placement acceptance buttons. Capturing a
-selected native circle is an explicit canvas action and applies its center
-immediately. The interposer has its own origin-circle action; RF uses location
-1 and DC uses footprint pad 1. Imported text is contextual inventory only and
-never supplies identity or placement. Group-local status identifies the selected
-circle and current placement state.
+- **Pick in Editor** takes the next circle selected in the PCB Editor for the
+  selected row; there is no second click in the dialog.
+- **Show in Editor** highlights the circles the row occupies and moves the
+  editor view to them, so the drafter can see which circles are in use.
+- **Use Proposed Match** accepts the one place where the part's pattern fits
+  free drawing circles. One fit is proposed and highlighted in the editor;
+  several fits leave the choice to the drafter; a placed part's circles are
+  not offered to another part.
 
-Saved-board inspection remains explicit because it launches bounded native
-analysis rather than changing an in-memory field. Inspection fingerprints the
-complete imported layer, including native UUIDs. Circle selections carry that
-accepted drawing revision. A later inspection may offer a unique geometry match
-as a suggestion, but changing or reimporting the drawing always requires explicit
-reselection. During Apply, exact live/saved drawing content is used to align
-KiCad's transient live graphic UUIDs to the already reviewed saved UUIDs; this
-prevents a later editor save from manufacturing a false drawing revision without
-weakening explicit reassociation for a real reimport. Mounting-hole creation also
-remains explicit because it adds a new project item; its selected-circle action
-must never reuse the active RF anchor implicitly.
+The saved board's drawing layer is read by itself when the step opens, when
+the layer changes, and once more when a picked circle is not in the last read
+(the board may have been saved since). There is no Inspect button and no
+circle inventory table. The read fingerprints the complete layer, including
+native UUIDs. A placement whose circle is still the same object in the same
+place carries over to a re-read drawing; a circle that moved or was replaced
+shows **Pick again**, and the checklist line **Drawing unchanged** turns red.
+During Apply, exact live/saved drawing content is used to align KiCad's
+transient live graphic UUIDs to the already reviewed saved UUIDs; this
+prevents a later editor save from manufacturing a false drawing revision.
+A mounting hole is added with its reference and footprint first and placed
+with Pick in Editor afterwards, like every other row.
 The placed-hole list supports removal before Review changes. All source
 geometry is revalidated during Review and Apply; live UI updates do not weaken
 that boundary.

@@ -148,6 +148,62 @@ class ControllerTests(unittest.TestCase):
             self.assertFalse(settings_path.exists())
             self.assertNotEqual(fresh.config['project_id'], project_id)
 
+    def test_proposed_match_finds_where_a_part_fits_the_drawing(self):
+        from plugins.connector_interposer_workflow import placement, progress
+        from plugins.connector_interposer_workflow.core.libraries import Pad
+        controller = self.controller
+        controller.set_gang('J101', {'row_lengths': [2], 'pitch_x': 2.54, 'defined': True})
+        # Two identical two-position sites and one stray circle.
+        centres = [(10, 10), (12.54, 10), (40, 10), (42.54, 10), (70, 70)]
+        circles = [{'uuid': f'c{number}', 'center': list(centre), 'radius': .5}
+                   for number, centre in enumerate(centres)]
+        found, index, relative = placement.proposals(controller, 'gang', 'J101', circles)
+        self.assertEqual([circle['uuid'] for circle in found], ['c0', 'c2'],
+                         'Several fits leave the choice to the drafter')
+        self.assertEqual(index.covered((10 + dx, 10 + dy) for dx, dy in relative),
+                         {'c0', 'c1'})
+
+        # A placed part claims its circles, leaving one fit: the proposal.
+        controller.set_gang('J202', {
+            'row_lengths': [1], 'defined': True, 'anchor': [40, 10], 'anchor_accepted': True,
+            'anchor_circle': {'uuid': 'c2', 'center': [40, 10], 'revision': 'r1'},
+        })
+        found, _index, _relative = placement.proposals(controller, 'gang', 'J101', circles)
+        self.assertEqual([circle['uuid'] for circle in found], ['c0'])
+        controller.set_gang('J101', {'rotation': 90})
+        self.assertEqual(placement.proposals(controller, 'gang', 'J101', circles)[0], [])
+        controller.set_gang('J101', {'defined': False})
+        with self.assertRaisesRegex(ValueError, 'Define J101 in Define RF gangs first'):
+            placement.proposals(controller, 'gang', 'J101', circles)
+
+        # Footprint features follow the backend: back side flips Y, then rotate.
+        pads = (Pad('1', 'thru_hole', (0, 0), (1, 1), ()),
+                Pad('2', 'thru_hole', (2, 1), (1, 1), ()),
+                Pad('', 'np_thru_hole', (5, 5), (1, 1), ()))
+        self.assertEqual(placement.footprint_offsets(pads, 0, 'F', '1'), [(0, 0), (2, 1)])
+        self.assertEqual(placement.footprint_offsets(pads, 0, 'B', '1')[1], (2, -1))
+        x, y = placement.footprint_offsets(pads, 90, 'F', '1')[1]
+        self.assertAlmostEqual(x, 1)
+        self.assertAlmostEqual(y, -2)
+        self.assertEqual(placement.footprint_offsets(pads, 0, 'F'), [(0, 0), (2, 1), (0, 0)])
+        with self.assertRaisesRegex(ValueError, 'no pad 7'):
+            placement.footprint_offsets(pads, 0, 'F', '7')
+
+        # A re-read drawing keeps placements whose circle is the same object in place.
+        mechanical = controller.config['mechanical']
+        mechanical['inspected_revision'] = 'r2'
+        self.assertTrue(placement.stale(controller, controller.gang('J202')['anchor_circle']))
+        self.assertEqual(progress.checklist(controller, 'Mechanical placement')[0].status,
+                         'missing')
+        self.assertTrue(placement.reassociate(controller, circles, 'r2'))
+        self.assertFalse(placement.stale(controller, controller.gang('J202')['anchor_circle']))
+        self.assertEqual(progress.checklist(controller, 'Mechanical placement')[0].status,
+                         'done')
+        mechanical['inspected_revision'] = 'r3'
+        circles[2]['center'] = [41, 10]
+        self.assertFalse(placement.reassociate(controller, circles, 'r3'))
+        self.assertTrue(placement.stale(controller, controller.gang('J202')['anchor_circle']))
+
     def test_step_checklists_report_fixed_lines_and_the_most_pressing_status(self):
         from plugins.connector_interposer_workflow import progress
         from plugins.connector_interposer_workflow.core.model import Issue
@@ -181,7 +237,7 @@ class ControllerTests(unittest.TestCase):
         controller.set_gang('J202', {'row_lengths': [1], 'pitch_x': 2.54, 'pitch_y': 2.54,
                                      'defined': True})
         self.assertEqual(lines('Define RF gangs'), [('missing', 'Gangs defined', '1 of 2')])
-        self.assertEqual(lines('Mechanical placement')[0], ('missing', 'Drawing read', ''))
+        self.assertEqual(lines('Mechanical placement')[0], ('missing', 'Drawing unchanged', ''))
         self.assertEqual(lines('Mechanical placement')[-1], ('optional', 'Mounting holes', '0'))
 
         # Required for a final board but not blocking: caution, not missing.
@@ -542,13 +598,19 @@ class NativeDialogTests(unittest.TestCase):
         self.assertEqual(
             tuple(dialog.placement_notebook.GetPageText(index)
                   for index in range(dialog.placement_notebook.GetPageCount())),
-            ('Imported drawing', 'Interposer', 'RF anchors',
-             'DC connectors', 'Mounting holes'),
+            ('Interposer', 'RF gangs', 'DC connectors', 'Mounting holes', 'Advanced'),
         )
+        for kind in dialog.PLACEMENT_KINDS:
+            buttons = dialog.placement_buttons[kind]
+            self.assertEqual(
+                [buttons[key].GetLabel() for key in ('pick', 'show', 'propose')],
+                ['Pick in Editor', 'Show in Editor', 'Use Proposed Match'])
+            self.assertFalse(buttons['propose'].IsEnabled())
+        self.assertEqual(dialog.user_layer.GetValue(), 'User.Drawings')
+        self.assertIsNone(self.wx.FindWindowByLabel('Inspect saved drawing', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Accept interposer placement', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Accept anchor', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Accept DC placement', dialog))
-        self.assertIsNotNone(self.wx.FindWindowByLabel('Use selected origin circle', dialog))
         self.assertIn('without applying board changes', dialog.save_button.GetToolTipText())
         self.assertEqual(dialog.layer_map.GetRowLabelSize(), 0)
         self.assertEqual(dialog.layer_map.GetColLabelValue(0), 'Netlist layer')
@@ -601,10 +663,8 @@ class NativeDialogTests(unittest.TestCase):
         self.assertIsNotNone(self.wx.FindWindowByLabel('Search Project', dialog))
         self.assertFalse(dialog.microvia_enable.IsEnabled())
         self.assertEqual(dialog.microvia_status.GetLabel(), 'Assign an interposer footprint first')
-        self.assertIsNotNone(self.wx.FindWindowByLabel('Board side', dialog.pages[7]))
-        self.assertIsNotNone(
-            self.wx.FindWindowByLabel('Orientation (degrees)', dialog.pages[7]),
-        )
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Side:', dialog.pages[7]))
+        self.assertIsNotNone(self.wx.FindWindowByLabel('Rotation:', dialog.pages[7]))
         for control in (dialog.feature_tolerance,):
             self.assertEqual(control.units.GetStringSelection(), 'mil')
             self.assertLessEqual(control.text.GetMaxSize().width, 110)
@@ -612,16 +672,13 @@ class NativeDialogTests(unittest.TestCase):
         self.assertIsNone(self.wx.FindWindowByLabel('Position X', dialog.pages[7]))
         dialog.select_page(7)
         self.app.Yield()
-        self.assertLessEqual(dialog.placement_notebook.GetSize().width, 960)
         self.assertLessEqual(
             dialog.pages[7].GetVirtualSize().width,
             dialog.pages[7].GetClientSize().width,
         )
-        self.assertEqual(dialog.mechanical_list.GetColumnWidth(1), 105)
-        self.assertEqual(dialog.mechanical_list.GetColumnWidth(2), 105)
-        self.assertEqual(dialog.mechanical_list.GetColumnCount(), 5)
-        self.assertEqual(dialog.mechanical_list.GetColumn(1).GetText(), 'X')
-        self.assertEqual(dialog.mechanical_list.GetColumn(2).GetText(), 'Y')
+        self.assertEqual(
+            [dialog.anchor_gang_list.GetColumn(index).GetText() for index in range(6)],
+            ['Gang', 'Location 1 X', 'Location 1 Y', 'Side', 'Rotation', 'Status'])
         self.assertIsNone(self.wx.FindWindowByLabel('Per-location RF assignments…', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Accept library selections', dialog))
         self.assertIsNone(self.wx.FindWindowByLabel('Project BOM MPN override (if absent)', dialog))
@@ -1730,8 +1787,10 @@ class NativeDialogTests(unittest.TestCase):
                                         status.GetTextExtent(text).width)
 
             for view, column, expected in (
-                    (dialog.anchor_gang_list, 1, '723.342519685 mil, 1212.5 mil'),
-                    (dialog.dc_anchor_list, 1, '1969.38976378 mil, 3625.39370079 mil'),
+                    (dialog.anchor_gang_list, 1, '723.342519685 mil'),
+                    (dialog.anchor_gang_list, 2, '1212.5 mil'),
+                    (dialog.dc_anchor_list, 1, '1969.38976378 mil'),
+                    (dialog.dc_anchor_list, 2, '3625.39370079 mil'),
                     (dialog.hole_list, 2, '723.342519685 mil')):
                 text = view.GetItemText(0, column)
                 self.assertEqual(text, expected)
@@ -1837,6 +1896,168 @@ class NativeDialogTests(unittest.TestCase):
             dialog.clear_outline(None)
             self.assertEqual(dialog.outline_list.GetItemText(0, 1), '0')
             self.assertIsNone(self.wx.FindWindowByLabel('Validate / accept outline selection', dialog))
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
+    def test_placement_reads_the_drawing_proposes_picks_and_shows(self):
+        from types import SimpleNamespace
+        from plugins.connector_interposer_workflow.core.model import HEADERS
+        from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+
+        class Circle:
+            def __init__(self, uuid, x, y):
+                self.m_Uuid = SimpleNamespace(AsString=lambda: uuid)
+                self.uuid, self.centre, self.brightened = uuid, (x, y), False
+            def GetShape(self): return 1
+            def GetLayer(self): return 0
+            def GetCenter(self):
+                return SimpleNamespace(x=self.centre[0] * 1e6, y=self.centre[1] * 1e6)
+            def GetRadius(self): return 500000
+            def SetBrightened(self): self.brightened = True
+            def ClearBrightened(self): self.brightened = False
+            def record(self):
+                return {'uuid': self.uuid, 'center': list(self.centre), 'radius': .5}
+
+        class Editor:
+            PCB_SHAPE, SHAPE_T_CIRCLE = Circle, 1
+            selection, focused, live = [], [], []
+            @classmethod
+            def GetCurrentSelection(cls): return list(cls.selection)
+            @classmethod
+            def GetBoard(cls):
+                return SimpleNamespace(GetDrawings=lambda: list(cls.live),
+                                       GetLayerName=lambda layer: 'User.Drawings')
+            @classmethod
+            def FocusOnItem(cls, item): cls.focused.append(item)
+            @classmethod
+            def Refresh(cls): pass
+
+        class Backend:
+            saved, reads = [], []
+            def call(self, name, **arguments):
+                self.reads.append((name, arguments['source_layer']))
+                return {'circles': [circle.record() for circle in self.saved],
+                        'segments': [], 'texts': [],
+                        'revision': f'r{len(self.reads)}', 'geometry_revision': 'g'}
+
+        site = [Circle('c0', 10, 10), Circle('c1', 12.54, 10)]
+        stray, unsaved = Circle('c4', 70, 70), Circle('c9', 90, 90)
+        Editor.live = [*site, stray, unsaved]
+        Backend.saved = [*site, stray]
+        dialog = WorkflowDialog(pcbnew_module=Editor)
+
+        def settle():
+            deadline = time.time() + 10
+            while dialog.controller.busy and time.time() < deadline:
+                time.sleep(.01)
+            self.app.Yield()
+
+        try:
+            controller = dialog.controller
+            controller.backend = Backend()
+            controller.board_path = Path('board.kicad_pcb')
+            controller.table = parse_sheet(Worksheet('Signals', (
+                HEADERS,
+                ('CLOCK1', 'CLOCK', 'E1', 'A1', 'J101', '1', 'L1'),
+                ('CLOCK2', 'CLOCK', 'E1', 'A2', 'J101', '2', 'L1'),
+            )))
+            controller.set_netclass_type('CLOCK', 'RF')
+            controller.set_gang('J101', {'row_lengths': [2], 'pitch_x': 2.54, 'defined': True})
+            dialog.refresh_gangs()
+            dialog.placement_notebook.SetSelection(1)
+
+            # Opening the step reads the saved drawing; there is no button for it.
+            dialog.select_page(PAGES.index('Mechanical placement'))
+            settle()
+            self.assertEqual(Backend.reads, [('inspect', 'User.Drawings')])
+            self.assertEqual(dialog.drawing_status.GetLabel(), '3 circles')
+            self.assertEqual(controller.config['mechanical']['inspected_revision'], 'r1')
+            dialog.select_page(PAGES.index('Mechanical placement'))
+            settle()
+            self.assertEqual(len(Backend.reads), 1, 'A drawing in memory is not read again')
+
+            # One fit is proposed and highlighted; accepting it places the gang.
+            buttons = dialog.placement_buttons['gang']
+            self.assertTrue(buttons['propose'].IsEnabled())
+            self.assertTrue(dialog.proposal_text['gang'].GetLabel().startswith(
+                'Proposed match for J101: 393.700787402 mil, 393.700787402 mil'))
+            self.assertEqual([circle.brightened for circle in Editor.live],
+                             [True, True, False, False])
+            dialog.use_proposal('gang')
+            gang = controller.gang('J101')
+            self.assertEqual(gang['anchor'], [10, 10])
+            self.assertEqual(gang['anchor_circle'],
+                             {'uuid': 'c0', 'center': [10, 10], 'revision': 'r1'})
+            self.assertTrue(controller.config['mechanical']['accepted'])
+            self.assertEqual(
+                [dialog.anchor_gang_list.GetItemText(0, column) for column in range(6)],
+                ['J101', '393.700787402 mil', '393.700787402 mil', 'Front', '0°', 'Placed'])
+            self.assertFalse(buttons['propose'].IsEnabled())
+            self.assertEqual(dialog.proposal_text['gang'].GetLabel(), '')
+            self.assertFalse(any(circle.brightened for circle in Editor.live))
+            dialog.show_placement('gang')
+            self.assertEqual([circle.brightened for circle in Editor.live],
+                             [True, True, False, False])
+            self.assertIs(Editor.focused[-1], site[0])
+
+            # A circle not in the saved board is looked for again in a fresh read.
+            controller.config['mounting_holes'].append({
+                'reference': 'H1', 'library_id': 'Example:Hole', 'path': 'hole.kicad_mod',
+                'sha256': 'x'})
+            dialog.refresh_mounting_holes()
+            self.assertEqual(
+                [dialog.hole_list.GetItemText(0, column) for column in (2, 3, 4)],
+                ['—', '—', 'Not placed'])
+            with mock.patch.object(self.wx, 'MessageBox') as message:
+                dialog.pick_hole(None)
+                Editor.selection = [unsaved]
+                dialog._poll_pick(None)
+                settle()
+                message.assert_called_once()
+                self.assertIn('Save the board, then pick again', message.call_args[0][0])
+            self.assertEqual(len(Backend.reads), 2)
+            Backend.saved = [*site, stray, unsaved]
+            Editor.selection = []
+            dialog.pick_hole(None)
+            Editor.selection = [unsaved]
+            dialog._poll_pick(None)
+            settle()
+            self.assertEqual(len(Backend.reads), 3)
+            hole = controller.config['mounting_holes'][0]
+            self.assertEqual(hole['pose'], [90, 90, 0])
+            self.assertEqual(hole['pose_circle']['revision'], 'r3')
+            self.assertEqual(dialog.hole_list.GetItemText(0, 4), 'Placed')
+            # The gang's circle is the same object in the same place: still placed.
+            self.assertEqual(controller.gang('J101')['anchor_circle']['revision'], 'r3')
+            self.assertEqual(dialog.anchor_gang_list.GetItemText(0, 5), 'Placed')
+            dialog.show_hole(None)
+            self.assertTrue(unsaved.brightened)
+
+            # Picking takes the editor selection; anything but a drawing circle is refused.
+            Editor.selection = []
+            dialog.pick_placement('gang')
+            Editor.selection = [SimpleNamespace(
+                m_Uuid=SimpleNamespace(AsString=lambda: 'a-track'))]
+            with mock.patch.object(self.wx, 'MessageBox') as message:
+                dialog._poll_pick(None)
+                self.assertIn('Select one J101 location 1 circle on User.Drawings',
+                              message.call_args[0][0])
+            self.assertEqual(controller.gang('J101')['anchor'], [10, 10])
+            Editor.selection = []
+            dialog.pick_placement('gang')
+            Editor.selection = [stray]
+            dialog._poll_pick(None)
+            self.assertEqual(controller.gang('J101')['anchor'], [70, 70])
+
+            # A replaced drawing marks what must be picked again.
+            controller.config['mechanical']['inspected_revision'] = 'other'
+            dialog.refresh_placement()
+            self.assertEqual(dialog.anchor_gang_list.GetItemText(0, 5), 'Pick again')
+            self.assertEqual(dialog.hole_list.GetItemText(0, 4), 'Pick again')
+            dialog.remove_hole(None)
+            self.assertEqual(controller.config['mounting_holes'], [])
         finally:
             dialog.Destroy()
             self.app.Yield()

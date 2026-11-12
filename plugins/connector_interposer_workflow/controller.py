@@ -593,14 +593,14 @@ class WorkflowController:
             if not drawing_revision:
                 issues.append(Issue(
                     'drawing_not_inspected',
-                    'Inspect the saved imported drawing before Review changes',
+                    'Open Mechanical placement so the imported drawing is read',
                 ))
             def stale_circle(feature, accepted):
                 if (accepted and drawing_revision and
                         accepted.get('revision') != drawing_revision):
                     issues.append(Issue(
                         'drawing_association_stale',
-                        f'{feature}: select the circle again for the inspected drawing revision',
+                        f'{feature}: the drawing changed; pick its circle again in Mechanical placement',
                     ))
             encountered = sorted({record.netclass for record in self.table.records})
             _suggestions, inference_conflicts, _unresolved = suggest_netclass_types(self.table.records)
@@ -801,7 +801,7 @@ class WorkflowController:
                 if not hole.get('pose_circle', {}).get('uuid'):
                     issues.append(Issue(
                         'mounting_hole_anchor_missing',
-                        f'{hole.get("reference", "Mounting hole")}: select its drawing circle again',
+                        f'{hole.get("reference", "Mounting hole")}: pick its circle in Mechanical placement',
                     ))
                 else:
                     stale_circle(
@@ -884,7 +884,8 @@ class WorkflowController:
                 digest.update(path.read_bytes())
         return digest.hexdigest()
 
-    def run_async(self, operation, complete, failed):
+    def run_async(self, operation, complete, failed, pinned=True):
+        """Run in the background. A pinned result is dropped if settings change meanwhile."""
         if self.busy:
             raise RuntimeError('An analysis is already running')
         self.busy = True
@@ -893,7 +894,7 @@ class WorkflowController:
         def run():
             try:
                 result = operation()
-                if self.cancelled.is_set() or self._generation != generation:
+                if pinned and (self.cancelled.is_set() or self._generation != generation):
                     raise RuntimeError('Analysis cancelled or inputs changed; compare again')
             except Exception as error:
                 self.busy = False
@@ -1232,17 +1233,17 @@ __import__("os")._exit(0)
             raise ValueError('Set the imported drawing layer and placement anchors first')
         native = self.call(
             'inspect', board_path=str(controller.board_path),
-            source_layer=mechanical.get('layer', 'Dwgs.User'),
+            source_layer=mechanical.get('layer', 'User.Drawings'),
         )
         if 'circles' not in native:
             raise RuntimeError('Native inspector returned no mechanical circle inventory')
         inspected_revision = mechanical.get('inspected_revision', '')
         if not inspected_revision:
-            raise ValueError('Inspect the saved imported drawing before comparing changes')
+            raise ValueError('Open Mechanical placement so the imported drawing is read')
         if native.get('revision') != inspected_revision:
             raise ValueError(
-                'The saved imported drawing changed after inspection; inspect it '
-                'again and explicitly reselect its mechanical circles'
+                'The saved drawing changed since it was read; open Mechanical '
+                'placement, then pick again every part it marks'
             )
         rf_records = tuple(record for record in records
                            if controller.connector_type(record.connector) == 'RF')
@@ -1411,7 +1412,7 @@ __import__("os")._exit(0)
             part = replace(part, library_id='WorkflowPart_' + part.sha256[:16] + ':' + part.library_id.split(':', 1)[1])
             instances[hole['reference']] = {'kind': 'mounting-hole', 'footprint': dict(part.pin(), approved=True), 'pose': hole['pose'], 'pads': {}}
         outline = deepcopy(cfg['outline'])
-        outline['source_layer'] = mechanical.get('layer', 'Dwgs.User')
+        outline['source_layer'] = mechanical.get('layer', 'User.Drawings')
         if outline.get('cutout_uuids') and isinstance(outline['cutout_uuids'][0], str): outline['cutout_uuids'] = [outline['cutout_uuids']]
         project_files = dict(bundle.files)
         from .core.sexpr import loads, dumps, child, children
@@ -1443,7 +1444,7 @@ __import__("os")._exit(0)
                    'project_file_merges': [name + '.kicad_pro', name + '.kicad_sch',
                                            'sym-lib-table', 'fp-lib-table'],
                    'mechanical': {
-                       'source_layer': mechanical.get('layer', 'Dwgs.User'),
+                       'source_layer': mechanical.get('layer', 'User.Drawings'),
                        'rf_matches': rf_locations,
                        'rf_keys': sorted(rf_keys),
                        'rf_anchors': rf_anchors,

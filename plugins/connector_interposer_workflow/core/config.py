@@ -10,7 +10,7 @@ CONFIG_VERSION = 9
 
 def _mechanical_defaults():
     return {
-        'layer': 'Dwgs.User',
+        'layer': 'User.Drawings',
         'feature_tolerance_mm': DEFAULT_FEATURE_TOLERANCE_MM,
         'feature_tolerance_unit': 'mil',
         'accepted': False,
