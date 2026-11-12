@@ -394,6 +394,14 @@ Opening Workflow offers **Delete and open** or **Keep and close** instead of
 only reporting the error. Settings are not converted between schema versions;
 only a valid project identity is carried into the new workflow.
 
+Version 0.6.5 fixes display defects found while reviewing every step against
+example C: status text is no longer clipped to a fixed width (the microvia
+status read "Off — no interposer"), the Board outline note follows the restored
+setting, placement lists widen to show complete coordinates, the mounting-hole
+table no longer labels mil values as mm, a completed recovery reports recovery
+instead of an apply, and typing a recovery journal path no longer discards the
+current review.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal

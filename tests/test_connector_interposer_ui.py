@@ -1544,6 +1544,71 @@ class NativeDialogTests(unittest.TestCase):
             dialog.Destroy()
             self.app.Yield()
 
+    def test_status_text_restored_state_and_placement_values_are_shown_completely(self):
+        from plugins.connector_interposer_workflow.core.model import HEADERS
+        from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+
+        dialog = WorkflowDialog()
+        try:
+            rows = [HEADERS, ('SIGNAL1', 'RF', 'E1', 'A1', 'J501', '1', 'L2'),
+                    ('POWER1', 'DC', 'E1', 'A2', 'J1', '1', 'L2')]
+            controller = dialog.controller
+            controller.table = parse_sheet(Worksheet('Signals', tuple(rows)))
+            controller.set_netclass_type('RF', 'RF')
+            controller.set_netclass_type('DC', 'DC')
+            # 18.3729 mm is on the metric grid; in mils it needs every digit.
+            controller.set_gang('J501', {'anchor': [18.3729, 30.7975], 'anchor_accepted': True})
+            controller.set_dc_connector('J1', {'anchor': [50.0225, 92.085], 'anchor_accepted': True})
+            controller.config['mounting_holes'] = [{
+                'reference': 'H1', 'library_id': 'Example:MountingHole_3.2mm_M3',
+                'pose': [18.3729, 30.7975, 0], 'pose_units': ['mil', 'mil'],
+            }]
+            controller.config['outline'] = {'enabled': True, 'outer_uuids': [], 'cutout_uuids': []}
+            dialog.restore()
+            dialog.refresh_gangs()
+            dialog.refresh_mounting_holes()
+            dialog.select_page(PAGES.index('Mechanical placement'))
+            dialog.Show()
+            self.app.Yield()
+
+            self.assertTrue(dialog.outline_enable.GetValue())
+            self.assertTrue(dialog.outline_status.GetLabel().startswith('Enabled'))
+
+            dialog.refresh_microvias()
+            status = dialog.microvia_status
+            for text in ('Off — no interposer microvias requested',
+                         'Ready — selected Board Setup size maintains minimum copper spacing'):
+                status.SetLabel(text)
+                self.assertGreaterEqual(status.GetMinSize().width,
+                                        status.GetTextExtent(text).width)
+
+            for view, column, expected in (
+                    (dialog.anchor_gang_list, 1, '723.342519685 mil, 1212.5 mil'),
+                    (dialog.dc_anchor_list, 1, '1969.38976378 mil, 3625.39370079 mil'),
+                    (dialog.hole_list, 2, '723.342519685 mil')):
+                text = view.GetItemText(0, column)
+                self.assertEqual(text, expected)
+                self.assertGreaterEqual(view.GetColumnWidth(column),
+                                        view.GetTextExtent(text).width)
+                total = sum(view.GetColumnWidth(index)
+                            for index in range(view.GetColumnCount()))
+                self.assertGreaterEqual(view.GetMinSize().width, total)
+            self.assertEqual(
+                [dialog.hole_list.GetColumn(index).GetText() for index in (2, 3)],
+                ['X', 'Y'],
+            )
+
+            controller.preview = {'conflicts': [], 'changes': []}
+            dialog.journal.SetValue('/tmp/journal.json')
+            self.app.Yield()
+            self.assertIsNotNone(controller.preview)
+            dialog.recovered({'status': 'RECOVERED'})
+            self.assertTrue(dialog.status.GetLabel().startswith('Recovery complete'))
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
     def test_dimension_inputs_normalize_suffixes_and_store_connector_placement_in_mm(self):
         from plugins.connector_interposer_workflow.core.model import HEADERS
         from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet

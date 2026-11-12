@@ -118,6 +118,19 @@ class StepList(wx.VListBox):
         self.Refresh()
 
 
+class StatusLabel(wx.StaticText):
+    """Status text that is never clipped by its own minimum width."""
+    MINIMUM_WIDTH = 190
+
+    def SetLabel(self, label):
+        super().SetLabel(label)
+        width = self.GetTextExtent(label).width + 12
+        self.SetMinSize((max(self.MINIMUM_WIDTH, width), -1))
+        parent = self.GetParent()
+        if parent is not None:
+            parent.Layout()
+
+
 class DimensionInput(wx.Panel):
     """A numeric linear-dimension input with an independent unit selector."""
     def __init__(self, parent, value='0', unit='mil', compact=False):
@@ -1496,11 +1509,11 @@ class WorkflowDialog(wx.Dialog):
         return box
 
     def status_label(self, parent, label):
-        control = wx.StaticText(parent, label=label, style=wx.BORDER_SIMPLE)
+        control = StatusLabel(parent, label='', style=wx.BORDER_SIMPLE)
         font = control.GetFont()
         font.SetWeight(wx.FONTWEIGHT_BOLD)
         control.SetFont(font)
-        control.SetMinSize((190, -1))
+        control.SetLabel(label)
         self._status_labels.append(control)
         self._style_status(control, 'neutral')
         return control
@@ -4124,7 +4137,7 @@ class WorkflowDialog(wx.Dialog):
             holes_list_box, style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
         )
         for column, (heading, width) in enumerate(
-            (('Reference', 84), ('Footprint', 230), ('X (mm)', 82), ('Y (mm)', 82)),
+            (('Reference', 84), ('Footprint', 230), ('X', 82), ('Y', 82)),
         ):
             self.hole_list.InsertColumn(column, heading, width=width)
         self.hole_list.SetMinSize((500, 250))
@@ -4161,6 +4174,23 @@ class WorkflowDialog(wx.Dialog):
             f'{dimension_text(float(value), unit)} {unit}'
             for value, unit in zip(values, units)
         )
+
+    def _fit_list_columns(self, view, columns):
+        """Widen value columns and their list so full-precision values are never clipped."""
+        for column in columns:
+            view.SetColumnWidth(column, wx.LIST_AUTOSIZE_USEHEADER)
+            heading = view.GetColumnWidth(column)
+            view.SetColumnWidth(column, wx.LIST_AUTOSIZE)
+            view.SetColumnWidth(column, max(heading, view.GetColumnWidth(column)) + 8)
+        width = sum(view.GetColumnWidth(column) for column in range(view.GetColumnCount())) + 12
+        minimum, maximum = view.GetMinSize(), view.GetMaxSize()
+        if width > minimum.width:
+            view.SetMinSize((width, minimum.height))
+            view.SetMaxSize((width, maximum.height))
+            page = view.GetParent()
+            while page is not None and page is not self:
+                page.Layout()
+                page = page.GetParent()
 
     @staticmethod
     def _skip_event(event):
@@ -4429,6 +4459,7 @@ class WorkflowDialog(wx.Dialog):
                     selected_index = index
             if selected_index >= 0:
                 self.anchor_gang_list.Select(selected_index)
+            self._fit_list_columns(self.anchor_gang_list, (1,))
         finally:
             self._loading_placement = False
         self.select_anchor_gang()
@@ -4517,6 +4548,7 @@ class WorkflowDialog(wx.Dialog):
                     selected_index = index
             if selected_index >= 0:
                 self.dc_anchor_list.Select(selected_index)
+            self._fit_list_columns(self.dc_anchor_list, (1,))
         finally:
             self._loading_placement = False
         self.select_dc_anchor()
@@ -4721,6 +4753,7 @@ class WorkflowDialog(wx.Dialog):
             self.hole_list.SetItem(
                 index, 3, f'{dimension_text(float(pose[1]), units[1])} {units[1]}',
             )
+        self._fit_list_columns(self.hole_list, (1, 2, 3))
 
     def remove_hole(self, event):
         index = self.hole_list.GetFirstSelected()
@@ -4753,10 +4786,17 @@ class WorkflowDialog(wx.Dialog):
         panel.GetSizer().Add(self.button(panel, 'Validate / accept outline selection', self.accept_outline), 0, wx.ALL, 8)
         self.outline_enable.Bind(wx.EVT_CHECKBOX, self.guard(self.toggle_outline))
 
+    def _show_outline_state(self):
+        self.outline_status.SetLabel(
+            'Enabled: capture sources and validate during comparison.'
+            if self.outline_enable.GetValue()
+            else 'Managed outline disabled. No Edge.Cuts changes requested.'
+        )
+
     def toggle_outline(self, event):
         self.controller.config['outline']['enabled'] = self.outline_enable.GetValue()
         self.controller.changed()
-        self.outline_status.SetLabel('Enabled: capture sources and validate during comparison.' if self.outline_enable.GetValue() else 'Managed outline disabled.')
+        self._show_outline_state()
 
     def capture_outline(self, role):
         if not self.pcbnew: raise ValueError('Open this workflow in the PCB Editor')
@@ -4824,7 +4864,7 @@ class WorkflowDialog(wx.Dialog):
         )
         self.results = wx.TextCtrl(panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL)
         panel.GetSizer().Add(self.results, 1, wx.EXPAND | wx.ALL, 8)
-        self.journal = self.field(panel, 'Recovery journal', picker=True)
+        self.journal = self.field(panel, 'Recovery journal', picker=True, invalidate=False)
         panel.GetSizer().Add(self.button(panel, 'Recover with all project editors closed', self.recover), 0, wx.ALL, 8)
         self.abort_button = self.button(panel, 'Cancel analysis', self.abort)
         panel.GetSizer().Add(self.abort_button, 0, wx.ALL, 8)
@@ -4922,6 +4962,14 @@ class WorkflowDialog(wx.Dialog):
         if isinstance(result, dict) and result.get('journal'): self.journal.ChangeValue(str(result['journal']))
         self.refresh()
 
+    def recovered(self, result):
+        self._applying = False
+        if self._closing: return
+        self.results.ChangeValue(json.dumps(result, indent=2, default=str))
+        self.select_page(PAGES.index('Apply / results'))
+        self.status.SetLabel('Recovery complete. Project files were restored from the journal.')
+        self.refresh()
+
     def failed(self, error):
         failure_code = 'APPLY_FAILED' if self._applying else 'COMPARE_FAILED'
         self._applying = False
@@ -4939,7 +4987,7 @@ class WorkflowDialog(wx.Dialog):
         with wx.MessageDialog(self, 'Close this project in PCB Editor, Schematic Editor, and all other KiCad editors before recovery. Recover the selected journal now?', 'Recover project', wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING) as dialog:
             if dialog.ShowModal() == wx.ID_YES:
                 self._applying = True
-                self.controller.run_async(lambda: recover(self.journal.GetValue(), closed_project=True), self.applied, self.failed)
+                self.controller.run_async(lambda: recover(self.journal.GetValue(), closed_project=True), self.recovered, self.failed)
                 self.refresh()
 
     def abort(self, event):
@@ -5150,6 +5198,7 @@ class WorkflowDialog(wx.Dialog):
                 self.interposer_pose_status.SetLabel(f'{ref} placement is ready.')
                 self._style_status(self.interposer_pose_status, 'success')
         self.outline_enable.SetValue(cfg['outline'].get('enabled', False))
+        self._show_outline_state()
         self.outline_view.show(cfg['outline'].get('source_preview', {}))
         self._loading_placement = True
         self.user_layer.ChangeValue(cfg['mechanical']['layer'])
