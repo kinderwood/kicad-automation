@@ -478,6 +478,16 @@ leaving the step removes the outline. Show in Editor and the proposal
 highlight also find a live circle whose in-memory UUID differs from the saved
 one, by its position on the drawing layer.
 
+Version 0.7.8 fixes the step icons and checklist lagging behind a choice made
+from a pop-up menu (unsetting a netclass type still showed the step as done
+until another step was opened): they now follow every settings change. The
+toolbar icons are `ToolButton`s that lighten under the pointer and darken
+while held or switched on, like KiCad's, with even spacing. Connector
+assignments has its search box on the Interposer tab too, so the three tabs
+line up. Define RF gangs no longer shows standing status boxes; a message
+appears under the editor only while an entry is wrong, in space that is
+always reserved.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal

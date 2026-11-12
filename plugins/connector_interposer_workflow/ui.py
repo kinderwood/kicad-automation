@@ -326,6 +326,91 @@ class Spotlight:
             strip.Refresh()
 
 
+class ToolButton(wx.Control):
+    """A flat icon button that behaves like KiCad's toolbar buttons.
+
+    The pointer over it lightens a square behind the icon; holding the button
+    down, or a toggle that is on, darkens it. It sends ``EVT_BUTTON``.
+    """
+    PAD = 4
+
+    def __init__(self, parent, bitmap, toggle=False):
+        super().__init__(parent, style=wx.BORDER_NONE)
+        self.bitmap, self.toggle = bitmap, toggle
+        self.disabled = bitmap.ConvertToDisabled()
+        self.hover = self.down = self.value = False
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        side = max(bitmap.GetWidth(), bitmap.GetHeight()) + 2 * self.PAD
+        self.SetMinSize((side, side))
+        self.SetMaxSize((side, side))
+        self.Bind(wx.EVT_PAINT, self._paint)
+        self.Bind(wx.EVT_ENTER_WINDOW, lambda event: self._set(hover=True))
+        self.Bind(wx.EVT_LEAVE_WINDOW, lambda event: self._set(hover=False, down=False))
+        self.Bind(wx.EVT_LEFT_DOWN, lambda event: self._set(down=True))
+        self.Bind(wx.EVT_LEFT_DCLICK, lambda event: self._set(down=True))
+        self.Bind(wx.EVT_LEFT_UP, self._released)
+
+    def AcceptsFocusFromKeyboard(self):
+        return False
+
+    def GetBitmap(self):
+        return self.bitmap
+
+    def GetValue(self):
+        return self.value
+
+    def SetValue(self, value):
+        self._set(value=bool(value))
+
+    def Enable(self, enable=True):
+        changed = super().Enable(enable)
+        self.Refresh()
+        return changed
+
+    def _set(self, **state):
+        if any(getattr(self, name) != value for name, value in state.items()):
+            for name, value in state.items():
+                setattr(self, name, value)
+            self.Refresh()
+
+    def _released(self, event):
+        pressed = self.down
+        self._set(down=False)
+        if pressed and self.IsEnabled():
+            self.press()
+
+    def press(self):
+        """Activate the button as a click does."""
+        if self.toggle:
+            self._set(value=not self.value)
+        command = wx.CommandEvent(wx.wxEVT_BUTTON, self.GetId())
+        command.SetEventObject(self)
+        self.GetEventHandler().ProcessEvent(command)
+
+    def shade(self):
+        """How strongly the square behind the icon is tinted, 0 to 1."""
+        if not self.IsEnabled():
+            return 0
+        if self.down or self.value:
+            return .38
+        return .18 if self.hover else 0
+
+    def _paint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        palette = ui_palette()
+        base = self.GetParent().GetBackgroundColour()
+        dc.SetBackground(wx.Brush(base))
+        dc.Clear()
+        shade = self.shade()
+        width, height = self.GetClientSize()
+        if shade and width > 2 and height > 2:
+            dc.SetPen(wx.Pen(_mix_colour(base, palette.highlight.Get()[:3], shade + .2)))
+            dc.SetBrush(wx.Brush(_mix_colour(base, palette.highlight.Get()[:3], shade)))
+            dc.DrawRoundedRectangle(0, 0, width, height, 3)
+        bitmap = self.bitmap if self.IsEnabled() else self.disabled
+        dc.DrawBitmap(bitmap, self.PAD, self.PAD, True)
+
+
 class MessageLog:
     """The dialog's message sink: every status line, kept for copying."""
 
@@ -1346,6 +1431,18 @@ class WorkflowDialog(wx.Dialog):
         self.pcbnew = pcbnew_module
         self.controller = controller or WorkflowController(dispatch=wx.CallAfter)
         self.controller.dispatch = wx.CallAfter
+        # Menu choices and other unguarded handlers change settings too: the step
+        # icons and checklist follow every change, once per burst.
+        self._guidance_pending = False
+        settings_changed = self.controller.changed
+
+        def changed_and_noted():
+            settings_changed()
+            if not self._guidance_pending:
+                self._guidance_pending = True
+                wx.CallAfter(self._guidance_after_change)
+
+        self.controller.changed = changed_and_noted
         self.current_gang = None
         self.current_anchor_gang = None
         self.current_dc_anchor = None
@@ -1480,7 +1577,7 @@ class WorkflowDialog(wx.Dialog):
                              dark=ui_palette().dark)
 
         def tool(name, tip, handler):
-            control = wx.BitmapButton(toolbar, bitmap=bitmaps[name], style=wx.BORDER_NONE)
+            control = ToolButton(toolbar, bitmaps[name])
             control.SetToolTip(tip)
             control.Bind(wx.EVT_BUTTON, self.guard(handler))
             sizer.Add(control, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 2)
@@ -1513,11 +1610,9 @@ class WorkflowDialog(wx.Dialog):
             sizer.Add(control, 0, wx.ALIGN_CENTER_VERTICAL)
             self.unit_buttons[unit] = control
         separator()
-        self.messages_button = wx.BitmapToggleButton(
-            toolbar, wx.ID_ANY, bitmaps['info'], style=wx.BORDER_NONE,
-        )
+        self.messages_button = ToolButton(toolbar, bitmaps['info'], toggle=True)
         self.messages_button.SetToolTip('Show messages')
-        self.messages_button.Bind(wx.EVT_TOGGLEBUTTON, self.toggle_messages)
+        self.messages_button.Bind(wx.EVT_BUTTON, self.toggle_messages)
         sizer.Add(self.messages_button, 0, wx.ALIGN_CENTER_VERTICAL)
         toolbar.SetSizer(sizer)
         return toolbar
@@ -1542,6 +1637,13 @@ class WorkflowDialog(wx.Dialog):
 
     def _settings_snapshot(self):
         return json.dumps(self.controller.config, sort_keys=True, default=str)
+
+    def _guidance_after_change(self):
+        if not self or self._closing:
+            return
+        self._guidance_pending = False
+        if hasattr(self, 'checklist'):
+            self._refresh_guidance()
 
     def _refresh_guidance(self):
         """Step icons at a glance; description and checklist for the open step."""
@@ -1819,6 +1921,8 @@ class WorkflowDialog(wx.Dialog):
             'error': palette.error,
         }.get(state, palette.panel)
         control._workflow_status_state = state
+        if control is getattr(self, 'gang_definition_status', None):
+            control.Show(state == 'error')
         control.SetBackgroundColour(background)
         control.SetForegroundColour(palette.text if state != 'neutral' else palette.panel_text)
         control.Refresh()
@@ -2615,6 +2719,7 @@ class WorkflowDialog(wx.Dialog):
         self.refresh_netclass_types()
         self.refresh_gangs()
         self.refresh_connector_assignments(True)
+        self.refresh()
         self.status.SetLabel(
             f'{name} classified as {kind}. Board files were not modified.' if kind else
             f'{name} is unassigned. Board files were not modified.'
@@ -2862,6 +2967,15 @@ class WorkflowDialog(wx.Dialog):
         interposer_box = wx.Panel(self.assignment_notebook)
         interposer = wx.BoxSizer(wx.VERTICAL)
         interposer_box.SetSizer(interposer)
+        # Same place as on the other two tabs, so flipping tabs moves nothing.
+        self.interposer_assignment_filter = wx.SearchCtrl(
+            interposer_box, style=wx.TE_PROCESS_ENTER)
+        self.interposer_assignment_filter.SetDescriptiveText('Search')
+        self.interposer_assignment_filter.SetMinSize((330, -1))
+        self.interposer_assignment_filter.SetMaxSize((330, -1))
+        self.interposer_assignment_filter.Bind(
+            wx.EVT_TEXT, lambda event: self._filter_interposer_assignment())
+        interposer.Add(self.interposer_assignment_filter, 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
         (self.interposer_assignment_surface,
          self.interposer_assignment_table,
          self.interposer_assignment_grid) = self._assignment_table(interposer_box, 5)
@@ -2953,6 +3067,12 @@ class WorkflowDialog(wx.Dialog):
         panel.GetSizer().Add(self.assignment_notebook, 1, wx.EXPAND | wx.ALL, 8)
         self.dc_assignment_controls = {}
         self.dc_assignment_all_controls = {}
+
+    def _filter_interposer_assignment(self):
+        query = self.interposer_assignment_filter.GetValue().strip().casefold()
+        reference = (self._interposer_reference() or '').casefold()
+        self.interposer_assignment_surface.Show(not query or query in reference)
+        self.interposer_assignment_surface.GetParent().Layout()
 
     def _symbol_from_spec(self, selection, require_two_pin):
         from .core.libraries import read_symbol
@@ -3668,7 +3788,10 @@ class WorkflowDialog(wx.Dialog):
         self.gang_notebook.AddPage(placement_page, 'Numbering')
         editor.Add(self.gang_notebook, 1, wx.EXPAND | wx.ALL, 8)
         self.gang_definition_status = self.status_label(editor_box, 'Select a gang', fit=False)
-        editor.Add(self.gang_definition_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        # Shown only while an entry is wrong; its space is kept so nothing moves.
+        editor.Add(self.gang_definition_status, 0,
+                   wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.RESERVE_SPACE_EVEN_IF_HIDDEN, 8)
+        self.gang_definition_status.Hide()
         body.Add(editor, 0, wx.EXPAND | wx.RIGHT, 8)
 
         preview_box = wx.StaticBox(panel, label='Gang preview')
@@ -3678,6 +3801,7 @@ class WorkflowDialog(wx.Dialog):
         preview.Add(self.pattern_view, 1, wx.EXPAND | wx.ALL | wx.FIXED_MINSIZE, 8)
         self.gang_preview_status = self.status_label(preview_box, 'Select a gang', fit=False)
         preview.Add(self.gang_preview_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.gang_preview_status.Hide()
         body.Add(preview, 1, wx.EXPAND)
         panel.GetSizer().Add(body, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
@@ -5881,6 +6005,8 @@ class WorkflowDialog(wx.Dialog):
             self._updating_spreadsheet = False
 
         self.assignment_filter.ChangeValue('')
+        self.interposer_assignment_filter.ChangeValue('')
+        self._filter_interposer_assignment()
         self.gang_filter.ChangeValue('')
         self._loading_gang = True
         try:

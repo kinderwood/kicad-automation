@@ -293,6 +293,10 @@ Standing rules:
   missing entry has a red outline and a red X in an always-reserved slot. A
   readout sharing a row with entries is flat grey; a fully read-only table is
   white with striped rows. Stand-alone fields use the normal border.
+- Toolbar icons give KiCad's feedback: a lighter square under the pointer, a
+  darker one while held or switched on.
+- Tabs of one step keep shared controls in the same place, so flipping tabs
+  moves nothing, even where a control (a search box over one row) does little.
 - Colour is deliberate: no monochrome or low-chrome styling. Selection uses
   the system highlight and status icons keep their colour.
 - Motion aids continuity: clicking a checklist line fades a highlight outline

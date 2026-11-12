@@ -678,6 +678,36 @@ class NativeDialogTests(unittest.TestCase):
             self.assertIs(control.GetParent(), dialog.toolbar)
             self.assertTrue(control.GetToolTipText())
             self.assertTrue(control.GetBitmap().IsOk())
+        # Toolbar icons respond like KiCad's: lighter under the pointer, darker
+        # while held or switched on, and all the same size and spacing.
+        from plugins.connector_interposer_workflow.ui import ToolButton
+        tools = (dialog.previous_button, dialog.next_button, dialog.save_button,
+                 dialog.delete_settings_button, dialog.reset_settings_button,
+                 dialog.messages_button)
+        self.assertEqual({type(control) for control in tools}, {ToolButton})
+        self.assertEqual(len({control.GetMinSize().Get() for control in tools}), 1)
+        button = dialog.next_button
+        self.assertEqual(button.shade(), 0)
+        button._set(hover=True)
+        hover = button.shade()
+        button._set(down=True)
+        self.assertGreater(button.shade(), hover)
+        self.assertGreater(hover, 0)
+        button._set(hover=False, down=False)
+        step = dialog.book.GetSelection()
+        button.press()
+        self.assertEqual(dialog.book.GetSelection(), step + 1)
+        dialog.previous_button.press()
+        self.assertFalse(dialog.messages_button.GetValue())
+        self.assertEqual(dialog.messages_button.shade(), 0)
+        # Connector assignments: the search box is in the same place on every tab.
+        self.assertEqual(dialog.interposer_assignment_filter.GetPosition(),
+                         dialog.assignment_filter.GetPosition())
+        self.assertEqual(dialog.interposer_assignment_filter.GetMinSize(),
+                         dialog.assignment_filter.GetMinSize())
+        # Define RF gangs: no standing status boxes under the editor or preview.
+        self.assertFalse(dialog.gang_definition_status.IsShown())
+        self.assertFalse(dialog.gang_preview_status.IsShown())
         from plugins.connector_interposer_workflow import icons
         self.assertIsNotNone(icons.archive_path(), "KiCad's icon archive must be found")
         self.assertEqual(
@@ -2388,6 +2418,53 @@ class NativeDialogTests(unittest.TestCase):
             # Leaving the step removes the outline at once.
             dialog.select_page(PAGES.index('Board outline'))
             self.assertIsNone(dialog.spotlight.target)
+        finally:
+            dialog.Destroy()
+            self.app.Yield()
+
+    def test_step_icons_and_checklist_follow_a_menu_choice_at_once(self):
+        from plugins.connector_interposer_workflow.core.model import HEADERS
+        from plugins.connector_interposer_workflow.core.workbook import Worksheet, parse_sheet
+        from plugins.connector_interposer_workflow.ui import WorkflowDialog
+
+        dialog = WorkflowDialog()
+        try:
+            dialog.controller.table = parse_sheet(Worksheet('Signals', (
+                HEADERS,
+                ('CLOCK1', 'CLOCK', 'E1', 'A1', 'J101', '1', 'L1'),
+                ('POWER1', 'POWER', 'E1', 'A2', 'J1', '1', 'L1'),
+            )))
+            dialog.controller.set_netclass_type('CLOCK', 'RF')
+            dialog.controller.set_netclass_type('POWER', 'DC')
+            dialog.refresh_netclass_types()
+            step = PAGES.index('Netclass type')
+            dialog.select_page(step)
+            self.assertEqual(dialog.checklist.lines[0].count, '2 of 2')
+            self.assertEqual(dialog.step_list.statuses[step], 'done')
+            names = [dialog.netclass_type_grid.GetCellValue(row, 0)
+                     for row in range(dialog.netclass_type_grid.GetNumberRows())]
+            # The choice arrives from a pop-up menu, outside any guarded handler.
+            dialog._set_netclass_type_choice(names.index('CLOCK'), '')
+            self.assertEqual(dialog.checklist.lines[0].count, '1 of 2')
+            self.assertEqual(dialog.step_list.statuses[step], 'missing')
+            # Any other settings change is followed too, once the event loop turns.
+            dialog.controller.set_netclass_type('CLOCK', 'RF')
+            self.app.Yield()
+            self.assertEqual(dialog.checklist.lines[0].count, '2 of 2')
+            self.assertEqual(dialog.step_list.statuses[step], 'done')
+            # Define RF gangs shows its message only while an entry is wrong.
+            dialog.refresh_gangs()
+            dialog.select_page(PAGES.index('Define RF gangs'))
+            dialog.Show()
+            self.app.Yield()
+            self.assertFalse(dialog.gang_definition_status.IsShown())
+            dialog.add_gang_row(None)
+            self.assertTrue(dialog.gang_definition_status.IsShown())
+            self.assertIn('enter a position count', dialog.gang_definition_status.GetLabel())
+            dialog.gang_rows.SetCellValue(0, 1, '1')
+            dialog.gang_draft_changed()
+            self.assertFalse(dialog.gang_definition_status.IsShown())
+            self.assertFalse(dialog.gang_preview_status.IsShown())
         finally:
             dialog.Destroy()
             self.app.Yield()
