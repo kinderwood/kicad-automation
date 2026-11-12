@@ -481,7 +481,7 @@ class AssignmentRenderer(grid.GridCellStringRenderer):
     missing or conflicting entry gets a red outline and the red X in a slot
     that is always reserved, so the text does not shift when it appears.
     """
-    SLOT = 20
+    SLOT = 18
 
     def __init__(self, arrow=True):
         super().__init__()
@@ -516,16 +516,16 @@ class AssignmentRenderer(grid.GridCellStringRenderer):
         dc.SetBrush(wx.TRANSPARENT_BRUSH)
         dc.DrawRectangle(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2)
         if problem:
-            draw_status_icon(dc, progress.MISSING, rect.x + 5,
+            draw_status_icon(dc, progress.MISSING, rect.x + 3,
                              rect.y + (rect.height - 14) // 2, palette)
         text = value or 'Select…'
         dc.SetTextForeground(palette.text if value else palette.muted)
         clipped = wx.Control.Ellipsize(text, dc, wx.ELLIPSIZE_END,
-                                       max(0, rect.width - self.SLOT - 24))
+                                       max(0, rect.width - self.SLOT - 20))
         _, text_height = dc.GetTextExtent(clipped)
-        dc.DrawText(clipped, rect.x + self.SLOT + 4,
+        dc.DrawText(clipped, rect.x + self.SLOT + 2,
                     rect.y + max(1, (rect.height - text_height) // 2))
-        center_x = rect.GetRight() - 12
+        center_x = rect.GetRight() - 10
         center_y = rect.y + rect.height // 2
         dc.SetPen(wx.Pen(palette.text))
         dc.SetBrush(wx.Brush(palette.text))
@@ -1538,14 +1538,14 @@ class WorkflowDialog(wx.Dialog):
     def _fit_grid_contents(view, columns):
         """Size a compact grid from its headers, values and bounded column roles."""
         dc = wx.ClientDC(view)
-        for column, (values, minimum, maximum) in enumerate(columns):
+        for column, (values, minimum, maximum, *extra) in enumerate(columns):
             dc.SetFont(view.GetLabelFont())
             measured = dc.GetTextExtent(view.GetColLabelValue(column))[0]
             dc.SetFont(view.GetDefaultCellFont())
             measured = max(
                 [measured] + [dc.GetTextExtent(str(value))[0] for value in values],
             )
-            view.SetColSize(column, max(minimum, min(maximum, measured + 28)))
+            view.SetColSize(column, max(minimum, min(maximum, measured + 28 + sum(extra))))
         width = sum(view.GetColSize(column) for column in range(view.GetNumberCols()))
         width += view.GetNumberCols() + 2
         height = view.GetColLabelSize() + sum(
@@ -1834,7 +1834,7 @@ class WorkflowDialog(wx.Dialog):
         for column, name in enumerate(('#', 'Source row') + tuple(HEADERS)):
             self.mapper.SetColLabelValue(column, name)
         self.mapper.SetRowLabelSize(0)
-        self.mapper.SetColSize(0, 42)
+        self.mapper.SetColSize(0, 0)
         self.mapper.SetColSize(1, 82)
         for column, name in enumerate(HEADERS, 2):
             self.mapper.SetColSize(column, 125 if name in ('Interposer Pin', 'Connector Pin') else 112)
@@ -1850,14 +1850,13 @@ class WorkflowDialog(wx.Dialog):
         ) + self.mapper.GetNumberCols() + 2
         self.mapper.SetMinSize((table_width, table_height))
         self.mapper.SetMaxSize((table_width, table_height))
-        self.mapper.SetCellSize(0, 0, 1, 2)
-        self.mapper.SetCellValue(0, 0, 'Assignments')
+        self.mapper.SetCellValue(0, 1, 'Column')
         self.mapper.SetReadOnly(0, 0)
         self.mapper.SetReadOnly(0, 1)
         palette = ui_palette()
-        self.mapper.SetCellBackgroundColour(0, 0, palette.assigned)
-        self.mapper.SetCellTextColour(0, 0, palette.text)
-        self.mapper.SetCellRenderer(0, 0, AssignmentRenderer(False))
+        self.mapper.SetCellBackgroundColour(0, 1, palette.assigned)
+        self.mapper.SetCellTextColour(0, 1, palette.text)
+        self.mapper.SetCellRenderer(0, 1, AssignmentRenderer(False))
         for row_index in range(1, SPREADSHEET_PREVIEW_ROWS + 1):
             for column in range(len(HEADERS) + 2):
                 self.mapper.SetReadOnly(row_index, column)
@@ -1876,9 +1875,11 @@ class WorkflowDialog(wx.Dialog):
         row.Add(self.nets_status, 0, wx.ALIGN_CENTER_VERTICAL)
         self.columns_status.Hide()
         self.nets_status.Hide()
-        row.AddStretchSpacer()
         self.view_button = self.button(mapping_box, 'Open Full Table…', self.view_data)
-        row.Add(self.view_button, 0, wx.ALIGN_CENTER_VERTICAL)
+        row.Add(self.view_button, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 12)
+        self.preview_count = wx.StaticText(mapping_box, label='Showing 0 of 0 nets')
+        self.preview_count.SetForegroundColour(ui_palette().muted)
+        row.Add(self.preview_count, 0, wx.ALIGN_CENTER_VERTICAL)
         mapping.Add(row, 0, wx.EXPAND | wx.ALL, 8)
         panel.GetSizer().Add(mapping, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
@@ -2115,13 +2116,12 @@ class WorkflowDialog(wx.Dialog):
             self._render_mapping_preview(table, mapped)
             self._style_assignment_row()
             self._fit_grid_contents(self.mapper, (
-                ([self.mapper.GetCellValue(row, 0)
-                  for row in range(1, self.mapper.GetNumberRows())], 42, 42),
+                ((), 0, 0),
                 ([self.mapper.GetCellValue(row, 1)
                   for row in range(1, self.mapper.GetNumberRows())], 72, 96),
                 *tuple(
                     ([self.mapper.GetCellValue(row, column)
-                      for row in range(self.mapper.GetNumberRows())], 100, 160)
+                      for row in range(self.mapper.GetNumberRows())], 100, 170, 10)
                     for column in range(2, self.mapper.GetNumberCols())
                 ),
             ))
@@ -2264,14 +2264,10 @@ class WorkflowDialog(wx.Dialog):
         )
         box = wx.StaticBox(panel, label='Netclass classifications')
         sizer = wx.StaticBoxSizer(box, wx.VERTICAL)
-        instruction = wx.BoxSizer(wx.HORIZONTAL)
-        instruction.AddStretchSpacer()
         self.netclass_auto_assign = self.button(box, 'Auto Assign', self.auto_assign_netclass_types)
         self.netclass_auto_assign.SetToolTip(
             'Fill blank types from exact J# / J### reference conventions and the exact DC netclass; preserve manual selections.'
         )
-        instruction.Add(self.netclass_auto_assign, 0, wx.LEFT, 12)
-        sizer.Add(instruction, 0, wx.EXPAND | wx.ALL, 8)
         self.netclass_type_grid = grid.Grid(box)
         self.netclass_type_grid.CreateGrid(0, 4)
         self.netclass_type_grid.SetRowLabelSize(0)
@@ -2289,7 +2285,8 @@ class WorkflowDialog(wx.Dialog):
                 event, self.netclass_type_grid, 3, self._show_netclass_type_menu,
             ),
         )
-        sizer.Add(self.netclass_type_grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+        sizer.Add(self.netclass_type_grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        sizer.Add(self.netclass_auto_assign, 0, wx.LEFT | wx.TOP, 8)
         self.netclass_type_status = self.status_label(box, '0 of 0 assigned')
         sizer.Add(self.netclass_type_status, 0, wx.ALL, 8)
         self.netclass_type_status.Hide()
@@ -2421,14 +2418,10 @@ class WorkflowDialog(wx.Dialog):
         )
         layer_box = wx.StaticBox(panel, label='Layer mappings')
         layer_sizer = wx.StaticBoxSizer(layer_box, wx.VERTICAL)
-        instruction = wx.BoxSizer(wx.HORIZONTAL)
-        instruction.AddStretchSpacer()
         self.layer_auto_assign = self.button(layer_box, 'Auto Assign', self.auto_assign_layers)
         self.layer_auto_assign.SetToolTip(
             'Fill blank mappings with unambiguous layer-number matches; preserve manual selections.'
         )
-        instruction.Add(self.layer_auto_assign, 0, wx.LEFT, 12)
-        layer_sizer.Add(instruction, 0, wx.EXPAND | wx.ALL, 8)
 
         self.layer_map = grid.Grid(layer_box)
         self.layer_map.CreateGrid(0, 2)
@@ -2439,7 +2432,8 @@ class WorkflowDialog(wx.Dialog):
         self.layer_map.SetColSize(1, 140)
         self.layer_map.SetMinSize((-1, self.layer_map.GetColLabelSize() + 2))
         self.layer_map.SetMaxSize((-1, self.layer_map.GetColLabelSize() + 2))
-        layer_sizer.Add(self.layer_map, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+        layer_sizer.Add(self.layer_map, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        layer_sizer.Add(self.layer_auto_assign, 0, wx.LEFT | wx.TOP, 8)
         status_row = wx.BoxSizer(wx.HORIZONTAL)
         self.layer_mapping_status = self.status_label(layer_box, '0 of 0 assigned')
         status_row.Add(self.layer_mapping_status, 0, wx.ALIGN_CENTER_VERTICAL)
@@ -5454,6 +5448,10 @@ class WorkflowDialog(wx.Dialog):
             self.columns_status.SetLabel(f'{mapped} of {len(HEADERS)} columns assigned')
             noun = 'net' if table.included_count == 1 else 'nets'
             self.nets_status.SetLabel(f'{table.included_count} {noun} parsed')
+            self.preview_count.SetLabel(
+                f'Showing {min(SPREADSHEET_PREVIEW_ROWS, table.included_count)} '
+                f'of {table.included_count} {noun}'
+            )
             self._style_status(
                 self.columns_status,
                 'success' if mapped == len(HEADERS) else 'warning',
@@ -5465,6 +5463,7 @@ class WorkflowDialog(wx.Dialog):
         else:
             self.columns_status.SetLabel(f'0 of {len(HEADERS)} columns assigned')
             self.nets_status.SetLabel('0 nets parsed')
+            self.preview_count.SetLabel('Showing 0 of 0 nets')
             self._style_status(self.columns_status, 'warning')
             self._style_status(self.nets_status, 'warning')
         self.review_button.Enable(not self.controller.busy)

@@ -1360,9 +1360,10 @@ class NativeDialogTests(unittest.TestCase):
                 (dialog.netclass_type_grid, dialog.netclass_auto_assign),
                 (dialog.layer_map, dialog.layer_auto_assign),
             ):
-                table_right = view.GetPosition().x + view.GetSize().width
-                button_right = button.GetPosition().x + button.GetSize().width
-                self.assertLessEqual(abs(table_right - button_right), 8)
+                # The Spec puts the action below its table, on the table's left edge.
+                self.assertLessEqual(abs(view.GetPosition().x - button.GetPosition().x), 8)
+                self.assertGreaterEqual(button.GetPosition().y,
+                                        view.GetPosition().y + view.GetSize().height)
         finally:
             dialog.Destroy()
             self.app.Yield()

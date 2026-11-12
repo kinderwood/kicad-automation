@@ -422,6 +422,11 @@ combinations" note no longer appears and disappears. The netlist preview shows
 twelve rows, the routing grid is sized to its content, and button labels use
 KiCad's title case.
 
+Version 0.7.2 completes the Nets & Layers details: the netlist table drops its
+"#" column and labels the matching row "Column", entry columns are wide enough
+for their reserved status slot, "Showing N of M nets" sits beside Open Full
+Table, and Auto Assign sits below its table on the table's left edge.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal
