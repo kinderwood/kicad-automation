@@ -293,6 +293,18 @@ Standing rules:
   missing entry has a red outline and a red X in an always-reserved slot. A
   readout sharing a row with entries is flat grey; a fully read-only table is
   white with striped rows. Stand-alone fields use the normal border.
+- A step has no message area and no text that appears and disappears. What
+  is wrong is shown where it is: a missing or wrong entry in the entry's
+  missing state, a count that does not add up in its readout, the step's
+  state in its table's Status column and in the checklist. The sentence
+  behind a mark is a tooltip and a line in the message log. Only failures
+  that stop an action are pop-ups.
+- Geometry previews are one dark drawing surface in both themes, like the PCB
+  canvas, with the same two colours everywhere (`PREVIEW_*` in `ui.py`).
+- Before a UI change is released, each changed step is screenshotted and laid
+  beside its Spec frame; every difference is either fixed or written into the
+  Decisions log as a deliberate deviation. Behaviour passing its tests is not
+  evidence that the step matches the Spec.
 - Toolbar icons give KiCad's feedback: a lighter square under the pointer, a
   darker one while held or switched on.
 - Tabs of one step keep shared controls in the same place, so flipping tabs

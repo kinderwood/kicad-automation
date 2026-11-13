@@ -823,6 +823,14 @@ class DataDialog(wx.Dialog):
         self.CentreOnParent()
 
 
+# Every geometry preview is the same dark drawing surface in both themes, like
+# the PCB canvas: one primary colour, one secondary.
+PREVIEW_BACKGROUND = wx.Colour(18, 18, 20)
+PREVIEW_TEXT = wx.Colour(238, 238, 238)
+PREVIEW_GEOMETRY = wx.Colour(30, 205, 255)
+PREVIEW_PRIMARY = wx.Colour(255, 215, 55)
+
+
 class PatternPreview(wx.Panel):
     def __init__(self, parent):
         super().__init__(parent)
@@ -844,10 +852,8 @@ class PatternPreview(wx.Panel):
         self.Refresh()
     def paint(self, event):
         dc = wx.AutoBufferedPaintDC(self)
-        background = wx.Colour(18, 18, 20)
-        foreground = wx.Colour(238, 238, 238)
-        geometry = wx.Colour(30, 205, 255)
-        anchor = wx.Colour(255, 215, 55)
+        background, foreground = PREVIEW_BACKGROUND, PREVIEW_TEXT
+        geometry, anchor = PREVIEW_GEOMETRY, PREVIEW_PRIMARY
         dc.SetBackground(wx.Brush(background))
         dc.Clear()
         dc.SetTextForeground(foreground)
@@ -946,9 +952,8 @@ class OutlinePreview(wx.Panel):
         self.contours = contours
         self.Refresh()
     def paint(self, event):
-        palette = ui_palette()
         dc = wx.AutoBufferedPaintDC(self)
-        dc.SetBackground(wx.Brush(palette.window))
+        dc.SetBackground(wx.Brush(PREVIEW_BACKGROUND))
         dc.Clear()
         paths = []
         from .core.outline import Segment, _arc
@@ -967,8 +972,7 @@ class OutlinePreview(wx.Panel):
         width, height = self.GetClientSize()
         scale = min((width-50)/max(max(xs)-min(xs), 1), (height-50)/max(max(ys)-min(ys), 1))
         for role, line in paths:
-            dc.SetPen(wx.Pen(palette.accent if role == 'outer'
-                             else _mix_colour(palette.text, (230, 125, 30), .70), 2))
+            dc.SetPen(wx.Pen(PREVIEW_PRIMARY if role == 'outer' else PREVIEW_GEOMETRY, 2))
             dc.DrawLines([wx.Point(round(25+(x-min(xs))*scale), round(25+(y-min(ys))*scale)) for x, y in line])
 
 
@@ -1922,7 +1926,7 @@ class WorkflowDialog(wx.Dialog):
         }.get(state, palette.panel)
         control._workflow_status_state = state
         if control is getattr(self, 'gang_definition_status', None):
-            control.Show(state == 'error')
+            self._mark_gang_entries(state == 'error')
         control.SetBackgroundColour(background)
         control.SetForegroundColour(palette.text if state != 'neutral' else palette.panel_text)
         control.Refresh()
@@ -3693,7 +3697,7 @@ class WorkflowDialog(wx.Dialog):
         selector_box = wx.StaticBox(panel, label='RF gangs')
         selector = wx.StaticBoxSizer(selector_box, wx.VERTICAL)
         self.gang_filter = wx.SearchCtrl(selector_box, style=wx.TE_PROCESS_ENTER)
-        self.gang_filter.SetDescriptiveText('Search gangs')
+        self.gang_filter.SetDescriptiveText('Search')
         self.gang_filter.Bind(wx.EVT_TEXT, lambda event: self.refresh_gang_list())
         selector.Add(self.gang_filter, 0, wx.EXPAND | wx.ALL, 8)
         selector_box.SetMinSize((225, -1))
@@ -3710,7 +3714,7 @@ class WorkflowDialog(wx.Dialog):
         self.gang_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.guard(self.select_dashboard_gang))
         selector.Add(self.gang_list, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
         self.copy_gang_button = self.button(
-            selector_box, 'Copy settings…', self.copy_gang,
+            selector_box, 'Copy to Other Gangs…', self.copy_gang,
         )
         selector.Add(self.copy_gang_button, 0, wx.ALL, 8)
         body.Add(selector, 0, wx.ALIGN_TOP | wx.RIGHT, 8)
@@ -3742,14 +3746,14 @@ class WorkflowDialog(wx.Dialog):
         row_actions = wx.BoxSizer(wx.HORIZONTAL)
         row_actions.Add(self.button(pattern_page, '+', self.add_gang_row), 0, wx.RIGHT, 5)
         row_actions.Add(self.button(pattern_page, '−', self.remove_gang_row), 0, wx.RIGHT, 12)
-        self.gang_position_total = wx.StaticText(pattern_page, label='0 positions total')
+        self.gang_position_total = wx.StaticText(pattern_page, label='0 of 0 positions')
         row_actions.Add(self.gang_position_total, 0, wx.ALIGN_CENTER_VERTICAL)
         pattern_sizer.Add(row_actions, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         dimensions = wx.FlexGridSizer(cols=2, hgap=8, vgap=8)
-        dimensions.Add(wx.StaticText(pattern_page, label='Position pitch'), 0, wx.ALIGN_CENTER_VERTICAL)
+        dimensions.Add(wx.StaticText(pattern_page, label='Position pitch:'), 0, wx.ALIGN_CENTER_VERTICAL)
         self.gang_pitch_x = DimensionInput(pattern_page, value='100', compact=True)
         dimensions.Add(self.gang_pitch_x, 0, wx.ALIGN_LEFT)
-        dimensions.Add(wx.StaticText(pattern_page, label='Row pitch'), 0, wx.ALIGN_CENTER_VERTICAL)
+        dimensions.Add(wx.StaticText(pattern_page, label='Row pitch:'), 0, wx.ALIGN_CENTER_VERTICAL)
         self.gang_pitch_y = DimensionInput(pattern_page, value='100', compact=True)
         dimensions.Add(self.gang_pitch_y, 0, wx.ALIGN_LEFT)
         pattern_sizer.Add(dimensions, 0, wx.EXPAND | wx.ALL, 8)
@@ -3788,9 +3792,9 @@ class WorkflowDialog(wx.Dialog):
         self.gang_notebook.AddPage(placement_page, 'Numbering')
         editor.Add(self.gang_notebook, 1, wx.EXPAND | wx.ALL, 8)
         self.gang_definition_status = self.status_label(editor_box, 'Select a gang', fit=False)
-        # Shown only while an entry is wrong; its space is kept so nothing moves.
-        editor.Add(self.gang_definition_status, 0,
-                   wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.RESERVE_SPACE_EVEN_IF_HIDDEN, 8)
+        # Never shown: the step has no message area. The text is kept for the
+        # message log and the tooltip of whatever entry is marked wrong.
+        editor.Add(self.gang_definition_status, 0)
         self.gang_definition_status.Hide()
         body.Add(editor, 0, wx.EXPAND | wx.RIGHT, 8)
 
@@ -3802,6 +3806,12 @@ class WorkflowDialog(wx.Dialog):
         self.gang_preview_status = self.status_label(preview_box, 'Select a gang', fit=False)
         preview.Add(self.gang_preview_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         self.gang_preview_status.Hide()
+        caption = wx.StaticText(
+            preview_box,
+            label='Position 1 is yellow. The tick on each position shows connector orientation.')
+        caption.Wrap(230)
+        caption.SetForegroundColour(ui_palette().muted)
+        preview.Add(caption, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         body.Add(preview, 1, wx.EXPAND)
         panel.GetSizer().Add(body, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
@@ -3968,7 +3978,6 @@ class WorkflowDialog(wx.Dialog):
             self.pattern_view.show(self.current_gang, {})
         if not defined and not values.get('row_lengths'):
             # A gang nobody has described yet: nothing to draw and nothing wrong.
-            self.gang_position_total.SetLabel('0 positions total')
             self.gang_definition_status.SetLabel('Not defined')
             self._style_status(self.gang_definition_status, 'warning')
             self.gang_preview_status.SetLabel('Not defined')
@@ -3978,7 +3987,6 @@ class WorkflowDialog(wx.Dialog):
         try:
             points = self._preview_gang_values(values)
             self.pattern_view.show(self.current_gang, points)
-            self.gang_position_total.SetLabel(f'{len(points)} positions total')
             self._validate_gang_population(points)
         except (TypeError, ValueError) as error:
             if points is None and values.get('numbering'):
@@ -3987,9 +3995,6 @@ class WorkflowDialog(wx.Dialog):
                     fallback['numbering'] = []
                     fallback_points = self._preview_gang_values(fallback)
                     self.pattern_view.show(self.current_gang, fallback_points)
-                    self.gang_position_total.SetLabel(
-                        f'{len(fallback_points)} positions total'
-                    )
                 except (TypeError, ValueError):
                     pass
             self.gang_definition_status.SetLabel('Needs input — ' + str(error))
@@ -4011,6 +4016,53 @@ class WorkflowDialog(wx.Dialog):
             self.gang_preview_status.SetLabel('Preview only · gang not defined')
             self._style_status(self.gang_preview_status, 'warning')
         return True
+
+    def _mark_gang_entries(self, wrong):
+        """Mark the entries that are missing or wrong, in place; there is no message.
+
+        A row without a position count, a pitch that is needed and not entered and
+        an unusable custom numbering turn red where they are. The total reads
+        ``N of M positions`` against the netlist and turns red when they differ.
+        The sentence itself goes to the message log and the marked entries' tooltip.
+        """
+        palette = ui_palette()
+        counts, marked = [], []
+        for row in range(self.gang_rows.GetNumberRows()):
+            text = self.gang_rows.GetCellValue(row, 1).strip()
+            valid = text.isdigit() and int(text) > 0
+            counts.append(int(text) if valid else 0)
+            self.gang_rows.SetCellBackgroundColour(
+                row, 1, palette.error if wrong and not valid
+                else self.gang_rows.GetDefaultCellBackgroundColour())
+            marked.append(wrong and not valid)
+        self.gang_rows.ForceRefresh()
+        needs = {
+            self.gang_pitch_x: wrong and max(counts, default=0) > 1,
+            self.gang_pitch_y: wrong and len(counts) > 1,
+        }
+        for control, needed in needs.items():
+            missing = needed and not control.GetValue().strip()
+            control.text.SetBackgroundColour(palette.error if missing else wx.NullColour)
+            control.text.Refresh()
+            marked.append(missing)
+        expected = 0
+        if self.current_gang and self.controller.table:
+            expected = sum(record.connector == self.current_gang
+                           for record in self.controller.table.records)
+        total = sum(counts)
+        mismatch = bool(counts) and total != expected
+        custom = wrong and not any(marked) and not mismatch
+        self.gang_custom_numbering.SetBackgroundColour(
+            palette.error if custom else wx.NullColour)
+        self.gang_custom_numbering.Refresh()
+        self.gang_position_total.SetLabel(f'{total} of {expected} positions')
+        self.gang_position_total.SetForegroundColour(
+            palette.status[progress.MISSING] if mismatch else palette.text)
+        message = self.gang_definition_status.GetLabel() if wrong else ''
+        self.gang_position_total.SetToolTip(message)
+        if message and message != getattr(self, '_gang_message', ''):
+            self.status.SetLabel(f'{self.current_gang}: {message}')
+        self._gang_message = message
 
     def gang_draft_changed(self, event=None):
         with self._coalesced_refresh():
@@ -5396,7 +5448,7 @@ class WorkflowDialog(wx.Dialog):
         self.outline_status.Hide()
         body.Add(settings, 0, wx.ALL, 8)
         preview = wx.BoxSizer(wx.VERTICAL)
-        preview.Add(wx.StaticText(panel, label='Preview'), 0, wx.BOTTOM, 6)
+        preview.Add(self._heading(panel, 'Preview'), 0, wx.BOTTOM, 6)
         self.outline_view = OutlinePreview(panel)
         preview.Add(self.outline_view, 1, wx.EXPAND)
         body.Add(preview, 1, wx.EXPAND | wx.ALL, 8)
@@ -5415,7 +5467,11 @@ class WorkflowDialog(wx.Dialog):
         for row, (role, _label) in enumerate(self.OUTLINE_ROLES):
             count = len(outline.get(role + '_uuids', ()))
             status = 'None'
-            if count:
+            if count and not contours.get(role):
+                # Chosen, but its geometry was not kept with the settings: the
+                # checklist says "set" too, and Review checks that it closes.
+                status = 'Set'
+            elif count:
                 try:
                     if role == 'outer':
                         validate_outline(contours.get('outer', []), [])

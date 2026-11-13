@@ -488,6 +488,15 @@ line up. Define RF gangs no longer shows standing status boxes; a message
 appears under the editor only while an entry is wrong, in space that is
 always reserved.
 
+Version 0.7.9 corrects two departures from the Spec. The Board outline preview
+is the same dark drawing surface as the gang preview (shared `PREVIEW_*`
+colours; outer boundary yellow, cutout cyan). Define RF gangs no longer shows
+any message text, including the one 0.7.8 showed on error: a missing or wrong
+entry is marked red in place, the total reads `N of M positions` against the
+netlist, and the sentence goes to the total's tooltip and the message log. The
+outline table reads Set, like the checklist, for a contour whose geometry was
+not stored with the settings.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal

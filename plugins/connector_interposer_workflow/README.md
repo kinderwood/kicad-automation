@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.7.8**, testing release. The package targets KiCad 10.0.0 through
+Version **0.7.9**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -174,7 +174,10 @@ files changed after the transaction.
    departure, not on each keystroke. A new gang starts empty, with no rows and
    no pitch, and stays **Not defined** until its rows, pitch and numbering match
    the netlist; incomplete or population-mismatched entries are
-   **Invalid**. Copying settings never changes gang anchors or selected library parts.
+   **Invalid**. The step has no message area: an entry that is missing or
+   wrong turns red where it is, and the total beside the row buttons reads
+   `N of M positions` against the netlist, in red when they differ. Hover the
+   total for the exact reason; it is also written to the message log. Copying settings never changes gang anchors or selected library parts.
 8. **Mechanical placement:** import the complete mechanical drawing through
    KiCad's native **File → Import → Graphics** and save the board. Choose its
    **Drawing layer** (default `User.Drawings`). The workflow reads that layer

@@ -2452,17 +2452,32 @@ class NativeDialogTests(unittest.TestCase):
             self.app.Yield()
             self.assertEqual(dialog.checklist.lines[0].count, '2 of 2')
             self.assertEqual(dialog.step_list.statuses[step], 'done')
-            # Define RF gangs shows its message only while an entry is wrong.
+            # Define RF gangs has no message area: a wrong entry is marked in place.
+            from plugins.connector_interposer_workflow.ui import ui_palette
             dialog.refresh_gangs()
             dialog.select_page(PAGES.index('Define RF gangs'))
             dialog.Show()
             self.app.Yield()
-            self.assertFalse(dialog.gang_definition_status.IsShown())
+            error = ui_palette().error
+            total = dialog.gang_position_total
+            self.assertEqual(total.GetLabel(), '0 of 1 positions')
             dialog.add_gang_row(None)
-            self.assertTrue(dialog.gang_definition_status.IsShown())
-            self.assertIn('enter a position count', dialog.gang_definition_status.GetLabel())
+            self.assertFalse(dialog.gang_definition_status.IsShown())
+            self.assertEqual(dialog.gang_rows.GetCellBackgroundColour(0, 1), error)
+            self.assertIn('enter a position count', total.GetToolTipText())
+            self.assertIn('J101: Needs input', dialog.messages.GetValue())
+            dialog.gang_rows.SetCellValue(0, 1, '3')
+            dialog.gang_draft_changed()
+            self.assertNotEqual(dialog.gang_rows.GetCellBackgroundColour(0, 1), error)
+            self.assertEqual(dialog.gang_pitch_x.text.GetBackgroundColour(), error)
+            self.assertEqual(total.GetLabel(), '3 of 1 positions')
+            self.assertEqual(total.GetForegroundColour(), ui_palette().status['missing'])
             dialog.gang_rows.SetCellValue(0, 1, '1')
             dialog.gang_draft_changed()
+            self.assertNotEqual(dialog.gang_pitch_x.text.GetBackgroundColour(), error)
+            self.assertEqual(total.GetLabel(), '1 of 1 positions')
+            self.assertEqual(total.GetToolTipText(), '')
+            self.assertTrue(dialog.controller.gang('J101')['defined'])
             self.assertFalse(dialog.gang_definition_status.IsShown())
             self.assertFalse(dialog.gang_preview_status.IsShown())
         finally:
