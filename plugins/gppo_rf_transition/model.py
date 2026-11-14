@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 import uuid
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 SCHEMA = "gppo.artifact/2.0"
 PAYLOAD_SCHEMA = "gppo.rf/2.0"
 RECIPE_SCHEMA = "gppo.rf-recipe/3.0"
@@ -190,8 +190,10 @@ def default_recipe(part=None):
     layers = copper_layer_names(4)
     pth = isinstance(part, dict) and part.get("mount") == "PTH"
     antipad_layers = layers if pth else layers[:3]
+    def mil(value):
+        return round(value * MIL_MM, 9)
     # 5 mil drill and 10 mil pad microvias; the ground ring is via-in-pad.
-    drill, pad = round(5 * MIL_MM, 9), round(10 * MIL_MM, 9)
+    drill, pad = mil(5), mil(10)
     return {
         "schema": RECIPE_SCHEMA,
         "generator": {"id": "gppo-rf-transition", "version": VERSION},
@@ -204,11 +206,11 @@ def default_recipe(part=None):
                            "construction": "stacked"},
             "ground_ring": {"radius": ground_ring_default_radius(part),
                             "start_deg": 30.0, "end_deg": 330.0, "count": 11},
-            "tuned_signal_copper": {"F.Cu": None, "In1.Cu": None if pth else 0.55,
-                                    "In2.Cu": 0.65, "B.Cu": None},
+            "tuned_signal_copper": {"F.Cu": None, "In1.Cu": None if pth else mil(21),
+                                    "In2.Cu": mil(25), "B.Cu": None},
             "tuned_ground_copper": {},
-            "antipads": {layer: 1.1 for layer in antipad_layers},
-            "trace_width": 0.25, "ground_pour_gap": 0.2,
+            "antipads": {layer: mil(43) for layer in antipad_layers},
+            "trace_width": mil(10), "ground_pour_gap": mil(8),
             "clock_deg": 0.0,
         },
     }

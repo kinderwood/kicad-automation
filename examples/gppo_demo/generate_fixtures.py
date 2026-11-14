@@ -465,8 +465,10 @@ def rf_artifacts() -> dict:
         params = recipe["parameters"]
         params["netclasses"] = ["CLOCK", "DATA"]
         params["signal_layer"] = copper
+        # The default 25 mil signal disc, on whichever layer is the exit.
+        tuned = params["tuned_signal_copper"]["In2.Cu"]
         params["tuned_signal_copper"] = {
-            layer: 0.65 if layer == copper else None for layer in params["stackup"]}
+            layer: tuned if layer == copper else None for layer in params["stackup"]}
         result[architecture] = make_artifact(
             recipe, f"RF-{architecture}", provenance={
                 "operation": "new",

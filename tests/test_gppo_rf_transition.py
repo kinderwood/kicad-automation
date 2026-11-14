@@ -40,9 +40,14 @@ def wide_ring(recipe):
     """A through-via ring outside the ground pad, with larger vias.
 
     Most geometry tests use these round millimetre values rather than the
-    via-in-pad defaults, which have their own test.
+    mil defaults, which have their own test.
     """
     params = recipe["parameters"]
+    params["trace_width"], params["ground_pour_gap"] = 0.25, 0.2
+    params["antipads"] = {layer: 1.1 for layer in params["antipads"]}
+    params["tuned_signal_copper"] = {
+        layer: None if value is None else {"In1.Cu": 0.55, "In2.Cu": 0.65}[layer]
+        for layer, value in params["tuned_signal_copper"].items()}
     if params["signal_via"] is not None:
         params["signal_via"] = {"diameter": 0.45, "drill": 0.2}
     params["ground_via"] = {"via_type": "through", "diameter": 0.6, "drill": 0.3,
@@ -613,7 +618,18 @@ class RFRecipeTests(unittest.TestCase):
             # Via-in-pad: the mid-radius of the 0.635–1.5875 mm ground annulus.
             self.assertEqual(params["ground_ring"],
                              {"radius": 1.11125, "start_deg": 30.0, "end_deg": 330.0, "count": 11})
+            # The remaining defaults are mil values too: 10 mil trace, 8 mil
+            # gap, 43 mil antipads, 21 and 25 mil tuned signal copper.
+            pth = part["mount"] == "PTH"
+            self.assertEqual((params["trace_width"], params["ground_pour_gap"]), (0.254, 0.2032))
+            self.assertEqual(params["antipads"], {layer: 1.0922 for layer in
+                                                  (["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"] if pth else
+                                                   ["F.Cu", "In1.Cu", "In2.Cu"])})
+            self.assertEqual(params["tuned_signal_copper"],
+                             {"F.Cu": None, "In1.Cu": None if pth else 0.5334, "In2.Cu": 0.635, "B.Cu": None})
             review = rf.review_recipe(recipe)
+            corridor = objects(review["payload"], purpose="exit-corridor")[0]
+            self.assertEqual(corridor["points"][2], [1.11125, 0.3302])
             # A 10 mil pad on a 5 mil drill is exactly the 2.5 mil microvia
             # limit, so the defaults themselves raise no warning.
             self.assertEqual([w["subject"] for w in review["warnings"]],

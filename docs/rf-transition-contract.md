@@ -173,6 +173,10 @@ at the boundary.
   footprint's ground pad (via-in-pad). The default ring radius is the
   mid-radius of the ground pad annulus.
 - Ground ring pattern: eleven positions from 30° to 330°, 30° apart.
+- Exit trace width: 10 mil. Ground-pour gap: 8 mil.
+- Antipads: 43 mil on every layer that gets one.
+- Tuned signal copper: 25 mil on the exit layer; for an SMD pin also 21 mil
+  on the layer above it.
 - A 10 mil pad on a 5 mil drill is a 2.5 mil annular ring, exactly the
   microvia limit, so these defaults raise no annular ring warning.
 
@@ -229,7 +233,7 @@ Tested on a six-layer board on 2026-11-14.
 
 ## Not yet implemented
 
-As of GPPO RF Transition Designer 0.3.0 and Connector to Interposer Workflow
+As of GPPO RF Transition Designer 0.4.0 and Connector to Interposer Workflow
 0.8.0 the code differs from this contract in this way:
 
 | Contract | Code today |

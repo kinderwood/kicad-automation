@@ -1,6 +1,6 @@
 # GPPO RF Transition Designer
 
-Independent librarian authoring ActionPlugin, version **0.3.0 testing**. Supports
+Independent librarian authoring ActionPlugin, version **0.4.0 testing**. Supports
 the repository's KiCad **10.0.0 through 10.0.8** range. Exact runtime results and
 scope are recorded in the repository's
 `docs/connector-interposer-implementation.md`.
@@ -188,11 +188,14 @@ The owner works in mils. Values are stored in millimetres, converted exactly.
   radius is the mid-radius of the part's annular ground pad, 43.75 mil
   (1.11125 mm) for the example GPPO;
 - ground ring pattern: eleven positions from 30° to 330°, 30° apart. On the
-  example GPPO the first land clears the exit corridor (it must sit at least
-  24° off the exit axis), neighbouring lands are 0.575 mm apart, and the same
-  pattern also validates as a staggered ring;
-- a four-layer board, an `In2.Cu` exit, 0.25 mm trace width, 0.20 mm
-  ground-pour gap and 1.1 mm antipads.
+  example GPPO the first land clears the exit corridor by 0.098 mm (3.9 mil;
+  it must sit at least 24.3° off the exit axis), neighbouring lands are
+  0.575 mm apart, and the same pattern also validates as a staggered ring;
+- exit trace width 10 mil (0.254 mm) and ground-pour gap 8 mil (0.2032 mm);
+- antipads 43 mil (1.0922 mm) on every layer that gets one;
+- tuned signal copper 25 mil (0.635 mm) on the exit layer, and for an SMD pin
+  21 mil (0.5334 mm) on `In1.Cu`;
+- a four-layer board and an `In2.Cu` exit.
 
 A 10 mil pad on a 5 mil drill is a 2.5 mil annular ring, exactly the microvia
 limit, so the defaults raise no warning of their own.
