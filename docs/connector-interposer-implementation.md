@@ -1,8 +1,8 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.6.0 and the
-separate GPPO RF Transition Designer is version 0.1.2; both have `testing`
+are authorized. Connector to Interposer Workflow is version 0.8.0 and the
+separate GPPO RF Transition Designer is version 0.2.0; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The BGA
 Interposer Wizard remains an independent package at version 0.16.1.
 
@@ -239,7 +239,7 @@ numbering presets and independent pattern and connector rotations. Transition
 assignments are optional, project-wide and keyed by
 netclass, mapped KiCad layer and connector footprint; compatibility validation
 retains exact artifact, footprint, side, mount and stackup checks when an
-artifact is assigned. The RF
+artifact is assigned (since 0.8.0 the stackup check is the copper layer count). The RF
 Transition Designer launcher is present but disabled pending a later integration
 prototype.
 
@@ -497,6 +497,22 @@ netlist, and the sentence goes to the total's tooltip and the message log. The
 outline table reads Set, like the checklist, for a contour whose geometry was
 not stored with the settings.
 
+Workflow 0.8.0 and RF Transition Designer 0.2.0 implement the physical
+contract in `docs/rf-transition-contract.md`. The artifact envelope is
+`gppo.artifact/2.0` with a `gppo.rf/2.0` payload; earlier files are rejected,
+not migrated, and the example library is regenerated. A transition now carries
+its exit trace as a real track ending at a handoff anchor, a corridor that
+stops at the trace end, antipads on every layer for a through-hole pin and
+from the mount layer to the exit layer for an SMD pin, and for an SMD pin a
+solid ground disc below the exit layer. Ground rings are through vias or
+stacked or staggered one-layer microvias; the blind/buried type is gone. Every
+transition via is copper plated shut: the payload marks it and Workflow sets
+KiCad's filling mode on it. A through-hole signal pad must be set to remove
+unused layers and keep start and end. Stackup identity is the copper layer
+count. The Designer reports an annular ring under 5 mil as a warning that does
+not block. Workflow locks every placed transition object and treats the
+handoff as the start of designer routing when it reviews a net swap.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal
@@ -543,7 +559,8 @@ this implementation and these fixtures.
 ## Worked-project evidence
 
 The example uses 28 GPPOs, an 800-pad interposer, mixed L2/L3 RF artifacts,
-252 native RF ground vias, 140 rule areas and a validated outer boundary. The
+224 native filled RF ground vias, 28 exit traces, 140 rule areas and a
+validated outer boundary. The
 A/B native contract covers all 29 footprints and verifies that 56 signal-pad
 assignments change: 28 connector pads and 28 interposer pads. The complete C
 controller run also adds the nine-pin DC connector, accepts and checks all 800
@@ -552,7 +569,8 @@ preview without warnings.
 
 The 4.375-inch square fixture deliberately remains unrouted and lacks completed
 ground planes. Physical DRC is therefore expected to report annular-width,
-copper-to-edge, dangling-via, and unconnected-item findings. The annular ring
+copper-to-edge, dangling-via, dangling-track (each exit trace ends at its
+unrouted handoff) and unconnected-item findings. The annular ring
 and cutout relationships still need librarian and fabricator review; neither a
 qualified stackup nor 50-ohm impedance is established. Constraints are not
 weakened and findings are not waived merely to make the demonstration pass.
@@ -576,7 +594,7 @@ weakened and findings are not waived merely to make the demonstration pass.
 | Full mechanical A/B demonstration | Both DXFs supplied; worked controller run starts from native DXF B | Interactive import, explicit revision reselection and review of the A-to-B layout change |
 | Full explicit schematic presentation | Designer root plus stable managed labelled gang and paginated interposer sheets | Readability review with actual high-count designs |
 | RF authoring ergonomics | Native recipe JSON editor and preview | Typed controls for common parameters and librarian usability review |
-| Via treatment | Interposer microvias explicitly use no tenting, covering, plugging, filling or capping | Native support and fabrication export for filled/capped requirements |
+| Via treatment | RF transition vias are marked filled (copper plated shut; the material goes in the fabrication notes). Interposer microvias explicitly use no tenting, covering, plugging, filling or capping | A decision on interposer microvia fill; plated-shut feasibility (drill, aspect ratio) in board-level DRC and output scripts |
 
 Each unsupported input must produce a specific actionable blocker, not silently
 degraded geometry. Experimental fixture libraries are demonstration data and do

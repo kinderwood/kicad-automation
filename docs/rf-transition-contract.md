@@ -180,19 +180,10 @@ Tested on a six-layer board on 2026-11-14.
 
 ## Not yet implemented
 
-As of GPPO RF Transition Designer 0.1.2 the code differs from this contract
-in these ways:
+As of GPPO RF Transition Designer 0.2.0 and Connector to Interposer Workflow
+0.8.0 the code differs from this contract in these ways:
 
 | Contract | Code today |
 |---|---|
-| All vias copper plated shut | Any treatment other than untreated is rejected |
-| No blind or buried type | `blind_buried` is accepted |
-| Staggered microvia ground ring | Stacked only |
-| Through-hole lands only on outer and connected layers | A land is assumed on every layer the pad lists |
-| Antipads stop at the exit layer for an SMD pin | One span that must cover every signal layer; allowed to run further |
-| Ground disc below the exit | Not generated |
-| Exit trace and handoff at its end | No trace; handoff is the signal via |
-| Corridor stops at the trace end (ring radius) | Corridor runs to the outer edge of the ground lands |
-| Annular ring warning | No warnings exist; every finding blocks |
-| Stackup identity by layer count | Exact layer-name list compared |
 | Pin 1 / pin 2 / front as defaults | Reader defaults match; the dialog asks every time |
+| Ground pad is one annular pad with a solid zone connection | The zone connection is not read. One annular pad centred on the signal is required only for an SMD pin, whose ground disc needs it; a through-hole part may have several ground pads of any shape |
