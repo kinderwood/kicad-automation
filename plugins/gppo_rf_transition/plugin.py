@@ -177,24 +177,29 @@ class RFDesignerDialog(wx.Dialog):
             if dialog.ShowModal() != wx.ID_OK:
                 return
             path = dialog.GetPath()
-        with wx.TextEntryDialog(self, "Signal pad; comma-separated shield pads; mount side (front/back)",
+        with wx.TextEntryDialog(self, "Signal pad; ground pad; mount side (front/back)",
                                 "GPPO pad roles", "1;2;front") as roles:
             if roles.ShowModal() != wx.ID_OK:
                 return
             try:
-                signal, shields, side = roles.GetValue().split(";")
+                signal, ground, side = roles.GetValue().split(";")
                 recipe = json.loads(self.editor.GetValue())
-                part = read_base_part(path, signal.strip(), [s.strip() for s in shields.split(",")],
+                part = read_base_part(path, signal.strip(), ground.strip(),
                                       side.strip(), approved=True)
-                recipe["dependencies"]["base_part"] = part
-                if part["mount"] == "PTH":
-                    # The pin's own barrel is the signal conductor and every
-                    # layer of the board needs an antipad.
-                    params = recipe["parameters"]
-                    params["signal_via"] = None
-                    antipads = params["antipads"]
-                    for layer in params["stackup"]:
-                        antipads.setdefault(layer, max(antipads.values()))
+                if recipe["dependencies"]["base_part"] is None:
+                    # A first selection starts from the part's own defaults:
+                    # its mount type and a ground ring in the ground pad.
+                    recipe = default_recipe(part)
+                else:
+                    recipe["dependencies"]["base_part"] = part
+                    if part["mount"] == "PTH":
+                        # The pin's own barrel is the signal conductor and
+                        # every layer of the board needs an antipad.
+                        params = recipe["parameters"]
+                        params["signal_via"] = None
+                        antipads = params["antipads"]
+                        for layer in params["stackup"]:
+                            antipads.setdefault(layer, max(antipads.values()))
                 self.base_path = path
                 self.set_recipe(recipe)
             except (RFError, ValueError, KeyError, TypeError) as error:

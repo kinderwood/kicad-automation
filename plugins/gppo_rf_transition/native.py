@@ -43,6 +43,7 @@ def _child(node, name):
 
 
 def _annulus(pad_node):
+    """Inner and outer radius and centre of an exact single-circle annular pad."""
     if len(pad_node) < 4 or pad_node[3] != "custom":
         return None
     primitives = _child(pad_node, "primitives")
@@ -68,27 +69,39 @@ def _annulus(pad_node):
     anchor_distance = math.hypot(cx, cy)
     if thickness <= 0 or inner <= 0 or anchor_distance - anchor_radius < inner or anchor_distance + anchor_radius > outer:
         return None
-    return {"at": [round(px + cx, 12), round(-py - cy, 12)],
-            "radius": outer, "inner_radius": inner,
-            "validation": "exact-single-circle-annulus"}
+    return {"at": [px + cx, -py - cy], "inner": inner, "outer": outer}
+
+
+def _solid_zone_connection(pad, footprint):
+    """Resolve the ground pad's zone connection; RF connectors need solid."""
+    names = {pcbnew.ZONE_CONNECTION_NONE: "none", pcbnew.ZONE_CONNECTION_THERMAL: "thermal relief",
+             pcbnew.ZONE_CONNECTION_THT_THERMAL: "thermal relief for through-hole pads"}
+    for owner, item in (("pad", pad), ("footprint", footprint)):
+        setting = item.GetLocalZoneConnection()
+        if setting == pcbnew.ZONE_CONNECTION_FULL:
+            return
+        if setting != pcbnew.ZONE_CONNECTION_INHERITED:
+            raise RFError(f"ground pad zone connection must be solid, but the {owner} is set to "
+                          f"{names.get(setting, 'an unknown mode')}")
+    raise RFError("ground pad zone connection must be solid, but the pad and the footprint both "
+                  "inherit, which leaves it to each zone's default; set the pad or the footprint to solid")
 
 
 def _copper_layers(pad):
     return {layer for layer in pad.GetLayerSet().Seq() if pcbnew.IsCopperLayer(layer)}
 
 
-def read_base_part(path, signal_pad="1", shield_pads=("2",), side="front",
+def read_base_part(path, signal_pad="1", ground_pad="2", side="front",
                    approved=False):
-    """Pin exact source bytes and inspect the actual signal pad in KiCad.
+    """Pin exact source bytes and inspect the actual pads in KiCad.
+
+    The footprint has exactly two electrical pads. Pin 1 signal, pin 2 ground
+    and front mounting are the defaults. The ground pad is one SMD annulus on
+    the mount side, centred on the signal, with a solid zone connection.
 
     The result does not depend on a board stackup: a through-hole signal pad
     has one land diameter and passes through any board, and SMD pads sit on
-    the mount side only. Pin 1 signal, pin 2 ground and front mounting are
-    the defaults.
-
-    Shield geometry uses conservative bounding circles, so complex shield lands
-    may block same-layer exits. A circular custom annulus is read exactly; the
-    shield is never mistaken for the center signal land.
+    the mount side only.
     """
     source = Path(path)
     if source.suffix != ".kicad_mod" or not source.is_file():
@@ -112,12 +125,15 @@ def read_base_part(path, signal_pad="1", shield_pads=("2",), side="front",
         raise RFError("GPPO signal pin must be plated PTH or SMD, never NPTH")
     if signal.GetPosition().x or signal.GetPosition().y:
         raise RFError("signal pad must be centered at the footprint origin")
-    shields = [pad for pad in pads if pad.GetNumber() in shield_pads]
-    if not shields or set(pad.GetNumber() for pad in shields) != set(shield_pads):
-        raise RFError("every selected shield pad identifier must exist")
-    if any(pad.GetNumber() and pad.GetNumber() not in [signal_pad, *shield_pads]
+    if not isinstance(ground_pad, str) or not ground_pad or ground_pad == signal_pad:
+        raise RFError("the ground pad needs its own pad identifier")
+    grounds = [pad for pad in pads if pad.GetNumber() == ground_pad]
+    if len(grounds) != 1:
+        raise RFError("exactly one physical ground pad is required")
+    ground = grounds[0]
+    if any(pad.GetNumber() and pad.GetNumber() not in (signal_pad, ground_pad)
            and pad.GetAttribute() != pcbnew.PAD_ATTRIB_NPTH for pad in pads):
-        raise RFError("base footprint has unclassified electrical pads")
+        raise RFError("the footprint must have exactly two electrical pads, signal and ground")
     mount = "PTH" if signal.GetAttribute() == pcbnew.PAD_ATTRIB_PTH else "SMD"
     mount_layer = pcbnew.F_Cu if side == "front" else pcbnew.B_Cu
     if signal.Padstack().Mode() != pcbnew.PADSTACK.MODE_NORMAL:
@@ -142,32 +158,30 @@ def read_base_part(path, signal_pad="1", shield_pads=("2",), side="front",
             raise RFError("PTH minimum signal land must exceed plated-hole diameter")
     elif _copper_layers(signal) != {mount_layer}:
         raise RFError("SMD signal must have copper on the selected mount side only")
-    for pad in shields:
-        if pad.GetAttribute() != pcbnew.PAD_ATTRIB_SMD or _copper_layers(pad) != {mount_layer}:
-            raise RFError("ground pad must be SMD copper on the selected mount side only; "
-                          "a back-mounted part needs its own back-side source")
+    if ground.GetAttribute() != pcbnew.PAD_ATTRIB_SMD or _copper_layers(ground) != {mount_layer}:
+        raise RFError("ground pad must be SMD copper on the selected mount side only; "
+                      "a back-mounted part needs its own back-side source")
     for item in footprint.GraphicalItems():
         if pcbnew.IsCopperLayer(item.GetLayer()):
             raise RFError("unclassified base-footprint copper graphics require librarian review")
-    shield_geometry = []
     syntax = _sexpr(data.decode("utf-8"))
-    pad_nodes = [node for node in syntax if isinstance(node, list) and node and node[0] == "pad"]
-    for pad in shields:
-        bounds = pad.GetBoundingBox()
-        center = bounds.GetCenter()
-        matching = [node for node in pad_nodes if node[1] == pad.GetNumber()]
-        exact = _annulus(matching[0]) if len(matching) == 1 else None
-        shield_geometry.append({"at": [pcbnew.ToMM(center.x), -pcbnew.ToMM(center.y)],
-                                "radius": (pcbnew.ToMM(bounds.GetWidth()) ** 2 +
-                                           pcbnew.ToMM(bounds.GetHeight()) ** 2) ** 0.5 / 2,
-                                "validation": "conservative-bounding-circle", **(exact or {})})
+    matching = [node for node in syntax if isinstance(node, list) and len(node) > 1
+                and node[0] == "pad" and node[1] == ground_pad]
+    annulus = _annulus(matching[0]) if len(matching) == 1 else None
+    if annulus is None:
+        raise RFError("ground pad must be one annular (donut) pad: a custom pad drawn as a single unfilled circle")
+    if math.hypot(*annulus["at"]) > 1e-6:
+        raise RFError("the annular ground pad must be centred on the signal pad")
+    _solid_zone_connection(ground, footprint)
     if source.read_bytes() != data:
         raise RFError("base source changed during inspection; select it again")
     return {"part_id": f"{source.parent.stem}:{source.stem}",
             "sha256": hashlib.sha256(data).hexdigest(),
             "source_filename": source.name, "approval": "librarian-approved",
             "mount": mount, "side": side, "signal_pad": signal_pad,
-            "shield_pads": list(shield_pads), "signal_at": [0, 0],
+            "ground_pad": ground_pad, "signal_at": [0, 0],
             "signal_shape": "circle", "signal_land": land, "signal_drill": drill,
-            "shield_geometry": shield_geometry,
+            "ground_annulus": {"inner_diameter": round(2 * annulus["inner"], 9),
+                               "outer_diameter": round(2 * annulus["outer"], 9)},
+            "ground_zone_connection": "solid",
             "base_pad_policy": "Preserve approved source copper; null means no added copper, never remove base lands"}

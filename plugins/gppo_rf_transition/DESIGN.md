@@ -15,7 +15,7 @@ regeneration; consuming saved output must not execute authoring code.
 
 `gppo.artifact/2.x` carries an immutable safe artifact identity, positive integer
 revision, kind, payload schema, full recipe, exact payload, compatibility,
-required native capabilities and provenance. `gppo.rf-recipe/2.0` fixes the
+required native capabilities and provenance. `gppo.rf-recipe/3.0` fixes the
 generator identity/version, all parameters, units and dependency descriptor.
 Compatibility is the footprint identity and hash, mount type, mount side,
 allowed netclasses and `copper_layer_count`. Stackup identity is that count:
@@ -70,6 +70,8 @@ The wx dialog performs read/preview/publish library actions only. It does not
 create board geometry, mutate the current board, invoke Workflow, regenerate
 interposer parts or silently revise placed instances. Native source inspection
 uses pcbnew for actual pad geometry and data-only S-expression inspection for
-the supported exact annular custom shield, because the binding's primitive
-shared-pointer vector cannot be iterated reliably. Unknown shields receive
-conservative bounds, while unsupported signal constructions block explicitly.
+the exact annular custom ground pad, because the binding's primitive
+shared-pointer vector cannot be iterated reliably. A ground pad of any other
+shape and unsupported signal constructions block explicitly. The ground pad's
+zone connection is resolved through KiCad's own inheritance: pad, then
+footprint; a chain that ends at the zone default is rejected.

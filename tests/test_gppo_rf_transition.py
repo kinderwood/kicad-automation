@@ -26,13 +26,29 @@ except ModuleNotFoundError:
 def smd_part():
     return {"part_id": "Approved:GPPO", "sha256": "a" * 64,
             "approval": "librarian-approved", "mount": "SMD", "side": "front",
-            "signal_pad": "1", "shield_pads": ["2"], "signal_at": [0, 0],
+            "signal_pad": "1", "ground_pad": "2", "signal_at": [0, 0],
             "signal_shape": "circle", "signal_land": 0.45, "signal_drill": None,
-            "shield_geometry": [{"at": [0, 0], "radius": 1.5875, "inner_radius": 0.635}]}
+            "ground_annulus": {"inner_diameter": 1.27, "outer_diameter": 3.175},
+            "ground_zone_connection": "solid"}
 
 
 def pth_part():
     return {**smd_part(), "mount": "PTH", "signal_land": 0.508, "signal_drill": 0.381}
+
+
+def wide_ring(recipe):
+    """A through-via ring outside the ground pad, with larger vias.
+
+    Most geometry tests use these round millimetre values rather than the
+    via-in-pad defaults, which have their own test.
+    """
+    params = recipe["parameters"]
+    if params["signal_via"] is not None:
+        params["signal_via"] = {"diameter": 0.45, "drill": 0.2}
+    params["ground_via"] = {"via_type": "through", "diameter": 0.6, "drill": 0.3,
+                            "construction": None}
+    params["ground_ring"] = {"radius": 2.0, "start_deg": 40.0, "end_deg": 320.0, "count": 9}
+    return recipe
 
 
 def layer_names(count):
@@ -67,10 +83,10 @@ def objects(payload, **match):
 
 class RFRecipeTests(unittest.TestCase):
     def recipe(self):
-        return rf.default_recipe(smd_part())
+        return wide_ring(rf.default_recipe(smd_part()))
 
     def pth_recipe(self):
-        return rf.default_recipe(pth_part())
+        return wide_ring(rf.default_recipe(pth_part()))
 
     def test_cross_zero_endpoints_and_full_circle_exact_count(self):
         self.assertEqual(rf.arc_angles(310, 50, 5), [310, 335, 0, 25, 50])
@@ -98,7 +114,7 @@ class RFRecipeTests(unittest.TestCase):
         self.assertEqual(a["payload"]["layer_roles"], {"mount": "F.Cu", "signal": "In2.Cu"})
         self.assertEqual(a["hashes"]["payload"], hashlib.sha256(rf.canonical(a["payload"])).hexdigest())
         self.assertEqual((a["schema"], a["payload_schema"], a["recipe"]["schema"]),
-                         ("gppo.artifact/2.0", "gppo.rf/2.0", "gppo.rf-recipe/2.0"))
+                         ("gppo.artifact/2.0", "gppo.rf/2.0", "gppo.rf-recipe/3.0"))
         self.assertEqual(a["required_capabilities"],
                          ["adjacent-microvia-stacks", "filled-vias", "layer-rule-areas",
                           "native-tracks", "native-vias", "net-copper-shapes"])
@@ -189,16 +205,11 @@ class RFRecipeTests(unittest.TestCase):
         recipe["parameters"]["signal_via"]["spans"] = [["F.Cu", "In1.Cu"]]
         with self.assertRaisesRegex(rf.RFError, "unsupported fields"):
             rf.generate_payload(recipe)
-        recipe = self.recipe()
-        recipe["parameters"]["signal_layer"] = "F.Cu"
-        with self.assertRaisesRegex(rf.RFError, "different routing layer"):
-            rf.generate_payload(recipe)
 
     def test_back_mount_stack_runs_upward_from_the_back_layer(self):
-        recipe = rf.default_recipe({**smd_part(), "side": "back"})
+        recipe = wide_ring(rf.default_recipe({**smd_part(), "side": "back"}))
         resize(recipe, 6, "In3.Cu")
-        recipe["parameters"]["ground_via"].update(via_type="microvia", construction="stacked",
-                                                  stop_layer="In2.Cu")
+        recipe["parameters"]["ground_via"].update(via_type="microvia", construction="stacked")
         payload = rf.generate_payload(recipe)
         self.assertEqual(payload["layer_roles"], {"mount": "B.Cu", "signal": "In3.Cu"})
         self.assertEqual([via["layers"] for via in objects(payload, type="via", net="signal")],
@@ -207,6 +218,7 @@ class RFRecipeTests(unittest.TestCase):
                          {"B.Cu", "In4.Cu", "In3.Cu"})
         # Directly below the exit, further from the back mount side.
         self.assertEqual(objects(payload, purpose="ground-disc")[0]["layer"], "In2.Cu")
+        # The ring runs from the mount layer to the ground disc layer.
         self.assertEqual({tuple(via["layers"]) for via in objects(payload, type="via", net="ground")},
                          {("In4.Cu", "B.Cu"), ("In3.Cu", "In4.Cu"), ("In2.Cu", "In3.Cu")})
 
@@ -228,49 +240,72 @@ class RFRecipeTests(unittest.TestCase):
         with self.assertRaisesRegex(rf.RFError, "intrudes"):
             rf.validate_ground_corridor(retained + [overlay], layers, "In2.Cu", [0, 6, 0.5])
 
-    def test_microvia_ring_stopped_above_the_exit_layer_may_cross_the_corridor(self):
-        recipe = self.recipe()
-        params = recipe["parameters"]
-        params["ground_ring"].update(start_deg=310, end_deg=50, count=5)
-        params["ground_via"].update(via_type="microvia", construction="stacked", stop_layer="In1.Cu")
-        payload = rf.generate_payload(recipe)
-        ground = objects(payload, type="via", net="ground")
-        self.assertEqual(len(ground), 5)
-        self.assertEqual({tuple(via["layers"]) for via in ground}, {("F.Cu", "In1.Cu")})
-        params["ground_via"]["stop_layer"] = "In2.Cu"
-        with self.assertRaisesRegex(rf.RFError, "intrudes"):
-            rf.generate_payload(recipe)
-
-    def test_stacked_microvia_ring_runs_the_whole_board_or_stops_at_a_layer(self):
-        recipe = self.recipe()
-        layers = resize(recipe, 6, "In2.Cu")
-        ground = recipe["parameters"]["ground_via"]
-        ground.update(via_type="microvia", construction="stacked", stop_layer=None)
-        whole = objects(rf.generate_payload(recipe), type="via", net="ground")
-        self.assertEqual(len(whole), 9 * 5)
-        self.assertEqual({tuple(via["layers"]) for via in whole}, set(zip(layers, layers[1:])))
-        # Every layer pair sits at the same nine positions.
-        self.assertEqual(len({tuple(via["at"]) for via in whole}), 9)
-        ground["stop_layer"] = "In3.Cu"
-        stopped = objects(rf.generate_payload(recipe), type="via", net="ground")
-        self.assertEqual({tuple(via["layers"]) for via in stopped}, set(zip(layers[:3], layers[1:4])))
-        for stop, message in (("F.Cu", "below the mount layer"), ("In9.Cu", "below the mount layer")):
-            ground["stop_layer"] = stop
-            with self.assertRaisesRegex(rf.RFError, message):
+    def test_exit_layer_must_be_an_inner_layer_for_both_mount_types(self):
+        for make in (self.recipe, self.pth_recipe):
+            for count in (4, 6):
+                for layer in ("F.Cu", "B.Cu"):
+                    recipe = make()
+                    resize(recipe, count, layer)
+                    with self.subTest(mount=recipe["dependencies"]["base_part"]["mount"], layer=layer), \
+                            self.assertRaisesRegex(rf.RFError, f"exit layer {layer} is an outer layer; "
+                                                   "routing on outer layers is never allowed"):
+                        rf.generate_payload(recipe)
+            # A two-layer board has no inner layer to exit on.
+            recipe = make()
+            resize(recipe, 2, "B.Cu")
+            with self.assertRaisesRegex(rf.RFError, "outer layer"):
                 rf.generate_payload(recipe)
-        ground.update(stop_layer=None, construction="spiral")
-        with self.assertRaisesRegex(rf.RFError, "stacked or staggered"):
+            for layer in ("In1.Cu", "In4.Cu"):
+                recipe = make()
+                resize(recipe, 6, layer)
+                rf.generate_payload(recipe)
+
+    def test_ground_ring_extent_is_derived_never_chosen(self):
+        # SMD pin: a microvia ring runs from the mount layer to the ground
+        # disc layer, one below the exit.
+        recipe = self.recipe()
+        layers = resize(recipe, 8, "In2.Cu")
+        ground = recipe["parameters"]["ground_via"]
+        ground.update(via_type="microvia", construction="stacked")
+        payload = rf.generate_payload(recipe)
+        ring = objects(payload, type="via", net="ground")
+        self.assertEqual(objects(payload, purpose="ground-disc")[0]["layer"], "In3.Cu")
+        self.assertEqual({tuple(via["layers"]) for via in ring}, set(zip(layers[:3], layers[1:4])))
+        self.assertEqual(len(ring), 9 * 3)
+        # Every layer pair sits at the same nine positions.
+        self.assertEqual(len({tuple(via["at"]) for via in ring}), 9)
+        # Through-hole pin: microvias on every layer pair of the board.
+        recipe = self.pth_recipe()
+        layers = resize(recipe, 8, "In2.Cu")
+        recipe["parameters"]["ground_via"].update(via_type="microvia", construction="stacked")
+        ring = objects(rf.generate_payload(recipe), type="via", net="ground")
+        self.assertEqual({tuple(via["layers"]) for via in ring}, set(zip(layers, layers[1:])))
+        # Through vias span the board for either pin.
+        for make in (self.recipe, self.pth_recipe):
+            recipe = make()
+            layers = resize(recipe, 8, "In2.Cu")
+            ring = objects(rf.generate_payload(recipe), type="via", net="ground")
+            self.assertEqual({(via["via_type"], tuple(via["layers"])) for via in ring},
+                             {("through", ("F.Cu", "B.Cu"))})
+        # There is no setting for the extent.
+        recipe = self.recipe()
+        recipe["parameters"]["ground_via"]["stop_layer"] = "In1.Cu"
+        with self.assertRaisesRegex(rf.RFError, "unsupported fields \\['stop_layer'\\]"):
             rf.generate_payload(recipe)
-        ground.update(via_type="through", construction="stacked")
-        with self.assertRaisesRegex(rf.RFError, "must be null"):
-            rf.generate_payload(recipe)
+        ground = self.recipe()["parameters"]["ground_via"]
+        for change, message in (({"via_type": "microvia", "construction": "spiral"}, "stacked or staggered"),
+                                ({"via_type": "microvia", "construction": None}, "stacked or staggered"),
+                                ({"construction": "stacked"}, "must be null")):
+            recipe = self.recipe()
+            recipe["parameters"]["ground_via"] = {**ground, **change}
+            with self.subTest(change=change), self.assertRaisesRegex(rf.RFError, message):
+                rf.generate_payload(recipe)
 
     def test_staggered_ring_alternates_pairs_between_pattern_and_midpoints(self):
-        recipe = self.recipe()
+        recipe = self.pth_recipe()
         layers = resize(recipe, 6, "In2.Cu")
         ground = recipe["parameters"]["ground_via"]
-        ground.update(via_type="microvia", diameter=0.3, drill=0.1,
-                      construction="staggered", stop_layer=None)
+        ground.update(via_type="microvia", diameter=0.3, drill=0.1, construction="staggered")
         payload = rf.generate_payload(recipe)
         vias = objects(payload, type="via", net="ground")
         entered = rf.arc_angles(40, 320, 9)
@@ -287,9 +322,13 @@ class RFRecipeTests(unittest.TestCase):
             self.assertEqual({round(math.hypot(*via["at"]), 9) for via in here}, {2.0})
         self.assertEqual(len(vias), 9 * 3 + 8 * 2)
         self.assertEqual(len({via["id"] for via in vias}), len(vias))
-        # A full circle keeps the count at the midpoints.
+        # A full circle keeps the count at the midpoints. An SMD ring with the
+        # exit on In1.Cu has two pairs: F.Cu–In1.Cu and In1.Cu–In2.Cu.
+        recipe = self.recipe()
+        resize(recipe, 6, "In1.Cu")
+        recipe["parameters"]["ground_via"].update(via_type="microvia", diameter=0.3, drill=0.1,
+                                                  construction="staggered")
         recipe["parameters"]["ground_ring"].update(start_deg=20, end_deg=380, count=5)
-        ground["stop_layer"] = "In2.Cu"
         full = objects(rf.generate_payload(recipe), type="via", net="ground")
         self.assertEqual(len(full), 5 + 5)
         self.assertEqual(sorted(angle(via) for via in full if via["layers"] == ["In1.Cu", "In2.Cu"]),
@@ -311,23 +350,20 @@ class RFRecipeTests(unittest.TestCase):
         with self.assertRaisesRegex(rf.RFError, "ground via lands overlap"):
             rf.generate_payload(recipe)
         # Staggered: each set alone is clear, but on the shared layer the
-        # midpoint lands fall between the entered ones, 45° apart.
+        # midpoint lands fall between the entered ones, 45° apart. The SMD
+        # ring with the exit on In1.Cu has the pairs F.Cu–In1.Cu and
+        # In1.Cu–In2.Cu, which share In1.Cu.
         recipe = self.recipe()
-        resize(recipe, 6, "In2.Cu")
+        resize(recipe, 6, "In1.Cu")
         ground = recipe["parameters"]["ground_via"]
         recipe["parameters"]["ground_ring"].update(start_deg=90, end_deg=270, count=3)
         half = 2 * 2.0 * math.sin(math.radians(22.5))
-        ground.update(via_type="microvia", drill=0.1, construction="stacked",
-                      stop_layer="In1.Cu", diameter=half + 0.01)
-        rf.generate_payload(recipe)  # One pair: only the entered positions exist.
-        ground.update(construction="staggered")
-        rf.generate_payload(recipe)  # Still one pair, so no midpoints yet.
-        ground["stop_layer"] = "In2.Cu"
+        ground.update(via_type="microvia", drill=0.1, construction="stacked", diameter=half + 0.01)
+        rf.generate_payload(recipe)  # Stacked: only the entered positions exist.
+        ground["construction"] = "staggered"
         with self.assertRaisesRegex(rf.RFError, "In1.Cu: ground via lands overlap"):
             rf.generate_payload(recipe)
-        ground["construction"] = "stacked"
-        rf.generate_payload(recipe)
-        ground.update(construction="staggered", diameter=half - 1e-10)
+        ground["diameter"] = half - 1e-10
         rf.generate_payload(recipe)  # Tangent on the shared layer passes.
         # An overlay enlarges the lands on its layer and is tested there.
         ground["diameter"] = 0.3
@@ -400,20 +436,33 @@ class RFRecipeTests(unittest.TestCase):
         self.assertFalse([o for o in objects(payload, purpose="antipad") if "B.Cu" in o["layers"]])
         resize(recipe, 6, "In1.Cu")
         self.assertEqual(objects(rf.generate_payload(recipe), purpose="ground-disc")[0]["layer"], "In2.Cu")
-        # The exit on the far outer layer has no layer below it: blocked.
-        recipe = self.recipe()
-        resize(recipe, 4, "B.Cu")
-        with self.assertRaisesRegex(rf.RFError, "no layer below it for the ground disc"):
-            rf.generate_payload(recipe)
-        for shields in ([], [{"at": [3, 0], "radius": 0.5}],
-                        [{"at": [0.05, 0], "radius": 1.5875, "inner_radius": 0.635}],
-                        [{"at": [0, 0], "radius": 1.5875, "inner_radius": 0.635}] * 2):
-            recipe = self.recipe()
-            recipe["dependencies"]["base_part"]["shield_geometry"] = shields
-            with self.subTest(shields=shields), self.assertRaisesRegex(rf.RFError, "ground disc needs one annular"):
-                rf.generate_payload(recipe)
         # A through-hole pin has no ground disc: its barrel passes every layer.
         self.assertFalse(objects(rf.generate_payload(self.pth_recipe()), purpose="ground-disc"))
+
+    def test_ground_disc_not_tied_to_the_ground_pad_is_a_warning(self):
+        # Ground pad annulus: radius 0.635 to 1.5875. The default ring is
+        # via-in-pad, so its lands tie the disc to the pad.
+        def codes(recipe):
+            return [w["code"] for w in rf.recipe_warnings(recipe) if w["code"] != "annular-ring"]
+        recipe = rf.default_recipe(smd_part())
+        self.assertEqual(codes(recipe), [])
+        ring = recipe["parameters"]["ground_ring"]
+        land = recipe["parameters"]["ground_via"]["diameter"] / 2
+        # A land that overlaps the pad's outer edge still ties it.
+        ring["radius"] = 1.5875 + land - 0.001
+        self.assertEqual(codes(recipe), [])
+        # Tangent to the outer edge or beyond it: the disc relies on the flood.
+        for radius in (1.5875 + land, 2.0):
+            ring["radius"] = radius
+            warnings = [w for w in rf.recipe_warnings(recipe) if w["code"] != "annular-ring"]
+            self.assertEqual([(w["code"], w["subject"]) for w in warnings],
+                             [("ground-disc-not-tied-to-pad", "ground disc")], radius)
+            self.assertIn("relies on the board's flood", warnings[0]["message"])
+        # The same holds for through vias, and it never blocks.
+        self.assertEqual(codes(self.recipe()), ["ground-disc-not-tied-to-pad"])
+        rf.make_artifact(self.recipe(), "untied")
+        # A through-hole pin has no disc, so there is nothing to warn about.
+        self.assertEqual(codes(self.pth_recipe()), [])
 
     def test_unsupported_and_incomplete_recipe_blocks(self):
         cases = []
@@ -431,7 +480,7 @@ class RFRecipeTests(unittest.TestCase):
         del recipe["parameters"]["ground_via"]["construction"]
         cases.append(recipe)
         recipe = self.recipe()
-        recipe["schema"] = "gppo.rf-recipe/1.0"
+        recipe["schema"] = "gppo.rf-recipe/2.0"
         cases.append(recipe)
         recipe = self.recipe()
         recipe["dependencies"]["base_part"]["signal_drill"] = 0.2
@@ -482,20 +531,22 @@ class RFRecipeTests(unittest.TestCase):
             rf.generate_payload(recipe)
 
     def test_annular_ring_under_five_mil_is_a_warning_not_a_block(self):
+        def rings(recipe):
+            return [w for w in rf.recipe_warnings(recipe) if w["code"] == "annular-ring"]
         recipe = self.recipe()
         review = rf.review_recipe(recipe)
         self.assertEqual(review["payload"], rf.generate_payload(recipe))
-        # Default signal microvia: (0.45 − 0.2) / 2 = 0.125 mm, under 0.127 mm.
-        self.assertEqual(review["warnings"], [
+        self.assertEqual(rf.recipe_warnings(recipe), review["warnings"])
+        # Signal microvia: (0.45 − 0.2) / 2 = 0.125 mm, under 0.127 mm.
+        self.assertEqual(rings(recipe), [
             {"code": "annular-ring", "subject": "signal via", "value_mm": 0.125, "limit_mm": 0.127,
              "message": "signal via: annular ring 0.1250 mm is under 0.127 mm (5 mil)"}])
-        self.assertEqual(rf.recipe_warnings(recipe), review["warnings"])
         # Exactly 5 mil passes without a warning.
         recipe["parameters"]["signal_via"]["diameter"] = 0.454
         recipe["parameters"]["tuned_signal_copper"]["In1.Cu"] = 0.55
-        self.assertEqual(rf.recipe_warnings(recipe), [])
+        self.assertEqual(rings(recipe), [])
         recipe["parameters"]["ground_via"].update(diameter=0.5, drill=0.3)
-        self.assertEqual([w["subject"] for w in rf.recipe_warnings(recipe)], ["ground via"])
+        self.assertEqual([w["subject"] for w in rings(recipe)], ["ground via"])
         # Footprint lands are covered too: 0.508 land on a 0.381 hole is 0.0635 mm.
         recipe = self.pth_recipe()
         warnings = rf.recipe_warnings(recipe)
@@ -513,6 +564,31 @@ class RFRecipeTests(unittest.TestCase):
         recipe["parameters"]["signal_via"]["drill"] = 0.45
         with self.assertRaisesRegex(rf.RFError, "via diameter must exceed drill"):
             rf.recipe_warnings(recipe)
+
+    def test_defaults_are_five_mil_microvias_with_the_ground_ring_in_the_pad(self):
+        for part in (smd_part(), pth_part()):
+            recipe = rf.default_recipe(part)
+            params = recipe["parameters"]
+            # 5 mil drill and 10 mil pad, stored as exact millimetres.
+            self.assertEqual(params["ground_via"], {"via_type": "microvia", "diameter": 0.254,
+                                                    "drill": 0.127, "construction": "stacked"})
+            self.assertEqual(params["signal_via"],
+                             None if part["mount"] == "PTH" else {"diameter": 0.254, "drill": 0.127})
+            # Via-in-pad: the mid-radius of the 0.635–1.5875 mm ground annulus.
+            self.assertEqual(params["ground_ring"],
+                             {"radius": 1.11125, "start_deg": 30.0, "end_deg": 330.0, "count": 11})
+            review = rf.review_recipe(recipe)
+            self.assertEqual({w["code"] for w in review["warnings"]}, {"annular-ring"})
+            # A 10 mil pad on a 5 mil drill is a 2.5 mil ring: the warning fires.
+            self.assertIn(("ground via", 0.0635), [(w["subject"], w["value_mm"]) for w in review["warnings"]])
+            self.assertEqual(review["payload"]["anchors"]["handoff"], [1.11125, 0])
+            # The same pattern also validates as a staggered ring.
+            params["ground_via"]["construction"] = "staggered"
+            rf.generate_payload(recipe)
+        self.assertEqual(rf.ground_ring_default_radius(), 1.11125)
+        self.assertEqual(rf.default_recipe()["parameters"]["ground_ring"]["radius"], 1.11125)
+        wide = {**smd_part(), "ground_annulus": {"inner_diameter": 2.0, "outer_diameter": 4.0}}
+        self.assertEqual(rf.default_recipe(wide)["parameters"]["ground_ring"]["radius"], 1.5)
 
     def test_stackup_identity_is_the_copper_layer_count(self):
         part = smd_part()
@@ -537,32 +613,41 @@ class RFRecipeTests(unittest.TestCase):
         with self.assertRaises(rf.RFError):
             rf.validate_artifact(rehash(artifact))
 
-    def test_signal_enlargement_cannot_short_existing_base_shield_on_mount_layer(self):
+    def test_signal_copper_plus_gap_cannot_reach_the_footprint_ground_pad(self):
         part = pth_part()
-        part["shield_geometry"] = [{"at": [0, 0], "radius": 1.1, "inner_radius": 0.6}]
-        recipe = rf.default_recipe(part)
-        rf.generate_payload(recipe)  # Minimum signal + gap fits inside annular bore.
+        part["ground_annulus"] = {"inner_diameter": 1.2, "outer_diameter": 3.175}
+        recipe = wide_ring(rf.default_recipe(part))
+        rf.generate_payload(recipe)  # Signal land + gap fits inside the annular bore.
         recipe["parameters"]["tuned_signal_copper"]["F.Cu"] = 1.5
         recipe["parameters"]["antipads"]["F.Cu"] = 1.9
-        with self.assertRaisesRegex(rf.RFError, "base shield copper"):
+        with self.assertRaisesRegex(rf.RFError, "F.Cu: signal copper or required gap reaches the footprint ground pad"):
             rf.make_artifact(recipe)
         # Tangency at the required ground clearance is accepted.
         recipe["parameters"]["tuned_signal_copper"]["F.Cu"] = 0.8
         rf.generate_payload(recipe)
         recipe["parameters"]["tuned_signal_copper"]["F.Cu"] = 0.801
-        with self.assertRaisesRegex(rf.RFError, "base shield copper"):
+        with self.assertRaisesRegex(rf.RFError, "reaches the footprint ground pad"):
             rf.generate_payload(recipe)
         self.assertEqual(recipe["dependencies"]["base_part"], part)
         # The ground pad is mount-side copper only: other layers are unaffected.
         recipe["parameters"]["tuned_signal_copper"].update({"F.Cu": None, "B.Cu": 1.5})
         recipe["parameters"]["antipads"]["B.Cu"] = 1.9
         rf.generate_payload(recipe)
-        # A mount-layer exit cannot cross the ground pad.
-        recipe = rf.default_recipe(part)
-        recipe["parameters"]["signal_layer"] = "F.Cu"
-        recipe["parameters"]["tuned_signal_copper"]["In2.Cu"] = None
-        with self.assertRaisesRegex(rf.RFError, "shield land intrudes"):
-            rf.generate_payload(recipe)
+
+    def test_base_part_needs_one_solid_annular_ground_pad(self):
+        for change, message in (
+                ({"ground_pad": "1"}, "must be distinct"),
+                ({"ground_pad": ""}, "must be distinct"),
+                ({"ground_annulus": None}, "expected an object"),
+                ({"ground_annulus": {"inner_diameter": 3.2, "outer_diameter": 3.175}}, "invalid annular"),
+                ({"ground_annulus": {"inner_diameter": 1.27, "outer_diameter": 3.175, "at": [0, 0]}},
+                 "unsupported fields"),
+                ({"ground_zone_connection": "thermal"}, "solid zone connection"),
+                ({"ground_zone_connection": None}, "solid zone connection")):
+            for part in (smd_part(), pth_part()):
+                recipe = rf.default_recipe({**part, **change})
+                with self.subTest(change=change, mount=part["mount"]), self.assertRaisesRegex(rf.RFError, message):
+                    rf.generate_payload(recipe)
 
     def test_recipe_reopen_clone_revision_and_immutable_publication(self):
         a = rf.make_artifact(self.recipe(), "library-rf")
@@ -649,40 +734,45 @@ class RFNativeTests(unittest.TestCase):
                          else [node.module or ""] if isinstance(node, ast.ImportFrom) else [])
                 self.assertFalse(any("connector_interposer_workflow" in name for name in names))
 
-    def test_native_plated_signal_and_custom_annular_shield_roundtrip(self):
-        from gppo_rf_transition.native import read_base_part
-        with tempfile.TemporaryDirectory() as temporary:
-            library = Path(temporary) / "Approved.pretty"
-            library.mkdir()
-            # Native library source, including the actual user-drawing minimum
-            # dimensions. No source from a scratch prototype is imported.
-            module = """(footprint "GPPO" (version 20241229) (generator "pcbnew")
-              (layer "F.Cu")
-              (pad "1" thru_hole circle (at 0 0) (size 0.508 0.508)
+    # Native library sources, with the actual user-drawing minimum dimensions.
+    SIGNAL = """(pad "1" thru_hole circle (at 0 0) (size 0.508 0.508)
                 (drill 0.381) (layers "*.Cu" "*.Mask")
-                (remove_unused_layers yes) (keep_end_layers yes))
-              (pad "2" smd custom (at 1.11125 0) (size 0.2 0.2)
-                (layers "F.Cu" "F.Mask" "F.Paste")
+                (remove_unused_layers yes) (keep_end_layers yes))"""
+    GROUND = """(pad "2" smd custom (at 1.11125 0) (size 0.2 0.2)
+                (layers "F.Cu" "F.Mask" "F.Paste") (zone_connect 2)
                 (options (clearance outline) (anchor circle))
                 (primitives (gr_circle (center -1.11125 0) (end 0 0)
-                  (width 0.9525) (fill no)))))"""
-            path = library / "GPPO.kicad_mod"
-            path.write_text(module)
+                  (width 0.9525) (fill no))))"""
+
+    @staticmethod
+    def write_footprint(library, name, *pads, footprint_options=""):
+        library.mkdir(exist_ok=True)
+        path = library / f"{name}.kicad_mod"
+        path.write_text(f'''(footprint "{name}" (version 20241229) (generator "pcbnew")
+              (layer "F.Cu") {footprint_options} {" ".join(pads)})''')
+        return path
+
+    def test_native_plated_signal_and_annular_ground_pad_roundtrip(self):
+        from gppo_rf_transition.native import read_base_part
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self.write_footprint(Path(temporary) / "Approved.pretty", "GPPO",
+                                        self.SIGNAL, self.GROUND)
             before = path.read_bytes()
             with self.assertRaisesRegex(rf.RFError, "approval"):
                 read_base_part(path)
             part = read_base_part(path, approved=True)
             self.assertEqual(part["mount"], "PTH")
             # Pin 1 signal, pin 2 ground and front mounting are the defaults.
-            self.assertEqual((part["signal_pad"], part["shield_pads"], part["side"]), ("1", ["2"], "front"))
+            self.assertEqual((part["signal_pad"], part["ground_pad"], part["side"]), ("1", "2", "front"))
             # One land diameter and the hole; nothing names a board stackup.
             self.assertEqual((part["signal_land"], part["signal_drill"]), (0.508, 0.381))
             self.assertNotIn("inspection_stackup", part)
-            self.assertEqual(part["shield_geometry"][0]["validation"], "exact-single-circle-annulus")
-            self.assertAlmostEqual(part["shield_geometry"][0]["inner_radius"], 0.635)
-            self.assertAlmostEqual(part["shield_geometry"][0]["radius"], 1.5875)
+            self.assertEqual(part["ground_annulus"], {"inner_diameter": 1.27, "outer_diameter": 3.175})
+            self.assertEqual(part["ground_zone_connection"], "solid")
             recipe = rf.default_recipe(part)
             self.assertIsNone(recipe["parameters"]["signal_via"])
+            # Via-in-pad default: the ring sits on the annulus mid-radius.
+            self.assertEqual(recipe["parameters"]["ground_ring"]["radius"], 1.11125)
             artifact = rf.make_artifact(recipe, "native-read")
             rf.publish_bundle(Path(temporary) / "RF", artifact)
             self.assertEqual(path.read_bytes(), before)
@@ -695,11 +785,6 @@ class RFNativeTests(unittest.TestCase):
 
     def test_native_through_hole_pad_must_remove_unused_layers_and_keep_ends(self):
         from gppo_rf_transition.native import read_base_part
-        shield = """(pad "2" smd custom (at 1.11125 0) (size 0.2 0.2)
-                (layers "F.Cu" "F.Mask" "F.Paste")
-                (options (clearance outline) (anchor circle))
-                (primitives (gr_circle (center -1.11125 0) (end 0 0)
-                  (width 0.9525) (fill no))))"""
         signal = """(pad "1" thru_hole circle (at 0 0) (size 0.508 0.508)
                 (drill 0.381) (layers "*.Cu" "*.Mask") %s)"""
         cases = {
@@ -714,41 +799,97 @@ class RFNativeTests(unittest.TestCase):
                   (layer "Inner" (shape circle) (size 0.45 0.45))
                   (layer "B.Cu" (shape circle) (size 0.508 0.508))))""",
                 "ordinary padstack"),
-            "ground-through-hole": (
-                signal % "(remove_unused_layers yes) (keep_end_layers yes)",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            for name, (pad, message) in cases.items():
+                path = self.write_footprint(Path(temporary) / "Approved.pretty", name, pad, self.GROUND)
+                with self.subTest(name=name), self.assertRaisesRegex(rf.RFError, message):
+                    read_base_part(path, approved=True)
+
+    def test_native_footprint_has_exactly_one_signal_and_one_annular_ground_pad(self):
+        from gppo_rf_transition.native import read_base_part
+        annulus = """(pad "%s" smd custom (at %s 0) (size 0.2 0.2)
+                (layers %s) (zone_connect 2)
+                (options (clearance outline) (anchor circle))
+                (primitives (gr_circle (center -1.11125 0) (end 0 0)
+                  (width 0.9525) (fill no))))"""
+        front = '"F.Cu" "F.Mask" "F.Paste"'
+        cases = {
+            "third-pad": ([self.GROUND, '(pad "3" smd circle (at 3 0) (size 0.4 0.4) (layers "F.Cu"))'],
+                          "exactly two electrical pads"),
+            "two-ground-pads": ([self.GROUND, '(pad "2" smd circle (at 3 0) (size 0.4 0.4) (layers "F.Cu"))'],
+                                "exactly one physical ground pad"),
+            "no-ground-pad": ([], "exactly one physical ground pad"),
+            "through-hole-ground": (
+                ['(pad "2" thru_hole circle (at 2 0) (size 1 1) (drill 0.5) (layers "*.Cu" "*.Mask"))'],
                 "ground pad must be SMD copper on the selected mount side"),
+            "back-side-ground": ([annulus % ("2", "1.11125", '"B.Cu" "B.Mask"')],
+                                 "ground pad must be SMD copper on the selected mount side"),
+            "round-ground": (['(pad "2" smd circle (at 2 0) (size 1 1) (layers "F.Cu") (zone_connect 2))'],
+                             "one annular \\(donut\\) pad"),
+            "off-centre-ground": ([annulus % ("2", "1.2", front)], "centred on the signal pad"),
         }
         with tempfile.TemporaryDirectory() as temporary:
             library = Path(temporary) / "Approved.pretty"
-            library.mkdir()
-            for name, (pad, message) in cases.items():
-                ground = shield if name != "ground-through-hole" else (
-                    '(pad "2" thru_hole circle (at 2 0) (size 1 1) (drill 0.5) (layers "*.Cu" "*.Mask"))')
-                path = library / f"{name}.kicad_mod"
-                path.write_text(f'''(footprint "{name}" (version 20241229) (generator "pcbnew")
-                  (layer "F.Cu") {pad} {ground})''')
+            for name, (grounds, message) in cases.items():
+                path = self.write_footprint(library, name, self.SIGNAL, *grounds)
                 with self.subTest(name=name), self.assertRaisesRegex(rf.RFError, message):
                     read_base_part(path, approved=True)
+            # The pad numbers are defaults that a caller can override, and a
+            # mechanical non-plated hole is not an electrical pad.
+            path = self.write_footprint(
+                library, "renumbered", self.SIGNAL.replace('"1"', '"S"'), annulus % ("G", "1.11125", front),
+                '(pad "" np_thru_hole circle (at 4 0) (size 1 1) (drill 1) (layers "*.Cu" "*.Mask"))')
+            part = read_base_part(path, "S", "G", approved=True)
+            self.assertEqual((part["signal_pad"], part["ground_pad"]), ("S", "G"))
+            with self.assertRaisesRegex(rf.RFError, "exactly one physical center signal pad"):
+                read_base_part(path, approved=True)
+            with self.assertRaisesRegex(rf.RFError, "its own pad identifier"):
+                read_base_part(path, "S", "S", approved=True)
+
+    def test_native_ground_pad_zone_connection_must_resolve_to_solid(self):
+        from gppo_rf_transition.native import read_base_part
+        ground = """(pad "2" smd custom (at 1.11125 0) (size 0.2 0.2)
+                (layers "F.Cu" "F.Mask" "F.Paste") %s
+                (options (clearance outline) (anchor circle))
+                (primitives (gr_circle (center -1.11125 0) (end 0 0)
+                  (width 0.9525) (fill no))))"""
+        # (pad setting, footprint setting) -> blocking message, or None when solid.
+        cases = {
+            "pad-solid": ("(zone_connect 2)", "", None),
+            "pad-solid-over-footprint-thermal": ("(zone_connect 2)", "(zone_connect 1)", None),
+            "inherits-footprint-solid": ("", "(zone_connect 2)", None),
+            "pad-thermal": ("(zone_connect 1)", "(zone_connect 2)", "the pad is set to thermal relief"),
+            "pad-none": ("(zone_connect 0)", "", "the pad is set to none"),
+            "inherits-footprint-thermal": ("", "(zone_connect 1)", "the footprint is set to thermal relief"),
+            "inherits-footprint-none": ("", "(zone_connect 0)", "the footprint is set to none"),
+            "inherits-zone-default": ("", "", "both\\s+inherit, which leaves it to each zone's default"),
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            for name, (pad, footprint, message) in cases.items():
+                path = self.write_footprint(Path(temporary) / "Approved.pretty", name,
+                                            self.SIGNAL, ground % pad, footprint_options=footprint)
+                with self.subTest(name=name):
+                    if message is None:
+                        self.assertEqual(read_base_part(path, approved=True)["ground_zone_connection"], "solid")
+                    else:
+                        with self.assertRaisesRegex(rf.RFError, "zone connection must be solid.*" + message):
+                            read_base_part(path, approved=True)
 
     def test_native_smd_source_and_mount_side(self):
         from gppo_rf_transition.native import read_base_part
         with tempfile.TemporaryDirectory() as temporary:
-            library = Path(temporary) / "Approved.pretty"
-            library.mkdir()
-            path = library / "GPPO_SMD.kicad_mod"
-            path.write_text("""(footprint "GPPO_SMD" (version 20241229) (generator "pcbnew")
-              (layer "F.Cu")
-              (pad "1" smd circle (at 0 0) (size 0.45 0.45) (layers "F.Cu" "F.Mask" "F.Paste"))
-              (pad "2" smd custom (at 1.11125 0) (size 0.2 0.2)
-                (layers "F.Cu" "F.Mask" "F.Paste")
-                (options (clearance outline) (anchor circle))
-                (primitives (gr_circle (center -1.11125 0) (end 0 0)
-                  (width 0.9525) (fill no)))))""")
+            path = self.write_footprint(
+                Path(temporary) / "Approved.pretty", "GPPO_SMD",
+                '(pad "1" smd circle (at 0 0) (size 0.45 0.45) (layers "F.Cu" "F.Mask" "F.Paste"))',
+                self.GROUND)
             part = read_base_part(path, approved=True)
             self.assertEqual((part["mount"], part["signal_land"], part["signal_drill"]), ("SMD", 0.45, None))
-            payload = rf.generate_payload(rf.default_recipe(part))
-            # The ground disc takes the footprint ground pad's outer diameter.
-            self.assertAlmostEqual(objects(payload, purpose="ground-disc")[0]["diameter"], 3.175)
+            review = rf.review_recipe(rf.default_recipe(part))
+            # The ground disc takes the footprint ground pad's outer diameter,
+            # and the via-in-pad ring ties it to that pad.
+            self.assertEqual(objects(review["payload"], purpose="ground-disc")[0]["diameter"], 3.175)
+            self.assertEqual({w["code"] for w in review["warnings"]}, {"annular-ring"})
             # A front-drawn source is not mirrored: back mounting needs its own.
             with self.assertRaisesRegex(rf.RFError, "selected mount side"):
                 read_base_part(path, side="back", approved=True)
@@ -769,8 +910,9 @@ class RFNativeTests(unittest.TestCase):
             self.assertTrue(dialog.save.IsEnabled(), dialog.report.GetValue())
             self.assertTrue(dialog.preview.payload)
             # A warning is shown in the report and does not block publication.
-            self.assertIn("1 warnings", dialog.report.GetValue())
+            self.assertIn("2 warnings", dialog.report.GetValue())
             self.assertIn("WARNING · signal via: annular ring", dialog.report.GetValue())
+            self.assertIn("WARNING · ground via: annular ring", dialog.report.GetValue())
             original = dialog.validated[1]
             dialog.artifact = original
             dialog.revision(None)

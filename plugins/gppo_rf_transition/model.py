@@ -13,10 +13,10 @@ from pathlib import Path
 import re
 import uuid
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 SCHEMA = "gppo.artifact/2.0"
 PAYLOAD_SCHEMA = "gppo.rf/2.0"
-RECIPE_SCHEMA = "gppo.rf-recipe/2.0"
+RECIPE_SCHEMA = "gppo.rf-recipe/3.0"
 CAPABILITIES = {"native-vias", "net-copper-shapes", "layer-rule-areas",
                 "adjacent-microvia-stacks", "native-tracks", "filled-vias"}
 TOLERANCE_MM = 0.001
@@ -24,6 +24,7 @@ TOLERANCE_MM = 0.001
 # payload, never a recipe setting.
 VIA_FILL = "copper"
 MIN_ANNULAR_RING_MM = 0.127  # 5 mil; smaller rings are reported as warnings.
+MIL_MM = 0.0254  # Exact. Defaults are authored in mils and stored in millimetres.
 
 
 class RFError(ValueError):
@@ -123,16 +124,15 @@ def circle_intrudes_corridor(at, radius, corridor):
     return distance < radius - 1e-9
 
 
-def _signal_intrudes_shield(signal_radius, shield, gap=0):
-    """Check the signal disk plus required gap against exact/conservative shield."""
-    distance = math.hypot(*shield["at"])
-    radius = signal_radius + gap
-    if distance >= radius + shield["radius"] - 1e-9:
-        return False
-    # A disk entirely inside an exact annulus opening has no ground collision.
-    if "inner_radius" in shield and distance + radius <= shield["inner_radius"] + 1e-9:
-        return False
-    return True
+def ground_ring_default_radius(part=None):
+    """Via-in-pad: the mid-radius of the footprint's annular ground pad.
+
+    Without a part this is the example-library GPPO's 43.75 mil.
+    """
+    if not isinstance(part, dict) or not isinstance(part.get("ground_annulus"), dict):
+        return round(43.75 * MIL_MM, 9)
+    annulus = part["ground_annulus"]
+    return round((annulus["inner_diameter"] + annulus["outer_diameter"]) / 4, 9)
 
 
 def via_layers(via, stackup):
@@ -187,6 +187,8 @@ def default_recipe(part=None):
     layers = copper_layer_names(4)
     pth = isinstance(part, dict) and part.get("mount") == "PTH"
     antipad_layers = layers if pth else layers[:3]
+    # 5 mil drill and 10 mil pad microvias; the ground ring is via-in-pad.
+    drill, pad = round(5 * MIL_MM, 9), round(10 * MIL_MM, 9)
     return {
         "schema": RECIPE_SCHEMA,
         "generator": {"id": "gppo-rf-transition", "version": VERSION},
@@ -194,11 +196,11 @@ def default_recipe(part=None):
         "parameters": {
             "stackup": layers,
             "signal_layer": "In2.Cu", "netclasses": ["RF"],
-            "signal_via": None if pth else {"diameter": 0.45, "drill": 0.2},
-            "ground_via": {"via_type": "through", "diameter": 0.6, "drill": 0.3,
-                           "construction": None, "stop_layer": None},
-            "ground_ring": {"radius": 2.0, "start_deg": 40.0,
-                            "end_deg": 320.0, "count": 9},
+            "signal_via": None if pth else {"diameter": pad, "drill": drill},
+            "ground_via": {"via_type": "microvia", "diameter": pad, "drill": drill,
+                           "construction": "stacked"},
+            "ground_ring": {"radius": ground_ring_default_radius(part),
+                            "start_deg": 30.0, "end_deg": 330.0, "count": 11},
             "tuned_signal_copper": {"F.Cu": None, "In1.Cu": None if pth else 0.55,
                                     "In2.Cu": 0.65, "B.Cu": None},
             "tuned_ground_copper": {},
@@ -216,8 +218,8 @@ def _validate_part(part):
         raise RFError("base part requires identity and exact source SHA-256")
     if part.get("mount") not in ("SMD", "PTH") or part.get("side") not in ("front", "back"):
         raise RFError("base part requires SMD/PTH mount and front/back side")
-    if not part.get("signal_pad") or not part.get("shield_pads") or part["signal_pad"] in part["shield_pads"]:
-        raise RFError("signal and shield pad identifiers must be distinct")
+    if not part.get("signal_pad") or not part.get("ground_pad") or part["signal_pad"] == part["ground_pad"]:
+        raise RFError("signal and ground pad identifiers must be distinct")
     if part.get("signal_at") != [0, 0] or part.get("signal_shape") != "circle":
         raise RFError("only a circular signal land centered at footprint origin is supported")
     land = number(part.get("signal_land"), "base signal land diameter", True)
@@ -226,11 +228,14 @@ def _validate_part(part):
             raise RFError("through-hole signal land must exceed its plated hole")
     elif part.get("signal_drill") is not None:
         raise RFError("an SMD signal pad has no drill")
-    for shield in part.get("shield_geometry", []):
-        _point(shield["at"], "shield land")
-        number(shield["radius"], "shield land radius", True)
-        if "inner_radius" in shield and not 0 < number(shield["inner_radius"], "shield bore", True) < shield["radius"]:
-            raise RFError("invalid annular shield geometry")
+    # One SMD annular ground pad on the mount side, centred on the signal.
+    annulus = part.get("ground_annulus")
+    _keys(annulus, ["inner_diameter", "outer_diameter"], "ground pad annulus")
+    if not 0 < number(annulus["inner_diameter"], "ground pad inner diameter", True) < number(
+            annulus["outer_diameter"], "ground pad outer diameter", True):
+        raise RFError("invalid annular ground pad geometry")
+    if part.get("ground_zone_connection") != "solid":
+        raise RFError("the footprint ground pad must have a solid zone connection")
 
 
 def _via(identity, net, at, pair, config, via_type):
@@ -296,7 +301,11 @@ def _generate(recipe):
     order = layers if part["side"] == "front" else layers[::-1]
     mount_layer = order[0]
     exit_depth = order.index(signal_layer)
+    if signal_layer in (layers[0], layers[-1]):
+        raise RFError(f"exit layer {signal_layer} is an outer layer; routing on outer layers "
+                      "is never allowed, so the exit layer must be an inner layer")
     pth = part["mount"] == "PTH"
+    annulus = part["ground_annulus"]
     if not isinstance(params["netclasses"], list) or not params["netclasses"] or any(not isinstance(n, str) or not n for n in params["netclasses"]):
         raise RFError("at least one explicit compatible netclass is required")
     ring = params["ground_ring"]
@@ -336,11 +345,6 @@ def _generate(recipe):
                 hole[layer] = part["signal_drill"]
         warnings += _annular_warning("footprint signal land", land, part["signal_drill"])
     else:
-        if exit_depth == 0:
-            raise RFError("SMD recipe requires a transition to a different routing layer")
-        if exit_depth == len(order) - 1:
-            raise RFError("SMD exit on the far outer layer is unsupported: there is no "
-                          "layer below it for the ground disc")
         config = params["signal_via"]
         _keys(config, ["diameter", "drill"], "signal via")
         base[mount_layer] = land
@@ -377,11 +381,11 @@ def _generate(recipe):
     # Ground via ring. lands[layer] maps a position name to (angle, centre)
     # for every ground land on that layer.
     ground = params["ground_via"]
-    _keys(ground, ["via_type", "diameter", "drill", "construction", "stop_layer"], "ground via")
+    _keys(ground, ["via_type", "diameter", "drill", "construction"], "ground via")
     lands = {}
     if ground["via_type"] == "through":
-        if ground["construction"] is not None or ground["stop_layer"] is not None:
-            raise RFError("through ground vias span the whole board; construction and stop_layer must be null")
+        if ground["construction"] is not None:
+            raise RFError("through ground vias span the whole board; construction must be null")
         for i, angle in enumerate(angles):
             via = _via(f"ground-{i}", "ground", at(angle), [layers[0], layers[-1]], ground, "through")
             via_layers(via, layers)
@@ -391,12 +395,13 @@ def _generate(recipe):
     elif ground["via_type"] == "microvia":
         if ground["construction"] not in ("stacked", "staggered"):
             raise RFError("microvia ground ring construction must be stacked or staggered")
-        stop = order[-1] if ground["stop_layer"] is None else ground["stop_layer"]
-        if stop not in layers or stop == mount_layer:
-            raise RFError("ground ring stop layer must be a copper layer below the mount layer")
+        # The extent is derived, never chosen: the whole board for a
+        # through-hole pin, the mount layer to the ground disc layer (one
+        # below the exit) for an SMD pin.
+        ring_depth = len(order) - 1 if pth else exit_depth + 1
         middle = (arc_midpoints(ring["start_deg"], ring["end_deg"], ring["count"])
                   if ground["construction"] == "staggered" else None)
-        for depth in range(order.index(stop)):
+        for depth in range(ring_depth):
             staggered = middle is not None and depth % 2
             for i, angle in enumerate(middle if staggered else angles):
                 name = f"m{i}" if staggered else str(i)
@@ -438,17 +443,6 @@ def _generate(recipe):
     # The corridor runs from the signal centre to the trace end and stops there.
     corridor = [0, radius, width / 2 + gap]
     validate_ground_corridor(objects, layers, signal_layer, corridor)
-    shields = part.get("shield_geometry", [])
-    if signal_layer == mount_layer:
-        for shield in shields:
-            # Rectangle can lie wholly inside an annulus bore without intersecting
-            # copper. Test farthest corner as well as the outer circular envelope.
-            farthest = max(math.dist(shield["at"], [x, y]) for x in corridor[:2]
-                           for y in [-corridor[2], corridor[2]])
-            if (circle_intrudes_corridor(shield["at"], shield["radius"], corridor) and
-                    farthest > shield.get("inner_radius", 0) + 1e-9):
-                raise RFError("approved shield land intrudes on the requested signal-layer exit corridor")
-
     antipads = params["antipads"]
     if set(antipads) != set(antipad_layers):
         raise RFError("antipads are required on exactly these layers: " + ", ".join(antipad_layers) +
@@ -460,10 +454,8 @@ def _generate(recipe):
         signal_size = max(base.get(layer, 0), hole.get(layer, 0), tuned[layer] or 0)
         if diameter < signal_size + 2 * gap:
             raise RFError(f"{layer}: antipad must include signal copper and configured ground-pour gap")
-        if layer == mount_layer:
-            for shield in shields:
-                if _signal_intrudes_shield(signal_size / 2, shield, gap):
-                    raise RFError(f"{layer}: signal copper or required gap intrudes on approved base shield copper")
+        if layer == mount_layer and signal_size + 2 * gap > annulus["inner_diameter"] + 2e-9:
+            raise RFError(f"{layer}: signal copper or required gap reaches the footprint ground pad")
         for obj in objects:
             if obj["net"] == "ground" and obj["type"] in ("via", "copper"):
                 present = via_layers(obj, layers) if obj["type"] == "via" else [obj["layer"]]
@@ -476,12 +468,24 @@ def _generate(recipe):
     if not pth:
         # Solid ground directly below the exit layer, with no antipad, so that
         # ordinary clearance checking fails anything routed under the launch.
-        exact = [s for s in shields if "inner_radius" in s]
-        if len(shields) != 1 or len(exact) != 1 or math.hypot(*exact[0]["at"]) > 1e-9:
-            raise RFError("the ground disc needs one annular footprint ground pad centred on the signal")
+        disc_layer = order[exit_depth + 1]
+        outer = annulus["outer_diameter"]
         objects.append({"id": "ground-disc", "type": "copper", "shape": "circle",
                         "purpose": "ground-disc", "net": "ground", "at": [0, 0],
-                        "layer": order[exit_depth + 1], "diameter": 2 * exact[0]["radius"]})
+                        "layer": disc_layer, "diameter": outer})
+        # The disc is tied to the footprint ground pad when ring lands overlap
+        # the annular pad on the mount layer and the disc on its own layer.
+        # Otherwise it relies on the board's flood for its connection.
+        reach = ground["diameter"] / 2
+        on_pad = (radius + reach > annulus["inner_diameter"] / 2 + 1e-9 and
+                  radius - reach < outer / 2 - 1e-9)
+        on_disc = disc_layer in lands and radius - reach < outer / 2 - 1e-9
+        if not (on_pad and on_disc):
+            warnings.append({
+                "code": "ground-disc-not-tied-to-pad", "subject": "ground disc",
+                "message": "ground disc: the ground ring does not land on both the footprint "
+                           "ground pad and the disc, so the disc relies on the board's flood "
+                           "for its connection"})
     objects.append({"id": "exit-corridor", "type": "keepout", "net": "ground",
                     "shape": "polygon", "layers": [signal_layer], "purpose": "exit-corridor",
                     "points": [[0, -corridor[2]], [corridor[1], -corridor[2]],
