@@ -1,5 +1,9 @@
 # RF authoring contract
 
+The physical contract between footprints, transitions and the Workflow, including
+agreed behaviour not yet implemented, is in
+`docs/rf-transition-contract.md`. This file covers the artifact format.
+
 The artifact file is the boundary between independently distributed librarian
 and layout tools. Neither code import nor a running authoring plugin is needed
 for placement. The saved exact payload is authoritative. Recipe reopening is a
