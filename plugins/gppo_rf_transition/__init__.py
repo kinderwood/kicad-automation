@@ -1,6 +1,6 @@
 """Independent librarian RF authoring plugin; file artifacts are its only handoff."""
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 
 # Pure recipe tooling remains usable outside KiCad. KiCad loads and registers the
 # ActionPlugin when pcbnew is present; a broken KiCad import is not hidden.

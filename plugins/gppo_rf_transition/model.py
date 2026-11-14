@@ -13,17 +13,28 @@ from pathlib import Path
 import re
 import uuid
 
-VERSION = "0.1.0"
-SCHEMA = "gppo.artifact/1.0"
-PAYLOAD_SCHEMA = "gppo.rf/1.0"
-RECIPE_SCHEMA = "gppo.rf-recipe/1.0"
+VERSION = "0.2.0"
+SCHEMA = "gppo.artifact/2.0"
+PAYLOAD_SCHEMA = "gppo.rf/2.0"
+RECIPE_SCHEMA = "gppo.rf-recipe/2.0"
 CAPABILITIES = {"native-vias", "net-copper-shapes", "layer-rule-areas",
-                "adjacent-microvia-stacks"}
+                "adjacent-microvia-stacks", "native-tracks", "filled-vias"}
 TOLERANCE_MM = 0.001
+# Every transition via is copper plated shut. This is a fixed property of the
+# payload, never a recipe setting.
+VIA_FILL = "copper"
+MIN_ANNULAR_RING_MM = 0.127  # 5 mil; smaller rings are reported as warnings.
 
 
 class RFError(ValueError):
     """A reviewable blocking authoring/compatibility error."""
+
+
+def copper_layer_names(count):
+    """Literal KiCad copper layer names, top to bottom, for a layer count."""
+    if isinstance(count, bool) or not isinstance(count, int) or count not in range(2, 33, 2):
+        raise RFError("copper layer count must be an even number from 2 to 32")
+    return ["F.Cu"] + [f"In{i}.Cu" for i in range(1, count - 1)] + ["B.Cu"]
 
 
 def canonical(value):
@@ -51,12 +62,7 @@ def _keys(value, allowed, label):
         raise RFError(f"{label}: unsupported fields {sorted(unknown)}")
 
 
-def arc_angles(start, end, count):
-    """Exact count, CCW partial endpoints; ±360° means full circle.
-
-    An equal start/end is ambiguous and rejected rather than guessed full-circle.
-    A decreasing endpoint crosses zero, e.g. 310→50 yields 310,335,0,25,50.
-    """
+def _arc(start, end, count):
     start = number(start, "arc start")
     end = number(end, "arc end")
     if isinstance(count, bool) or not isinstance(count, int) or count < 1 or count > 10000:
@@ -68,9 +74,28 @@ def arc_angles(start, end, count):
     sweep = 360 if full else raw % 360
     if not full and count < 2:
         raise RFError("partial arc requires at least two vias to include both endpoints")
-    denominator = count if full else count - 1
-    return [round((start + sweep * index / denominator) % 360, 12)
+    return start, sweep, count if full else count - 1
+
+
+def arc_angles(start, end, count):
+    """Exact count, CCW partial endpoints; ±360° means full circle.
+
+    An equal start/end is ambiguous and rejected rather than guessed full-circle.
+    A decreasing endpoint crosses zero, e.g. 310→50 yields 310,335,0,25,50.
+    """
+    start, sweep, steps = _arc(start, end, count)
+    return [round((start + sweep * index / steps) % 360, 12)
             for index in range(count)]
+
+
+def arc_midpoints(start, end, count):
+    """Angular midpoints of the same pattern, for a staggered microvia ring.
+
+    A partial arc of N positions has N−1 midpoints; a full circle keeps N.
+    """
+    start, sweep, steps = _arc(start, end, count)
+    return [round((start + sweep * (index + 0.5) / steps) % 360, 12)
+            for index in range(steps)]
 
 
 def _point(value, label="point"):
@@ -124,10 +149,10 @@ def via_layers(via, stackup):
     elif via_type == "through":
         if first != 0 or last != len(stackup) - 1:
             raise RFError("through via must span the entire board")
-    elif via_type != "blind_buried":
-        raise RFError("unsupported via type")
-    if via.get("treatment", "untreated") != "untreated":
-        raise RFError("filled/capped/plugged via treatment is not qualified by this renderer")
+    else:
+        raise RFError("unsupported via type: only through and one-layer microvia exist")
+    if via.get("fill") != VIA_FILL:
+        raise RFError("every transition via must be marked copper plated shut")
     drill = number(via.get("drill"), "via drill", True)
     diameter = number(via.get("diameter"), "via diameter", True)
     if drill >= diameter:
@@ -153,28 +178,31 @@ def validate_ground_corridor(objects, stackup, signal_layer, corridor):
 
 
 def default_recipe(part=None):
-    """Editable starting point. A validated approved base part is mandatory."""
+    """Editable starting point. A validated approved base part is mandatory.
+
+    The starting values follow the part's mount: an SMD pin gets a signal
+    microvia stack and antipads from the mount layer to the exit layer; a
+    through-hole pin uses its own barrel and gets an antipad on every layer.
+    """
+    layers = copper_layer_names(4)
+    pth = isinstance(part, dict) and part.get("mount") == "PTH"
+    antipad_layers = layers if pth else layers[:3]
     return {
         "schema": RECIPE_SCHEMA,
         "generator": {"id": "gppo-rf-transition", "version": VERSION},
         "units": "mm", "dependencies": {"base_part": deepcopy(part)},
         "parameters": {
-            "stackup": ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"],
+            "stackup": layers,
             "signal_layer": "In2.Cu", "netclasses": ["RF"],
-            "signal_via": {"via_type": "microvia", "diameter": 0.45,
-                           "drill": 0.2, "treatment": "untreated",
-                           "spans": [["F.Cu", "In1.Cu"], ["In1.Cu", "In2.Cu"]]},
-            "ground_via": {"via_type": "through", "diameter": 0.6,
-                           "drill": 0.3, "treatment": "untreated",
-                           "spans": [["F.Cu", "B.Cu"]]},
+            "signal_via": None if pth else {"diameter": 0.45, "drill": 0.2},
+            "ground_via": {"via_type": "through", "diameter": 0.6, "drill": 0.3,
+                           "construction": None, "stop_layer": None},
             "ground_ring": {"radius": 2.0, "start_deg": 40.0,
                             "end_deg": 320.0, "count": 9},
-            "tuned_signal_copper": {"F.Cu": None, "In1.Cu": 0.55,
+            "tuned_signal_copper": {"F.Cu": None, "In1.Cu": None if pth else 0.55,
                                     "In2.Cu": 0.65, "B.Cu": None},
             "tuned_ground_copper": {},
-            "antipads": {"F.Cu": 1.1, "In1.Cu": 1.1,
-                         "In2.Cu": 1.1, "B.Cu": 1.1},
-            "antipad_span": ["F.Cu", "B.Cu"],
+            "antipads": {layer: 1.1 for layer in antipad_layers},
             "trace_width": 0.25, "ground_pour_gap": 0.2,
             "clock_deg": 0.0,
         },
@@ -188,53 +216,65 @@ def _validate_part(part):
         raise RFError("base part requires identity and exact source SHA-256")
     if part.get("mount") not in ("SMD", "PTH") or part.get("side") not in ("front", "back"):
         raise RFError("base part requires SMD/PTH mount and front/back side")
-    if not isinstance(part.get("inspection_stackup"), list) or not part["inspection_stackup"]:
-        raise RFError("base part requires the copper stackup used for native source inspection")
     if not part.get("signal_pad") or not part.get("shield_pads") or part["signal_pad"] in part["shield_pads"]:
         raise RFError("signal and shield pad identifiers must be distinct")
     if part.get("signal_at") != [0, 0] or part.get("signal_shape") != "circle":
         raise RFError("only a circular signal land centered at footprint origin is supported")
-    minimum = part.get("minimum_signal_copper")
-    if not isinstance(minimum, dict) or not minimum:
-        raise RFError("base part minimum copper by layer is required")
-    for diameter in minimum.values():
-        number(diameter, "base minimum signal copper", True)
-    for land in part.get("shield_geometry", []):
-        _point(land["at"], "shield land")
-        number(land["radius"], "shield land radius", True)
-        if "inner_radius" in land and not 0 < number(land["inner_radius"], "shield bore", True) < land["radius"]:
+    land = number(part.get("signal_land"), "base signal land diameter", True)
+    if part["mount"] == "PTH":
+        if number(part.get("signal_drill"), "base signal drill", True) >= land:
+            raise RFError("through-hole signal land must exceed its plated hole")
+    elif part.get("signal_drill") is not None:
+        raise RFError("an SMD signal pad has no drill")
+    for shield in part.get("shield_geometry", []):
+        _point(shield["at"], "shield land")
+        number(shield["radius"], "shield land radius", True)
+        if "inner_radius" in shield and not 0 < number(shield["inner_radius"], "shield bore", True) < shield["radius"]:
             raise RFError("invalid annular shield geometry")
 
 
-def _span_objects(config, at, prefix, net, stackup):
-    _keys(config, ["via_type", "diameter", "drill", "treatment", "spans"], prefix)
-    spans = config.get("spans")
-    if not isinstance(spans, list) or not spans:
-        raise RFError(f"{prefix}: at least one explicit via span is required")
-    if len({tuple(span) for span in spans}) != len(spans):
-        raise RFError(f"{prefix}: duplicate via spans")
-    if config.get("via_type") == "through" and len(spans) != 1:
-        raise RFError("through vias cannot have stacked duplicate barrels")
-    objects = []
-    for i, span in enumerate(spans):
-        obj = {"id": f"{prefix}-{i}", "type": "via", "net": net,
-               "at": at, "layers": span, "diameter": config["diameter"],
-               "drill": config["drill"], "via_type": config["via_type"],
-               "treatment": config.get("treatment", "untreated")}
-        via_layers(obj, stackup)
-        objects.append(obj)
-    return objects
+def _via(identity, net, at, pair, config, via_type):
+    return {"id": identity, "type": "via", "net": net, "at": at,
+            "layers": list(pair), "diameter": config["diameter"],
+            "drill": config["drill"], "via_type": via_type, "fill": VIA_FILL}
+
+
+def _annular_warning(subject, land, drill):
+    ring = (land - drill) / 2
+    if ring >= MIN_ANNULAR_RING_MM - 1e-9:
+        return []
+    return [{"code": "annular-ring", "subject": subject,
+             "value_mm": round(ring, 6), "limit_mm": MIN_ANNULAR_RING_MM,
+             "message": f"{subject}: annular ring {ring:.4f} mm is under "
+                        f"{MIN_ANNULAR_RING_MM} mm (5 mil)"}]
+
+
+def review_recipe(recipe):
+    """Validate a recipe and return its payload and non-blocking warnings.
+
+    Blocking findings raise RFError. A valid recipe returns
+    ``{"payload": ..., "warnings": [...]}``; each warning is a dictionary with
+    ``code``, ``subject``, ``message`` and, for measurements, ``value_mm`` and
+    ``limit_mm``. Warnings never change the payload.
+    """
+    try:
+        payload, warnings = _generate(recipe)
+    except (KeyError, TypeError, IndexError) as error:
+        raise RFError(f"incomplete/malformed RF recipe: {error}") from error
+    return {"payload": payload, "warnings": warnings}
 
 
 def generate_payload(recipe):
     """Validate all parameters then return deterministic board-native geometry."""
-    try:
-        return _generate_payload(recipe)
-    except (KeyError, TypeError, IndexError) as error:
-        raise RFError(f"incomplete/malformed RF recipe: {error}") from error
+    return review_recipe(recipe)["payload"]
 
 
-def _generate_payload(recipe):
+def recipe_warnings(recipe):
+    """Non-blocking findings for a valid recipe; an invalid one raises RFError."""
+    return review_recipe(recipe)["warnings"]
+
+
+def _generate(recipe):
     _keys(recipe, ["schema", "generator", "units", "dependencies", "parameters"], "recipe")
     if recipe.get("schema") != RECIPE_SCHEMA or recipe.get("generator") != {"id": "gppo-rf-transition", "version": VERSION}:
         raise RFError("recipe requires a different generator/schema; saved payload may still be consumable")
@@ -245,16 +285,18 @@ def _generate_payload(recipe):
     params = recipe["parameters"]
     _keys(params, default_recipe()["parameters"], "parameters")
     layers = params["stackup"]
-    if not isinstance(layers, list) or len(layers) < 2 or len(layers) > 32 or len(layers) % 2:
+    if not isinstance(layers, list) or len(layers) not in range(2, 33, 2):
         raise RFError("stackup requires an even 2–32 copper layers")
-    if layers != ["F.Cu"] + [f"In{i}.Cu" for i in range(1, len(layers) - 1)] + ["B.Cu"]:
+    if layers != copper_layer_names(len(layers)):
         raise RFError("stackup must enumerate actual KiCad copper layers in top-to-bottom order")
-    if part["inspection_stackup"] != layers:
-        raise RFError("stackup changed since base-part inspection; select and inspect the approved source again")
     signal_layer = params["signal_layer"]
     if signal_layer not in layers:
         raise RFError("signal layer is absent from stackup")
-    mount_layer = layers[0] if part["side"] == "front" else layers[-1]
+    # Depth order runs from the mount layer towards the far side of the board.
+    order = layers if part["side"] == "front" else layers[::-1]
+    mount_layer = order[0]
+    exit_depth = order.index(signal_layer)
+    pth = part["mount"] == "PTH"
     if not isinstance(params["netclasses"], list) or not params["netclasses"] or any(not isinstance(n, str) or not n for n in params["netclasses"]):
         raise RFError("at least one explicit compatible netclass is required")
     ring = params["ground_ring"]
@@ -266,20 +308,51 @@ def _generate_payload(recipe):
     if gap < 0:
         raise RFError("ground-pour gap must be nonnegative")
     clock = number(params["clock_deg"], "clock")
+    land = part["signal_land"]
     objects = []
-    if part["mount"] == "SMD":
-        objects += _span_objects(params["signal_via"], [0, 0], "signal", "signal", layers)
-        intervals = sorted((layers.index(o["layers"][0]), layers.index(o["layers"][1])) for o in objects)
-        start, end = sorted([layers.index(mount_layer), layers.index(signal_layer)])
-        if start == end:
+    warnings = []
+
+    def pair(depth):
+        """The adjacent layer pair at a depth, in top-to-bottom stack order."""
+        return sorted(order[depth:depth + 2], key=layers.index)
+
+    def at(angle):
+        return [round(radius * math.cos(math.radians(angle)), 12),
+                round(radius * math.sin(math.radians(angle)), 12)]
+
+    # Signal conductor. base[layer] is the signal copper that already exists
+    # there; hole[layer] is a bare plated barrel with no land.
+    base = {}
+    hole = {}
+    if pth:
+        if params["signal_via"] is not None:
+            raise RFError("PTH center pin already supplies the signal barrel; signal_via must be null")
+        # Remove unused layers, keep start and end: KiCad draws the land on
+        # both outer layers and where the exit trace connects.
+        for layer in layers:
+            if layer in (layers[0], layers[-1], signal_layer):
+                base[layer] = land
+            else:
+                hole[layer] = part["signal_drill"]
+        warnings += _annular_warning("footprint signal land", land, part["signal_drill"])
+    else:
+        if exit_depth == 0:
             raise RFError("SMD recipe requires a transition to a different routing layer")
-        if intervals[0][0] != start or intervals[-1][1] != end or any(a[1] != b[0] for a, b in zip(intervals, intervals[1:])):
-            raise RFError("signal via spans must form one continuous nonoverlapping mount-to-signal stack")
-    elif params["signal_via"] is not None:
-        raise RFError("PTH center pin already supplies the signal barrel; signal_via must be null")
-    base_copper = part["minimum_signal_copper"]
-    if any(layer not in layers for layer in base_copper):
-        raise RFError("base part copper layer is absent from stackup")
+        if exit_depth == len(order) - 1:
+            raise RFError("SMD exit on the far outer layer is unsupported: there is no "
+                          "layer below it for the ground disc")
+        config = params["signal_via"]
+        _keys(config, ["diameter", "drill"], "signal via")
+        base[mount_layer] = land
+        for depth in range(exit_depth):
+            via = _via(f"signal-{depth}", "signal", [0, 0], pair(depth), config, "microvia")
+            via_layers(via, layers)
+            objects.append(via)
+            for layer in via["layers"]:
+                base[layer] = max(base.get(layer, 0), via["diameter"])
+        warnings += _annular_warning("signal via", config["diameter"], config["drill"])
+    antipad_layers = layers if pth else sorted(order[:exit_depth + 1], key=layers.index)
+
     tuned = params["tuned_signal_copper"]
     if set(tuned) != set(layers):
         raise RFError("explicit tuned diameter or null omission required on every copper layer")
@@ -288,73 +361,109 @@ def _generate_payload(recipe):
         if diameter is None:
             continue  # Omission applies to generated enlargement, never base geometry.
         number(diameter, f"tuned signal copper {layer}", True)
-        minimum = max([base_copper.get(layer, 0)] + [obj["diameter"] for obj in objects if obj["type"] == "via" and layer in via_layers(obj, layers)])
-        if diameter < minimum:
+        if layer not in antipad_layers:
+            raise RFError(f"{layer}: signal copper is not allowed beyond the exit layer, where no antipad exists")
+        if diameter < base.get(layer, 0):
             raise RFError(f"{layer}: tuned copper cannot shrink the approved base/via minimum")
-        if diameter > minimum:
+        if layer in hole:
+            if diameter <= hole[layer]:
+                raise RFError(f"{layer}: tuned copper must exceed the plated signal hole")
+            warnings += _annular_warning(f"signal copper {layer}", diameter, hole[layer])
+        if diameter > base.get(layer, 0):
             objects.append({"id": f"signal-copper-{layer}", "type": "copper", "shape": "circle",
-                            "net": "signal", "at": [0, 0], "layer": layer, "diameter": diameter})
+                            "purpose": "signal-overlay", "net": "signal", "at": [0, 0],
+                            "layer": layer, "diameter": diameter})
+
+    # Ground via ring. lands[layer] maps a position name to (angle, centre)
+    # for every ground land on that layer.
+    ground = params["ground_via"]
+    _keys(ground, ["via_type", "diameter", "drill", "construction", "stop_layer"], "ground via")
+    lands = {}
+    if ground["via_type"] == "through":
+        if ground["construction"] is not None or ground["stop_layer"] is not None:
+            raise RFError("through ground vias span the whole board; construction and stop_layer must be null")
+        for i, angle in enumerate(angles):
+            via = _via(f"ground-{i}", "ground", at(angle), [layers[0], layers[-1]], ground, "through")
+            via_layers(via, layers)
+            objects.append(via)
+            for layer in layers:
+                lands.setdefault(layer, {})[str(i)] = (angle, via["at"])
+    elif ground["via_type"] == "microvia":
+        if ground["construction"] not in ("stacked", "staggered"):
+            raise RFError("microvia ground ring construction must be stacked or staggered")
+        stop = order[-1] if ground["stop_layer"] is None else ground["stop_layer"]
+        if stop not in layers or stop == mount_layer:
+            raise RFError("ground ring stop layer must be a copper layer below the mount layer")
+        middle = (arc_midpoints(ring["start_deg"], ring["end_deg"], ring["count"])
+                  if ground["construction"] == "staggered" else None)
+        for depth in range(order.index(stop)):
+            staggered = middle is not None and depth % 2
+            for i, angle in enumerate(middle if staggered else angles):
+                name = f"m{i}" if staggered else str(i)
+                via = _via(f"ground-{name}-{depth}", "ground", at(angle), pair(depth), ground, "microvia")
+                via_layers(via, layers)
+                objects.append(via)
+                for layer in via["layers"]:
+                    lands.setdefault(layer, {})[name] = (angle, via["at"])
+    else:
+        raise RFError("ground via type must be through or microvia")
+    warnings += _annular_warning("ground via", ground["diameter"], ground["drill"])
     ground_copper = params["tuned_ground_copper"]
     if any(layer not in layers for layer in ground_copper):
         raise RFError("ground tuned copper names a nonexistent layer")
-    for diameter in ground_copper.values():
-        if diameter is not None and number(diameter, "ground tuned copper", True) < params["ground_via"]["diameter"]:
-            raise RFError("ground enlargement cannot shrink minimum via copper")
-    ground_size = max([params["ground_via"]["diameter"]] + [v for v in ground_copper.values() if v is not None])
-    corridor = [0, radius + ground_size / 2, width / 2 + gap]
-    centers = []
-    for i, angle in enumerate(angles):
-        at = [round(radius * math.cos(math.radians(angle)), 12),
-              round(radius * math.sin(math.radians(angle)), 12)]
-        centers.append(at)
-        spans = _span_objects(params["ground_via"], at, f"ground-{i}", "ground", layers)
-        objects += spans
-        present = {layer for obj in spans for layer in via_layers(obj, layers)}
-        for layer in sorted(ground_copper, key=layers.index):
-            diameter = ground_copper[layer]
-            if diameter is None:
-                continue
-            if layer not in present:
-                raise RFError(f"{layer}: ground overlay requires a ground via land on that layer")
-            if diameter > params["ground_via"]["diameter"]:
-                objects.append({"id": f"ground-copper-{i}-{layer}", "type": "copper", "shape": "circle",
-                                "net": "ground", "at": at, "layer": layer, "diameter": diameter})
-    ordered = sorted(zip(angles, centers))
-    neighbors = [(ordered[i][1], ordered[(i + 1) % len(ordered)][1]) for i in range(len(ordered))] if len(ordered) > 1 else []
-    if any(math.dist(a, b) < ground_size - 1e-9 for a, b in neighbors):
-        raise RFError("ground via copper envelopes overlap; change the recipe explicitly")
+    for layer in sorted(lands, key=layers.index):
+        size = ground["diameter"]
+        diameter = ground_copper.get(layer)
+        if diameter is not None:
+            if number(diameter, "ground tuned copper", True) < size:
+                raise RFError("ground enlargement cannot shrink minimum via copper")
+            if diameter > size:
+                size = diameter
+                for name, (_angle, center) in lands[layer].items():
+                    objects.append({"id": f"ground-copper-{name}-{layer}", "type": "copper",
+                                    "shape": "circle", "purpose": "ground-overlay", "net": "ground",
+                                    "at": center, "layer": layer, "diameter": diameter})
+        # Lands may be tangent, never overlapping, on every layer where they
+        # coexist. A staggered ring has both sets on its shared layers. All
+        # centres lie on one circle, so angular neighbours are the closest.
+        ordered = sorted(lands[layer].values())
+        if len(ordered) > 1 and any(
+                math.dist(ordered[i][1], ordered[(i + 1) % len(ordered)][1]) < size - 1e-9
+                for i in range(len(ordered))):
+            raise RFError(f"{layer}: ground via lands overlap; change the recipe explicitly")
+    for layer, diameter in ground_copper.items():
+        if diameter is not None and layer not in lands:
+            raise RFError(f"{layer}: ground overlay requires a ground via land on that layer")
+
+    # The corridor runs from the signal centre to the trace end and stops there.
+    corridor = [0, radius, width / 2 + gap]
     validate_ground_corridor(objects, layers, signal_layer, corridor)
-    # Existing shield lands are also part of the complete signal-layer envelope.
-    for land in part.get("shield_geometry", []):
-        # Rectangle can lie wholly inside an annulus bore without intersecting
-        # copper. Test farthest corner as well as the outer circular envelope.
-        farthest = max(math.dist(land["at"], [x, y]) for x in corridor[:2]
-                       for y in [-corridor[2], corridor[2]])
-        if (signal_layer in land["layers"] and
-                circle_intrudes_corridor(land["at"], land["radius"], corridor) and
-                farthest > land.get("inner_radius", 0) + 1e-9):
-            raise RFError("approved shield land intrudes on the requested signal-layer exit corridor")
-    span = params["antipad_span"]
-    if not isinstance(span, list) or len(span) != 2 or any(l not in layers for l in span) or layers.index(span[0]) > layers.index(span[1]):
-        raise RFError("antipad span requires ordered existing layer endpoints")
+    shields = part.get("shield_geometry", [])
+    if signal_layer == mount_layer:
+        for shield in shields:
+            # Rectangle can lie wholly inside an annulus bore without intersecting
+            # copper. Test farthest corner as well as the outer circular envelope.
+            farthest = max(math.dist(shield["at"], [x, y]) for x in corridor[:2]
+                           for y in [-corridor[2], corridor[2]])
+            if (circle_intrudes_corridor(shield["at"], shield["radius"], corridor) and
+                    farthest > shield.get("inner_radius", 0) + 1e-9):
+                raise RFError("approved shield land intrudes on the requested signal-layer exit corridor")
+
     antipads = params["antipads"]
-    required = layers[layers.index(span[0]):layers.index(span[1]) + 1]
-    signal_layers = {signal_layer, *base_copper}
-    signal_layers.update(layer for obj in objects if obj["type"] == "via" and obj["net"] == "signal" for layer in via_layers(obj, layers))
-    if not signal_layers.issubset(required):
-        raise RFError("antipad span must cover all signal lands, barrel and routing layers")
-    if set(antipads) != set(required):
-        raise RFError("antipad definitions must cover exactly their required layer span")
-    for layer in required:
+    if set(antipads) != set(antipad_layers):
+        raise RFError("antipads are required on exactly these layers: " + ", ".join(antipad_layers) +
+                      (" (every layer for a through-hole pin)" if pth else
+                       " (mount layer to exit layer for an SMD pin)"))
+    for layer in antipad_layers:
         diameter = antipads[layer]
         number(diameter, f"antipad {layer}", True)
-        signal_size = max([base_copper.get(layer, 0), tuned[layer] or 0] +
-                          [o["diameter"] for o in objects if o["type"] == "via" and o["net"] == "signal" and layer in via_layers(o, layers)])
+        signal_size = max(base.get(layer, 0), hole.get(layer, 0), tuned[layer] or 0)
         if diameter < signal_size + 2 * gap:
             raise RFError(f"{layer}: antipad must include signal copper and configured ground-pour gap")
-        for shield in part.get("shield_geometry", []):
-            if layer in shield["layers"] and signal_size > 0 and _signal_intrudes_shield(signal_size / 2, shield, gap):
-                raise RFError(f"{layer}: signal copper or required gap intrudes on approved base shield copper")
+        if layer == mount_layer:
+            for shield in shields:
+                if _signal_intrudes_shield(signal_size / 2, shield, gap):
+                    raise RFError(f"{layer}: signal copper or required gap intrudes on approved base shield copper")
         for obj in objects:
             if obj["net"] == "ground" and obj["type"] in ("via", "copper"):
                 present = via_layers(obj, layers) if obj["type"] == "via" else [obj["layer"]]
@@ -364,18 +473,34 @@ def _generate_payload(recipe):
                         "shape": "polygon", "layers": [layer], "purpose": "antipad",
                         "points": _circle_points([0, 0], diameter / 2),
                         "prohibit": ["copperpour"], "tolerance_mm": TOLERANCE_MM})
+    if not pth:
+        # Solid ground directly below the exit layer, with no antipad, so that
+        # ordinary clearance checking fails anything routed under the launch.
+        exact = [s for s in shields if "inner_radius" in s]
+        if len(shields) != 1 or len(exact) != 1 or math.hypot(*exact[0]["at"]) > 1e-9:
+            raise RFError("the ground disc needs one annular footprint ground pad centred on the signal")
+        objects.append({"id": "ground-disc", "type": "copper", "shape": "circle",
+                        "purpose": "ground-disc", "net": "ground", "at": [0, 0],
+                        "layer": order[exit_depth + 1], "diameter": 2 * exact[0]["radius"]})
     objects.append({"id": "exit-corridor", "type": "keepout", "net": "ground",
                     "shape": "polygon", "layers": [signal_layer], "purpose": "exit-corridor",
                     "points": [[0, -corridor[2]], [corridor[1], -corridor[2]],
                                [corridor[1], corridor[2]], [0, corridor[2]]],
                     "prohibit": ["copperpour"]})
+    # The exit trace is part of the transition so it stays clocked with the
+    # ground ring. Its end is the handoff where designer routing starts.
+    objects.append({"id": "exit-trace", "type": "track", "net": "signal",
+                    "layer": signal_layer, "width": width,
+                    "start": [0, 0], "end": [radius, 0]})
     # Clock is stored as authoring provenance; exact payload remains local +X exit.
     # Workflow applies per-instance clock and pose once, preserving reusable geometry.
-    return {"units": "mm", "coordinates": "x-right-y-up-ccw",
-            "anchors": {"signal": [0, 0], "exit_direction_deg": 0},
-            "net_roles": ["signal", "ground"],
-            "layer_roles": {"mount": mount_layer, "signal": signal_layer},
-            "default_clock_deg": clock, "objects": objects}
+    payload = {"units": "mm", "coordinates": "x-right-y-up-ccw",
+               "anchors": {"signal": [0, 0], "exit_direction_deg": 0,
+                           "handoff": [radius, 0]},
+               "net_roles": ["signal", "ground"],
+               "layer_roles": {"mount": mount_layer, "signal": signal_layer},
+               "default_clock_deg": clock, "objects": objects}
+    return payload, warnings
 
 
 def make_artifact(recipe, artifact_id=None, revision=1, provenance=None):
@@ -387,7 +512,8 @@ def make_artifact(recipe, artifact_id=None, revision=1, provenance=None):
         raise RFError("artifact identity must be a safe nonempty library identifier")
     params = recipe["parameters"]
     part = recipe["dependencies"]["base_part"]
-    caps = ["native-vias", "net-copper-shapes", "layer-rule-areas"]
+    caps = ["native-vias", "net-copper-shapes", "layer-rule-areas",
+            "native-tracks", "filled-vias"]
     if any(o.get("via_type") == "microvia" for o in payload["objects"]):
         caps.append("adjacent-microvia-stacks")
     artifact = {"schema": SCHEMA, "artifact_id": artifact_id, "revision": revision,
@@ -396,7 +522,7 @@ def make_artifact(recipe, artifact_id=None, revision=1, provenance=None):
                 "compatibility": {"part_id": part["part_id"], "part_sha256": part["sha256"],
                                   "mount": part["mount"], "side": part["side"],
                                   "netclasses": deepcopy(params["netclasses"]),
-                                  "stackup": deepcopy(params["stackup"])},
+                                  "copper_layer_count": len(params["stackup"])},
                 "required_capabilities": sorted(caps),
                 "provenance": deepcopy(provenance or {"operation": "new"})}
     artifact["hashes"] = {"payload": digest(payload), "recipe": digest(recipe),
@@ -405,7 +531,7 @@ def make_artifact(recipe, artifact_id=None, revision=1, provenance=None):
 
 
 def _supported_schema(value, prefix):
-    return isinstance(value, str) and re.fullmatch(re.escape(prefix) + r"/1\.\d+", value)
+    return isinstance(value, str) and re.fullmatch(re.escape(prefix) + r"/2\.\d+", value)
 
 
 def _validate_saved_payload(artifact):
@@ -413,13 +539,16 @@ def _validate_saved_payload(artifact):
     payload = artifact["payload"]
     if payload.get("units") != "mm" or payload.get("coordinates") != "x-right-y-up-ccw":
         raise RFError("unsupported payload units or coordinate convention")
-    if payload.get("net_roles") != ["signal", "ground"] or payload.get("anchors") != {"signal": [0, 0], "exit_direction_deg": 0}:
+    anchors = payload.get("anchors")
+    if payload.get("net_roles") != ["signal", "ground"] or not isinstance(anchors, dict) or set(anchors) != {"signal", "exit_direction_deg", "handoff"} or anchors["signal"] != [0, 0] or anchors["exit_direction_deg"] != 0:
         raise RFError("unsupported RF anchors or net roles")
-    layers = artifact["compatibility"]["stackup"]
-    if layers != ["F.Cu"] + [f"In{i}.Cu" for i in range(1, len(layers) - 1)] + ["B.Cu"] or len(layers) not in range(2, 33, 2):
-        raise RFError("unsupported saved stackup")
-    if any(value not in layers for value in payload["layer_roles"].values()):
+    handoff = _point(anchors["handoff"], "handoff")
+    layers = copper_layer_names(artifact["compatibility"]["copper_layer_count"])
+    if set(payload["layer_roles"]) != {"mount", "signal"} or any(value not in layers for value in payload["layer_roles"].values()):
         raise RFError("saved layer role is absent from stackup")
+    traces = [obj for obj in payload["objects"] if obj.get("type") == "track"]
+    if len(traces) != 1 or traces[0].get("id") != "exit-trace":
+        raise RFError("a saved transition carries exactly one exit trace")
     seen = set()
     for obj in payload["objects"]:
         identity = obj.get("id")
@@ -449,8 +578,14 @@ def _validate_saved_payload(artifact):
             area = sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(points, points[1:] + points[:1]))
             if abs(area) < 1e-12:
                 raise RFError("keepout polygon has no area")
+        elif obj.get("type") == "track":
+            if obj["net"] != "signal" or obj.get("layer") != payload["layer_roles"]["signal"]:
+                raise RFError("the exit trace must be signal copper on the exit layer")
+            number(obj["width"], "exit trace width", True)
+            if _point(obj["start"], "exit trace start") != [0, 0] or _point(obj["end"], "exit trace end") != handoff:
+                raise RFError("the exit trace must run from the signal centre to the handoff")
         else:
-            raise RFError("unsupported saved object type (signal traces are never generated)")
+            raise RFError("unsupported saved object type")
 
 
 def validate_artifact(artifact, reopen=False):
@@ -554,6 +689,7 @@ def capability_report(version):
     return {"runtime": text, "supported": supported,
             "capabilities": sorted(CAPABILITIES) if supported else [],
             "limitations": ["No impedance, electromagnetic or manufacturing qualification",
-                            "Only untreated via fabrication; circular centered signal lands",
-                            "No custom padstack removal or automatic base-footprint edits",
+                            "Every via is copper plated shut; drill and aspect-ratio feasibility is not checked",
+                            "Circular centered signal lands; through-hole pads must remove unused layers and keep start and end",
+                            "No back-mount mirroring, dogbone or jog launches, or base-footprint edits",
                             "Native copper connectivity and fabrication require project review"]}

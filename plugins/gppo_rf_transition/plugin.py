@@ -9,8 +9,8 @@ import pcbnew
 import wx
 
 from .model import (RFError, capability_report, clone_artifact, default_recipe,
-                    generate_payload, load_artifact, make_artifact,
-                    publish_bundle, revise_artifact)
+                    load_artifact, make_artifact, publish_bundle,
+                    review_recipe, revise_artifact)
 from .native import read_base_part
 
 
@@ -30,7 +30,7 @@ class GeometryPreview(wx.Panel):
             dc.DrawText("Validate a recipe to preview native geometry", 10, 12)
             return
         objects = self.payload["objects"]
-        points = [o["at"] for o in objects if "at" in o]
+        points = [o["at"] for o in objects if "at" in o] + [self.payload["anchors"]["handoff"]]
         extent = max([3.0] + [max(abs(v) for v in p) + 1 for p in points])
         width, height = self.GetClientSize()
         scale = min(width, height) / (2 * extent + 1)
@@ -45,7 +45,11 @@ class GeometryPreview(wx.Panel):
         layers = self.payload.get("stackup", [])
         # Keepouts first, followed by copper and drilled vias.
         for obj in sorted(objects, key=lambda item: item["type"] != "keepout"):
-            if obj["type"] == "keepout":
+            if obj["type"] == "track":
+                if self.layer == obj["layer"]:
+                    dc.SetPen(wx.Pen(wx.Colour(185, 55, 55), max(1, round(obj["width"] * scale))))
+                    dc.DrawLine(xy(obj["start"]), xy(obj["end"]))
+            elif obj["type"] == "keepout":
                 if self.layer not in obj["layers"]:
                     continue
                 dc.SetPen(wx.Pen(wx.Colour(180, 135, 40), 1))
@@ -181,10 +185,16 @@ class RFDesignerDialog(wx.Dialog):
                 signal, shields, side = roles.GetValue().split(";")
                 recipe = json.loads(self.editor.GetValue())
                 part = read_base_part(path, signal.strip(), [s.strip() for s in shields.split(",")],
-                                      recipe["parameters"]["stackup"], side.strip(), approved=True)
+                                      side.strip(), approved=True)
                 recipe["dependencies"]["base_part"] = part
                 if part["mount"] == "PTH":
-                    recipe["parameters"]["signal_via"] = None
+                    # The pin's own barrel is the signal conductor and every
+                    # layer of the board needs an antipad.
+                    params = recipe["parameters"]
+                    params["signal_via"] = None
+                    antipads = params["antipads"]
+                    for layer in params["stackup"]:
+                        antipads.setdefault(layer, max(antipads.values()))
                 self.base_path = path
                 self.set_recipe(recipe)
             except (RFError, ValueError, KeyError, TypeError) as error:
@@ -213,7 +223,8 @@ class RFDesignerDialog(wx.Dialog):
             if not capability_report(pcbnew.Version())["supported"]:
                 raise RFError("unsupported KiCad runtime")
             recipe = json.loads(self.editor.GetValue())
-            payload = generate_payload(recipe)
+            review = review_recipe(recipe)
+            payload, warnings = review["payload"], review["warnings"]
             self.layer.SetItems(recipe["parameters"]["stackup"])
             self.layer.SetStringSelection(recipe["parameters"]["signal_layer"])
             self.preview.layer = self.layer.GetStringSelection()
@@ -231,7 +242,9 @@ class RFDesignerDialog(wx.Dialog):
                 candidate = make_artifact(recipe)
             self.validated = (self.editor.GetValue(), candidate)
             self.save.Enable(True)
-            self.report.SetValue(f"VALIDATED · {len(payload['objects'])} board objects\nNo signal traces generated.\nPublication preserves source footprints.\n\n" +
+            findings = "".join(f"WARNING · {warning['message']}\n" for warning in warnings)
+            self.report.SetValue(f"VALIDATED · {len(payload['objects'])} board objects · {len(warnings)} warnings\n" + findings +
+                                 "Every via is copper plated shut. The exit trace ends at the handoff.\nPublication preserves source footprints.\n\n" +
                                  json.dumps(capability_report(pcbnew.Version()), indent=2))
         except (RFError, ValueError, KeyError, TypeError) as error:
             self.error(error)

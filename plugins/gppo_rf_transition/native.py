@@ -73,14 +73,22 @@ def _annulus(pad_node):
             "validation": "exact-single-circle-annulus"}
 
 
-def read_base_part(path, signal_pad="1", shield_pads=("2",),
-                   stackup=("F.Cu", "In1.Cu", "In2.Cu", "B.Cu"),
-                   side="front", approved=False):
+def _copper_layers(pad):
+    return {layer for layer in pad.GetLayerSet().Seq() if pcbnew.IsCopperLayer(layer)}
+
+
+def read_base_part(path, signal_pad="1", shield_pads=("2",), side="front",
+                   approved=False):
     """Pin exact source bytes and inspect the actual signal pad in KiCad.
 
+    The result does not depend on a board stackup: a through-hole signal pad
+    has one land diameter and passes through any board, and SMD pads sit on
+    the mount side only. Pin 1 signal, pin 2 ground and front mounting are
+    the defaults.
+
     Shield geometry uses conservative bounding circles, so complex shield lands
-    may block same-layer exits. Circular custom annuli on other layers remain
-    supported; the shield is never mistaken for the center signal land.
+    may block same-layer exits. A circular custom annulus is read exactly; the
+    shield is never mistaken for the center signal land.
     """
     source = Path(path)
     if source.suffix != ".kicad_mod" or not source.is_file():
@@ -89,6 +97,8 @@ def read_base_part(path, signal_pad="1", shield_pads=("2",),
         raise RFError("librarian approval of the selected source is required")
     if not capability_report(pcbnew.Version())["supported"]:
         raise RFError("KiCad runtime lies outside 10.0.0–10.0.8")
+    if side not in ("front", "back"):
+        raise RFError("mount side must be front or back")
     data = source.read_bytes()
     footprint = pcbnew.FootprintLoad(str(source.parent), source.stem)
     if footprint is None:
@@ -108,42 +118,41 @@ def read_base_part(path, signal_pad="1", shield_pads=("2",),
     if any(pad.GetNumber() and pad.GetNumber() not in [signal_pad, *shield_pads]
            and pad.GetAttribute() != pcbnew.PAD_ATTRIB_NPTH for pad in pads):
         raise RFError("base footprint has unclassified electrical pads")
-    layer_ids = {name: pcbnew.LayerNameToId(name) if hasattr(pcbnew, "LayerNameToId")
-                 else pcbnew.BOARD().GetLayerID(name) for name in stackup}
-    minimum = {}
-    for name, layer in layer_ids.items():
-        if not signal.IsOnLayer(layer):
-            continue
-        if signal.GetShape(layer) != pcbnew.PAD_SHAPE_CIRCLE:
-            raise RFError("signal pad must have a circular land on every copper layer")
-        size = signal.GetSize(layer)
-        if size.x != size.y:
-            raise RFError("noncircular signal land is unsupported")
-        minimum[name] = pcbnew.ToMM(size.x)
     mount = "PTH" if signal.GetAttribute() == pcbnew.PAD_ATTRIB_PTH else "SMD"
-    mount_layer = stackup[0] if side == "front" else stackup[-1]
-    if side not in ("front", "back") or mount_layer not in minimum:
-        raise RFError("selected mount side has no signal land")
-    if mount == "SMD" and set(minimum) != {mount_layer}:
-        raise RFError("SMD signal must have copper on the mount side only")
-    if not any(pad.IsOnLayer(layer_ids[mount_layer]) for pad in shields):
-        raise RFError("selected mount side has no shield copper; mirroring is an explicit instance operation")
+    mount_layer = pcbnew.F_Cu if side == "front" else pcbnew.B_Cu
+    if signal.Padstack().Mode() != pcbnew.PADSTACK.MODE_NORMAL:
+        raise RFError("signal pad must use KiCad's ordinary padstack, with one land size on every layer")
+    if signal.GetShape(mount_layer) != pcbnew.PAD_SHAPE_CIRCLE:
+        raise RFError("signal pad must have a circular land")
+    size = signal.GetSize(mount_layer)
+    if size.x != size.y or size.x <= 0:
+        raise RFError("noncircular signal land is unsupported")
+    land = pcbnew.ToMM(size.x)
+    drill = None
     if mount == "PTH":
-        drill = signal.GetDrillSize()
-        if signal.GetDrillShape() != pcbnew.PAD_DRILL_SHAPE_CIRCLE or drill.x != drill.y or drill.x <= 0:
+        if not {pcbnew.F_Cu, pcbnew.B_Cu} <= _copper_layers(signal):
+            raise RFError("through-hole signal pad must pass through the whole board")
+        if signal.GetUnconnectedLayerMode() != pcbnew.UNCONNECTED_LAYER_MODE_REMOVE_EXCEPT_START_AND_END:
+            raise RFError("through-hole signal pad must be set to remove unused layers and keep start and end")
+        hole = signal.GetDrillSize()
+        if signal.GetDrillShape() != pcbnew.PAD_DRILL_SHAPE_CIRCLE or hole.x != hole.y or hole.x <= 0:
             raise RFError("PTH signal requires a circular plated hole")
-        if any(value <= pcbnew.ToMM(drill.x) for value in minimum.values()):
+        drill = pcbnew.ToMM(hole.x)
+        if land <= drill:
             raise RFError("PTH minimum signal land must exceed plated-hole diameter")
+    elif _copper_layers(signal) != {mount_layer}:
+        raise RFError("SMD signal must have copper on the selected mount side only")
+    for pad in shields:
+        if pad.GetAttribute() != pcbnew.PAD_ATTRIB_SMD or _copper_layers(pad) != {mount_layer}:
+            raise RFError("ground pad must be SMD copper on the selected mount side only; "
+                          "a back-mounted part needs its own back-side source")
     for item in footprint.GraphicalItems():
-        if item.GetLayer() in layer_ids.values():
+        if pcbnew.IsCopperLayer(item.GetLayer()):
             raise RFError("unclassified base-footprint copper graphics require librarian review")
     shield_geometry = []
     syntax = _sexpr(data.decode("utf-8"))
     pad_nodes = [node for node in syntax if isinstance(node, list) and node and node[0] == "pad"]
     for pad in shields:
-        present = [name for name, layer in layer_ids.items() if pad.IsOnLayer(layer)]
-        if not present:
-            raise RFError("shield pad has no copper in the selected stackup")
         bounds = pad.GetBoundingBox()
         center = bounds.GetCenter()
         matching = [node for node in pad_nodes if node[1] == pad.GetNumber()]
@@ -151,7 +160,6 @@ def read_base_part(path, signal_pad="1", shield_pads=("2",),
         shield_geometry.append({"at": [pcbnew.ToMM(center.x), -pcbnew.ToMM(center.y)],
                                 "radius": (pcbnew.ToMM(bounds.GetWidth()) ** 2 +
                                            pcbnew.ToMM(bounds.GetHeight()) ** 2) ** 0.5 / 2,
-                                "layers": present,
                                 "validation": "conservative-bounding-circle", **(exact or {})})
     if source.read_bytes() != data:
         raise RFError("base source changed during inspection; select it again")
@@ -159,8 +167,7 @@ def read_base_part(path, signal_pad="1", shield_pads=("2",),
             "sha256": hashlib.sha256(data).hexdigest(),
             "source_filename": source.name, "approval": "librarian-approved",
             "mount": mount, "side": side, "signal_pad": signal_pad,
-            "inspection_stackup": list(stackup),
             "shield_pads": list(shield_pads), "signal_at": [0, 0],
-            "signal_shape": "circle", "minimum_signal_copper": minimum,
+            "signal_shape": "circle", "signal_land": land, "signal_drill": drill,
             "shield_geometry": shield_geometry,
             "base_pad_policy": "Preserve approved source copper; null means no added copper, never remove base lands"}
