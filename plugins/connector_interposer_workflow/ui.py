@@ -1468,6 +1468,8 @@ class WorkflowDialog(wx.Dialog):
         self._spreadsheet_columns = {}
         self._updating_layers = False
         self._assignment_signature = None
+        self._footprint_listing = None
+        self._footprint_filter_matches = {}
         self._bulk_assignments = {
             'rf': {'names': (), 'symbol': {}, 'footprint': {}},
             'dc': {'names': (), 'symbol': {}, 'footprint': {}},
@@ -1577,7 +1579,7 @@ class WorkflowDialog(wx.Dialog):
         )
         self.status = MessageLog(self.messages)
         self.status.last = 'Ready'
-        bitmaps = icons.load(('left', 'right', 'save', 'trash', 'undo', 'info'),
+        bitmaps = icons.load(('left', 'right', 'save', 'trash', 'undo', 'reload', 'info'),
                              dark=ui_palette().dark)
 
         def tool(name, tip, handler):
@@ -1602,6 +1604,10 @@ class WorkflowDialog(wx.Dialog):
         )
         self.reset_settings_button = tool(
             'undo', 'Reset the current workflow settings', self.reset_workflow_settings,
+        )
+        separator()
+        self.refresh_libraries_button = tool(
+            'reload', 'Refresh libraries', self.refresh_libraries,
         )
         separator()
         self.unit_buttons = {}
@@ -3089,21 +3095,45 @@ class WorkflowDialog(wx.Dialog):
         from .core.libraries import footprint_matches_filters, read_footprint
         if not symbol or not symbol.footprint_filters or self.pcbnew is None or not self.controller.board_path:
             return ()
-        catalog = KiCadLibraryCatalog(
-            self.pcbnew, self.controller.board_path.parent, 'footprint',
-        )
+        # Listing every loaded footprint library is the slow part and is the
+        # same for every connector, so it is done once and kept until
+        # Refresh libraries. Matched footprints are still read each time.
+        if self._footprint_listing is None:
+            catalog = KiCadLibraryCatalog(
+                self.pcbnew, self.controller.board_path.parent, 'footprint',
+            )
+            self._footprint_listing = tuple(
+                (part.library_id, part.path)
+                for entry in catalog.libraries() for part in catalog.parts(entry.nickname)
+            )
+            self._footprint_filter_matches = {}
+        candidates = self._footprint_filter_matches.get(symbol.footprint_filters)
+        if candidates is None:
+            candidates = tuple(
+                item for item in self._footprint_listing
+                if footprint_matches_filters(item[0], symbol.footprint_filters)
+            )
+            self._footprint_filter_matches[symbol.footprint_filters] = candidates
         matches = {}
-        for entry in catalog.libraries():
-            for part in catalog.parts(entry.nickname):
-                if footprint_matches_filters(part.library_id, symbol.footprint_filters):
-                    approved = read_footprint(part.path, part.library_id)
-                    if {pin[0] for pin in symbol.pin_numbers} != set(approved.pad_numbers):
-                        continue
-                    matches[part.library_id] = {
-                        'path': approved.path, 'library_id': approved.library_id,
-                        'sha256': approved.sha256,
-                    }
+        for library_id, path in candidates:
+            approved = read_footprint(path, library_id)
+            if {pin[0] for pin in symbol.pin_numbers} != set(approved.pad_numbers):
+                continue
+            matches[library_id] = {
+                'path': approved.path, 'library_id': approved.library_id,
+                'sha256': approved.sha256,
+            }
         return tuple(matches[name] for name in sorted(matches))
+
+    def refresh_libraries(self, event=None):
+        """Look again at the loaded KiCad libraries and the project's RF transitions."""
+        self._footprint_listing = None
+        self._footprint_filter_matches = {}
+        self.refresh_connector_assignments(True)
+        if self.controller.board_path:
+            self.refresh_transition_catalog()
+        else:
+            self.status.SetLabel('Libraries refreshed.')
 
     def _interposer_reference(self):
         references = sorted({record.interposer for record in self.controller.table.records}) \
@@ -4314,11 +4344,6 @@ class WorkflowDialog(wx.Dialog):
         self.transition_status_filter.SetSelection(0)
         self.transition_status_filter.Bind(wx.EVT_CHOICE, lambda event: self.refresh_rf_transitions())
         controls.Add(self.transition_status_filter, 0, wx.RIGHT, 8)
-        search_project = self.button(panel, 'Search Project', self.refresh_transition_catalog)
-        search_project.SetToolTip(
-            'Look again for RF transition files in the project folder.'
-        )
-        controls.Add(search_project, 0, wx.RIGHT, 12)
         self.transition_found = wx.StaticText(
             panel, label='Found 0 transitions in the project folder',
         )
@@ -4487,7 +4512,7 @@ class WorkflowDialog(wx.Dialog):
         )
         self.refresh_rf_transitions()
         self.status.SetLabel(
-            f'Transition library refreshed: {len(catalog)} valid artifact'
+            f'Libraries refreshed: {len(catalog)} valid RF transition'
             f'{"" if len(catalog) == 1 else "s"}' +
             (f'; {errors} invalid file{("" if errors == 1 else "s")} ignored.' if errors else '.')
         )

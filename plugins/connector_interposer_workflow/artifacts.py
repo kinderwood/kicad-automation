@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import re
+from collections import OrderedDict
 from pathlib import Path
 
 
@@ -198,8 +199,32 @@ def validate_artifact(artifact, *, layers=None, part_sha256=None, netclass=None)
     return copy.deepcopy(artifact)
 
 
+# Validation outcomes keyed by content checksum and requested checks. The file
+# is still read and hashed on every request, so a changed artifact is always
+# validated afresh; only the geometry checks of unchanged bytes are reused.
+# Dialog refreshes ask about the same few assigned transitions many times.
+_VALIDATED = OrderedDict()
+_VALIDATED_LIMIT = 256
+
+
 def load_artifact(path, **checks):
-    return validate_artifact(json.loads(Path(path).read_text(encoding="utf-8")), **checks)
+    data = Path(path).read_bytes()
+    key = (hashlib.sha256(data).hexdigest(), json.dumps(checks, sort_keys=True))
+    try:
+        outcome = _VALIDATED[key]
+    except KeyError:
+        try:
+            outcome = validate_artifact(json.loads(data.decode("utf-8")), **checks)
+        except ValueError as error:
+            outcome = error
+        _VALIDATED[key] = outcome
+        while len(_VALIDATED) > _VALIDATED_LIMIT:
+            _VALIDATED.popitem(last=False)
+    else:
+        _VALIDATED.move_to_end(key)
+    if isinstance(outcome, ValueError):
+        raise outcome
+    return copy.deepcopy(outcome)
 
 
 def pin_artifact(path, destination, **checks):

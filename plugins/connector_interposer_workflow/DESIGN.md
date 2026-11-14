@@ -10,8 +10,13 @@ as RF remain uppercase.
 The shell follows the Figma Spec. A toolbar holds every window-level action
 with KiCad's own icons, loaded from the running installation's
 `share/kicad/resources/images.tar.gz` with wx stock art as the fallback:
-previous / next step, save / delete / reset workflow settings, the mil / mm
-readout switch and the message-log toggle. There is no footer and no Close
+previous / next step, save / delete / reset workflow settings, refresh
+libraries, the mil / mm readout switch and the message-log toggle. The list of
+footprints in the loaded KiCad libraries is read once per window and RF
+transition validation is reused while a file's bytes are unchanged; **Refresh
+libraries** reads the footprint libraries again and searches the project folder
+for RF transition files. Symbol and footprint files that are already assigned
+are re-read and hashed on every use, so an edit to one is never missed. There is no footer and no Close
 button. The custom-drawn step list groups the steps under Nets & Layers, Parts,
 Geometry and Finish; each step's status icon sits in a gutter outside the
 system selection highlight so it keeps its colour. The About box under the

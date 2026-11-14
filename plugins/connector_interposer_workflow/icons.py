@@ -21,6 +21,7 @@ _ARCHIVES = (
 _STOCK = {
     'left': wx.ART_GO_BACK, 'right': wx.ART_GO_FORWARD, 'save': wx.ART_FILE_SAVE,
     'trash': wx.ART_DELETE, 'undo': wx.ART_UNDO, 'info': wx.ART_INFORMATION,
+    'reload': getattr(wx, 'ART_REFRESH', wx.ART_REDO),
 }
 _cache = {}
 

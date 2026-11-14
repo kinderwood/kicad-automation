@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.7.9**, testing release. The package targets KiCad 10.0.0 through
+Version **0.7.10**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -22,7 +22,8 @@ colors from wx system colors. Python core modules also run without KiCad or wx
 dependencies.
 
 The window opens at 1280 × 800. A toolbar across the top uses KiCad's own icons:
-previous and next step, save, delete and reset workflow settings, a mil / mm
+previous and next step, save, delete and reset workflow settings, refresh
+libraries, a mil / mm
 switch for read-only values, and a toggle for the message log. The step list on
 the left groups the twelve steps under Nets & Layers, Parts, Geometry and Finish
 and shows one status icon per step: a green check when the step is complete, a
@@ -148,8 +149,8 @@ files changed after the transaction.
    cover locations in several gangs. Unassigned requirements do not block Review
    Changes or board generation. Once assigned, the workflow validates the exact footprint
    revision and mount type, board side, ordered copper stack, allowed netclass,
-   signal layer and artifact hash before Review changes. **Refresh transition
-   library** discovers published `.gppo-rf.json` files beneath the project;
+   signal layer and artifact hash before Review changes. **Refresh libraries**
+   in the toolbar discovers published `.gppo-rf.json` files beneath the project;
    **Browse artifact…** can select a catalog artifact elsewhere. **Open RF
    Transition Designer…** is a disabled placeholder in this release.
 7. **Define RF gangs:** select an RF gang from the searchable netlist-derived list.

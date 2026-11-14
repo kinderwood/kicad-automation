@@ -6,7 +6,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins"))
-from connector_interposer_workflow.artifacts import ArtifactError, canonical, pin_artifact, sha256, validate_artifact
+from connector_interposer_workflow.artifacts import ArtifactError, canonical, load_artifact, pin_artifact, sha256, validate_artifact
+from connector_interposer_workflow import artifacts
+from unittest import mock
 
 
 def artifact_fixture(part_sha256="a"*64):
@@ -48,6 +50,32 @@ class ArtifactTests(unittest.TestCase):
             pin_artifact(source, target)
             self.assertEqual(stamp, target.stat().st_mtime_ns)
             self.assertEqual(before, source.stat().st_mtime_ns)
+
+    def test_unchanged_bytes_are_validated_once_and_changed_bytes_again(self):
+        layers = ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"]
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "library.json"
+            source.write_bytes(canonical(artifact_fixture()))
+            artifacts._VALIDATED.clear()
+            with mock.patch.object(artifacts, "validate_artifact",
+                                   wraps=artifacts.validate_artifact) as validate:
+                first = load_artifact(source, layers=layers)
+                first["artifact_id"] = "caller edits never reach the next reader"
+                self.assertEqual(load_artifact(source, layers=layers)["artifact_id"],
+                                 "approved-sample")
+                self.assertEqual(validate.call_count, 1)
+                # Other checks are a different question about the same bytes.
+                with self.assertRaises(ArtifactError):
+                    load_artifact(source, layers=layers, netclass="OTHER")
+                with self.assertRaises(ArtifactError):
+                    load_artifact(source, layers=layers, netclass="OTHER")
+                self.assertEqual(validate.call_count, 2)
+                tampered = artifact_fixture()
+                tampered["artifact_id"] = "tampered"
+                source.write_bytes(canonical(tampered))
+                with self.assertRaises(ArtifactError):
+                    load_artifact(source, layers=layers)
+                self.assertEqual(validate.call_count, 3)
 
     def test_integrity_protects_metadata_and_payload(self):
         for field in ("artifact_id", "recipe", "payload"):
