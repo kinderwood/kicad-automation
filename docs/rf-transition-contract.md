@@ -111,8 +111,9 @@ outer diameter. It has no antipad.
 - The trace is part of the transition so that it stays clocked with the
   ground ring.
 - The trace end point is the handoff. Designer-owned routing starts there.
-- The corridor is the trace width plus one ground gap on each side. The
-  ground flood is kept out of it. Ground lands may be tangent to the corridor
+- The corridor is the trace width plus one ground gap on each side. It runs
+  from the signal centre to the trace end and stops there. The ground flood
+  is kept out of it. Ground lands may be tangent to the corridor
   edge and may not intrude.
 - Dogbone and jog launches (signal via offset from the pin, or signal
   microvias stepped between layers) are future capability. The handoff point
@@ -191,6 +192,7 @@ in these ways:
 | Antipads stop at the exit layer for an SMD pin | One span that must cover every signal layer; allowed to run further |
 | Ground disc below the exit | Not generated |
 | Exit trace and handoff at its end | No trace; handoff is the signal via |
+| Corridor stops at the trace end (ring radius) | Corridor runs to the outer edge of the ground lands |
 | Annular ring warning | No warnings exist; every finding blocks |
 | Stackup identity by layer count | Exact layer-name list compared |
 | Pin 1 / pin 2 / front as defaults | Reader defaults match; the dialog asks every time |
