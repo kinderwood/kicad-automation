@@ -1,6 +1,6 @@
 # GPPO RF Transition Designer
 
-Independent librarian authoring ActionPlugin, version **0.4.0 testing**. Supports
+Independent librarian authoring ActionPlugin, version **0.4.1 testing**. Supports
 the repository's KiCad **10.0.0 through 10.0.8** range. Exact runtime results and
 scope are recorded in the repository's
 `docs/connector-interposer-implementation.md`.
@@ -220,10 +220,9 @@ front cannot be used for back mounting: there is no mirroring, and a
 back-mounted part needs its own source and transition.
 
 The actual experimental B012-L13-01 source derived from the supplied drawing is
-supported: 0.381 mm plated hole, 0.508 mm signal land and a custom annular
-ground pad. Its 0.0635 mm annular ring, under the 5 mil limit for a drilled
-hole, is reported as a warning. The ground
-pad's single unfilled circle primitive is read as an exact annulus, including
+supported: 15 mil (0.381 mm) plated hole, 23 mil (0.5842 mm) signal land and a
+custom annular ground pad. Its 4 mil (0.1016 mm) annular ring, under the 5 mil
+limit for a drilled hole, is reported as a warning. The ground pad's single unfilled circle primitive is read as an exact annulus, including
 its opening. Its zone connection is set to solid on the pad.
 
 The tool does not check whether a via can be plated shut (drill size, aspect

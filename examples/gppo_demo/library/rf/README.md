@@ -22,8 +22,9 @@ The files are the output of `examples/gppo_demo/generate_fixtures.py`
 (`rf_artifacts` and `write_rf_library`), which uses the independent RF
 Transition Designer's `read_base_part`, `default_recipe`, `make_artifact` and
 `publish_bundle` APIs. The Designer reports one warning for them: the source's
-0.508 mm land on its 0.381 mm drilled hole leaves a 0.0635 mm (2.5 mil)
-annular ring, under the 5 mil limit for a mechanically drilled hole. The
+23 mil (0.5842 mm) land on its 15 mil (0.381 mm) drilled hole leaves a 4 mil
+(0.1016 mm) annular ring, under the 5 mil limit for a mechanically drilled
+hole. The
 microvias' 2.5 mil ring is exactly the microvia limit and does not warn.
 Each includes the complete recipe, source pin, exact declarative payload,
 capabilities and integrity hashes. `manifest.json` indexes the immutable files.

@@ -233,7 +233,7 @@ Tested on a six-layer board on 2026-11-14.
 
 ## Not yet implemented
 
-As of GPPO RF Transition Designer 0.4.0 and Connector to Interposer Workflow
+As of GPPO RF Transition Designer 0.4.1 and Connector to Interposer Workflow
 0.8.0 the code differs from this contract in this way:
 
 | Contract | Code today |

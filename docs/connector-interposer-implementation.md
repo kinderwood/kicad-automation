@@ -2,7 +2,7 @@
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
 are authorized. Connector to Interposer Workflow is version 0.8.0 and the
-separate GPPO RF Transition Designer is version 0.4.0; both have `testing`
+separate GPPO RF Transition Designer is version 0.4.1; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The BGA
 Interposer Wizard remains an independent package at version 0.16.1.
 
@@ -531,6 +531,11 @@ RF Transition Designer 0.4.0 moves the remaining defaults to mil values,
 stored as exact millimetres: 10 mil exit trace, 8 mil ground-pour gap, 43 mil
 antipads and 21 and 25 mil tuned signal copper. The example library is
 regenerated from them.
+
+The example GPPO footprint's through-hole signal land is now 23 mil on its
+15 mil hole, a 4 mil annular ring, and the example library is regenerated.
+The Designer still reports that ring as under the 5 mil drilled-hole limit.
+Designer 0.4.1 changes only its README to quote the new land.
 
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
