@@ -71,6 +71,9 @@ The coupled source fixtures are regenerated deterministically with:
 /path/to/AppDir/AppRun python3.11 examples/gppo_demo/generate_fixtures.py
 ```
 
+The same script republishes the RF transition library under `library/rf` with
+the GPPO RF Transition Designer and refreshes `fixture-provenance.json`.
+
 Fresh A/B/C coverage and the A → B → C → A round trip are intentionally not
 implemented yet. `tests/test_gppo_demo_revision_matrix.py` is a comment-only
 planning stub describing that future coverage. It must remain a no-op until the

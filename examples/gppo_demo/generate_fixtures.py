@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Regenerate the coupled GPPO A/B/C mechanical and electrical fixtures.
+"""Regenerate the coupled GPPO A/B/C mechanical, electrical and RF fixtures.
 
 Run with either supported KiCad AppRun so pcbnew writes native board files.
 The checked-in project files and approved library sources are read-only inputs.
+The RF transition library is authored with the repository's GPPO RF Transition
+Designer from the experimental connector footprint.
 """
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ import json
 import math
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 import uuid
 import zipfile
@@ -22,6 +25,11 @@ import pcbnew as p
 
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT.parents[1] / "plugins"))
+
+from gppo_rf_transition.model import default_recipe, make_artifact, publish_bundle
+from gppo_rf_transition.native import read_base_part
+
 INPUTS = ROOT / "inputs"
 BOARD_MIL = 4375.0
 BOARD_MM = BOARD_MIL * .0254
@@ -45,6 +53,9 @@ PAD_ROWS = (
 SIGNAL_ROWS = PAD_ROWS[1:28:2]
 LIBRARY = ROOT / "library/Example.pretty"
 RF_FOOTPRINT = "GPPO_B012_L13_01_EXPERIMENTAL"
+RF_LIBRARY = ROOT / "library/rf"
+# Architecture worksheet layer alias to the literal exit layer of its transition.
+RF_EXIT_LAYERS = {"L2": "In1.Cu", "L3": "In2.Cu"}
 DC_FOOTPRINT = "DSub_9_Pins_Vertical"
 DC_ROW_LENGTHS = (5, 4)
 # Drawing annotation, authored in mils like the DXF it lands in.
@@ -439,6 +450,41 @@ def interposer_pad_centers() -> list[tuple[str, tuple[float, float]]]:
     ]
 
 
+def rf_artifacts() -> dict:
+    """Author the demo RF transitions, one per exit layer, deterministically.
+
+    The footprint is through-hole, so its own barrel is the signal conductor.
+    Eight ground vias leave the 180° position empty: in the rectangular
+    revision B gang the connector behind sits 150 mil away on the exit axis,
+    and a via there would land on its neighbour's exit trace.
+    """
+    part = read_base_part(LIBRARY / (RF_FOOTPRINT + ".kicad_mod"), approved=True)
+    result = {}
+    for architecture, copper in RF_EXIT_LAYERS.items():
+        recipe = default_recipe(part)
+        params = recipe["parameters"]
+        params["netclasses"] = ["CLOCK", "DATA"]
+        params["signal_layer"] = copper
+        params["ground_ring"]["count"] = 8
+        params["tuned_signal_copper"] = {
+            layer: 0.65 if layer == copper else None for layer in params["stackup"]}
+        result[architecture] = make_artifact(
+            recipe, f"RF-{architecture}", provenance={
+                "operation": "new",
+                "purpose": "DEMONSTRATION FIXTURE ONLY — not manufacturing or RF qualified",
+                "source": "Supplied OL-B012-L1X-01 rev B drawing; experimental central source",
+            })
+    return result
+
+
+def write_rf_library() -> None:
+    """Replace the published demo transitions and their catalog."""
+    for stale in [*RF_LIBRARY.glob("*.gppo-rf.json"), RF_LIBRARY / "manifest.json"]:
+        stale.unlink(missing_ok=True)
+    for artifact in rf_artifacts().values():
+        publish_bundle(RF_LIBRARY, artifact)
+
+
 def update_provenance() -> None:
     path = ROOT / "fixture-provenance.json"
     manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -476,6 +522,7 @@ def main() -> None:
             include_dc=variant == "C", pad_centers=pad_points,
         )
         write_board(variant, positions, labels, radii, pad_centers)
+    write_rf_library()
     update_provenance()
 
 

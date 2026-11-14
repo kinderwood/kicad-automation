@@ -18,15 +18,17 @@ sys.path.insert(0, str(ROOT / "plugins"))
 
 import pcbnew as p
 
-from gppo_rf_transition.model import (default_recipe, load_artifact as author_load,
-                                     make_artifact, publish_bundle)
-from gppo_rf_transition.native import read_base_part
+from gppo_rf_transition.model import load_artifact as author_load, publish_bundle
 from connector_interposer_workflow.artifacts import (ArtifactError, load_artifact,
                                                 validate_artifact)
 from connector_interposer_workflow.backend import NativeBackend, board_items, uuid_of
 from connector_interposer_workflow.core.workbook import parse_sheet, read_workbook
 
 DEMO = ROOT / "examples" / "gppo_demo"
+sys.path.insert(0, str(DEMO))
+
+import generate_fixtures
+
 SOURCE = DEMO / "library" / "Example.pretty" / "GPPO_B012_L13_01_EXPERIMENTAL.kicad_mod"
 INTERPOSER = SOURCE.with_name("Interposer_800.kicad_mod")
 LAYERS = ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"]
@@ -34,31 +36,18 @@ LAYER_MAP = {"L2": "In1.Cu", "L3": "In2.Cu"}
 BOARD_MM = 111.125
 INTERPOSER_POSE = (42.5625, 42.5625)
 RF_COUNT = 28
+GROUND_VIAS = 8
 PROJECT_ID = '6bb2ad73-7210-4a29-a3e1-91e8f65f59af'
 
 
 def demo_artifacts():
     """Produce the actual versioned demo library bundles deterministically.
 
-    This is an isolated test/example fixture authoring operation, never a
-    Workflow layout-designer feature. Production artifacts use this same author.
+    This is the example's own fixture generator, an isolated authoring
+    operation and never a Workflow layout-designer feature. Production
+    artifacts use this same author.
     """
-    part = read_base_part(SOURCE, stackup=LAYERS, approved=True)
-    result = {}
-    for architecture, copper in LAYER_MAP.items():
-        recipe = default_recipe(part)
-        params = recipe["parameters"]
-        params["netclasses"] = ["CLOCK", "DATA"]
-        params["signal_layer"] = copper
-        params["signal_via"] = None  # The selected source has the real PTH barrel.
-        params["tuned_signal_copper"] = {layer: 0.65 if layer == copper else None for layer in LAYERS}
-        result[architecture] = make_artifact(
-            recipe, f"RF-{architecture}", provenance={
-                "operation": "new",
-                "purpose": "DEMONSTRATION FIXTURE ONLY — not manufacturing or RF qualified",
-                "source": "Supplied OL-B012-L1X-01 rev B drawing; experimental central source",
-            })
-    return result
+    return generate_fixtures.rf_artifacts()
 
 
 class ConnectorInterposerArtifactContractTests(unittest.TestCase):
@@ -135,8 +124,13 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
         board = p.LoadBoard(result["board_path"])
         native = board_items(board)
         self.assertEqual(RF_COUNT + 1, len(list(board.GetFootprints())))
-        self.assertEqual(RF_COUNT * 9, len(list(board.GetTracks())))
-        self.assertTrue(all(isinstance(item, p.PCB_VIA) for item in board.GetTracks()))
+        vias = [item for item in board.GetTracks() if isinstance(item, p.PCB_VIA)]
+        traces = [item for item in board.GetTracks() if not isinstance(item, p.PCB_VIA)]
+        self.assertEqual(RF_COUNT * GROUND_VIAS, len(vias))
+        # One exit trace per transition; every transition via is filled.
+        self.assertEqual(RF_COUNT, len(traces))
+        text = Path(result["board_path"]).read_text(encoding="utf-8")
+        self.assertEqual(text.count("(filling yes)"), len(vias))
         for key, spec in desired["instances"].items():
             registry = result["registry"]["instances"][key]
             base = native[registry["base"]]
@@ -151,17 +145,30 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
             for obj in artifact["payload"]["objects"]:
                 actual = native[registry["objects"][obj["id"]]]
                 self.assertEqual(uuid_of(actual.GetParentGroup()), registry["group"])
-                if obj["type"] == "via":
+                self.assertTrue(actual.IsLocked(), obj["id"])
+                angle = math.radians(spec["rf"]["clock"])
+
+                def placed(point):
+                    x, y = point
+                    return [round((spec["pose"][0] + x * math.cos(angle) - y * math.sin(angle)) * 1e6),
+                            round((spec["pose"][1] - x * math.sin(angle) - y * math.cos(angle)) * 1e6)]
+                if obj["type"] == "track":
+                    self.assertEqual(obj["id"], "exit-trace")
+                    self.assertEqual(actual.GetNetname(), spec["pads"]["1"])
+                    self.assertEqual(actual.GetLayer(), board.GetLayerID(spec["signal_layer"]))
+                    self.assertEqual(actual.GetWidth(), p.FromMM(obj["width"]))
+                    # The trace starts on the pin and ends at the handoff.
+                    self.assertEqual([actual.GetStart().x, actual.GetStart().y],
+                                     [center.GetPosition().x, center.GetPosition().y])
+                    self.assertEqual([actual.GetEnd().x, actual.GetEnd().y],
+                                     placed(artifact["payload"]["anchors"]["handoff"]))
+                elif obj["type"] == "via":
                     self.assertEqual(actual.GetNetname(), "GND")
                     if not hasattr(p, "VIATYPE_THROUGH"):
                         self.assertEqual(p.Version(), "10.0.0")
                     self.assertEqual(actual.GetViaType(), getattr(p, "VIATYPE_THROUGH", 4))
                     self.assertEqual([actual.TopLayer(), actual.BottomLayer()], [p.F_Cu, p.B_Cu])
-                    angle = math.radians(spec["rf"]["clock"])
-                    x, y = obj["at"]
-                    expected = [round((spec["pose"][0] + x * math.cos(angle) - y * math.sin(angle)) * 1e6),
-                                round((spec["pose"][1] - x * math.sin(angle) - y * math.cos(angle)) * 1e6)]
-                    self.assertEqual([actual.GetPosition().x, actual.GetPosition().y], expected)
+                    self.assertEqual([actual.GetPosition().x, actual.GetPosition().y], placed(obj["at"]))
                     self.assertEqual(actual.GetDrillValue(), p.FromMM(obj["drill"]))
                 elif obj["type"] == "copper":
                     self.assertEqual(actual.GetNetname(), spec["pads"]["1"])
@@ -184,6 +191,12 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
             self.assertEqual(artifact["compatibility"]["part_id"], "Example:" + SOURCE.stem)
             self.assertIsNone(artifact["recipe"]["parameters"]["signal_via"])
             self.assertFalse(any(item["type"] == "via" and item["net"] == "signal" for item in artifact["payload"]["objects"]))
+            self.assertEqual(artifact["compatibility"]["copper_layer_count"], len(LAYERS))
+            kinds = [item.get("purpose", item["type"]) for item in artifact["payload"]["objects"]]
+            # A through-hole pin: antipad on every layer and no ground disc.
+            self.assertEqual({kind: kinds.count(kind) for kind in set(kinds)},
+                             {"via": GROUND_VIAS, "signal-overlay": 1, "antipad": len(LAYERS),
+                              "exit-corridor": 1, "track": 1})
             path = publish_bundle(self.root / "rf-library", artifact)
             self.assertEqual(author_load(path, reopen=True), artifact)
             for netclass in ["CLOCK", "DATA"]:
