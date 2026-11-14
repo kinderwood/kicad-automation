@@ -11,7 +11,10 @@ The shell follows the Figma Spec. A toolbar holds every window-level action
 with KiCad's own icons, loaded from the running installation's
 `share/kicad/resources/images.tar.gz` with wx stock art as the fallback:
 previous / next step, save / delete / reset workflow settings, refresh
-libraries, the mil / mm readout switch and the message-log toggle. The list of
+libraries, the units button for read-only values and the message-log toggle.
+The units button is the PCB Editor's own (`UnitButton`): it shows the unit in
+use with a corner mark, a click steps mm, in, mil, and holding it for half a
+second opens all three to pick from. The list of
 footprints in the loaded KiCad libraries is read once per window and RF
 transition validation is reused while a file's bytes are unchanged; **Refresh
 libraries** reads the footprint libraries again and searches the project folder
@@ -157,7 +160,7 @@ a notebook with **Interposer**, **RF gangs**, **DC connectors**, **Mounting
 holes** and **Advanced** tabs; the layer defaults to KiCad's own name for its
 drawing layer, `User.Drawings`, and the centre tolerance is on Advanced because
 it rarely changes. Each part tab is a read-only table of full-precision X and
-Y readouts (never rounded, in the toolbar's mil/mm unit) with Side, Rotation
+Y readouts (never rounded, in the toolbar's unit) with Side, Rotation
 and Status, over the same three buttons. RF gang side and rotation belong to
 Define RF gangs and are only shown here.
 
@@ -324,7 +327,7 @@ Standing rules:
   reads top to bottom.
 - Do not repeat a value already shown on the page.
 - Units: entry fields carry their own unit; readouts follow the toolbar's
-  mil / mm switch and are never rounded.
+  units button (mm, in or mil) and are never rounded.
 - Keep user-facing text short: state the condition and the action, nothing a
   button label already says. Internal identifiers, hashes and raw data appear
   only in Messages.

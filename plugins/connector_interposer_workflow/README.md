@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.7.10**, testing release. The package targets KiCad 10.0.0 through
+Version **0.7.11**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -23,8 +23,9 @@ dependencies.
 
 The window opens at 1280 × 800. A toolbar across the top uses KiCad's own icons:
 previous and next step, save, delete and reset workflow settings, refresh
-libraries, a mil / mm
-switch for read-only values, and a toggle for the message log. The step list on
+libraries, a units button for read-only values, and a toggle for the message
+log. The units button works like the PCB Editor's: click it to step through
+mm, in and mil, or hold it to pick one. The step list on
 the left groups the twelve steps under Nets & Layers, Parts, Geometry and Finish
 and shows one status icon per step: a green check when the step is complete, a
 red X when something required is missing or wrong, a yellow exclamation mark

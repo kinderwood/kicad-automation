@@ -409,6 +409,95 @@ class ToolButton(wx.Control):
             dc.DrawRoundedRectangle(0, 0, width, height, 3)
         bitmap = self.bitmap if self.IsEnabled() else self.disabled
         dc.DrawBitmap(bitmap, self.PAD, self.PAD, True)
+        self._decorate(dc, width, height)
+
+    def _decorate(self, dc, width, height):
+        """Draw anything a subclass adds over the icon."""
+
+
+class UnitButton(ToolButton):
+    """The units button of KiCad's PCB Editor toolbar.
+
+    It shows the unit in use with a corner mark. A click steps to the next
+    unit; holding the button opens all of them to pick from.
+    """
+    UNITS = ('mm', 'in', 'mil')
+    NAMES = {'mm': 'Millimeters', 'in': 'Inches', 'mil': 'Mils'}
+    ICONS = {'mm': 'unit_mm', 'in': 'unit_inch', 'mil': 'unit_mil'}
+    HOLD_MS = 500
+    MARK = 7
+
+    def __init__(self, parent, bitmaps, unit, on_change):
+        super().__init__(parent, bitmaps[unit])
+        self.bitmaps, self.unit, self.on_change = bitmaps, unit, on_change
+        self.palette = None
+        self.items = {}
+        self._hold = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self._held, self._hold)
+        self.Bind(wx.EVT_LEFT_DOWN, self._pressed)
+        self.Bind(wx.EVT_LEFT_DCLICK, self._pressed)
+        self.Bind(wx.EVT_LEFT_UP, self._let_go)
+        self.Bind(wx.EVT_LEAVE_WINDOW, self._left)
+        self.Bind(wx.EVT_WINDOW_DESTROY, lambda event: (self._hold.Stop(), event.Skip()))
+
+    def set_unit(self, unit):
+        self.unit, self.bitmap = unit, self.bitmaps[unit]
+        self.disabled = self.bitmap.ConvertToDisabled()
+        self.Refresh()
+
+    def press(self):
+        """A click steps to the next unit, as in the PCB Editor."""
+        self.on_change(self.UNITS[(self.UNITS.index(self.unit) + 1) % len(self.UNITS)])
+
+    def _pressed(self, event):
+        self._set(down=True)
+        if self.IsEnabled():
+            self._hold.StartOnce(self.HOLD_MS)
+
+    def _let_go(self, event):
+        self._hold.Stop()
+        self._released(event)
+
+    def _left(self, event):
+        self._hold.Stop()
+        self._set(hover=False, down=False)
+
+    def _held(self, event):
+        if self.down:
+            self._set(down=False)
+            self.open_palette()
+
+    def open_palette(self):
+        """Show every unit under the button; it stays until one is picked or it is dismissed."""
+        palette = wx.PopupTransientWindow(self, wx.BORDER_SIMPLE)
+        palette.SetBackgroundColour(ui_palette().window)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        self.items = {}
+        for unit in self.UNITS:
+            item = ToolButton(palette, self.bitmaps[unit])
+            item.SetValue(unit == self.unit)
+            item.SetToolTip(self.NAMES[unit])
+            item.Bind(wx.EVT_BUTTON, lambda event, value=unit: self._picked(value))
+            sizer.Add(item, 0, wx.ALL, 3)
+            self.items[unit] = item
+        palette.SetSizerAndFit(sizer)
+        palette.Position(self.ClientToScreen((0, 0)), (0, self.GetSize().height))
+        self.palette = palette
+        palette.Popup()
+
+    def _picked(self, unit):
+        palette, self.palette = self.palette, None
+        if palette:
+            palette.Dismiss()
+            wx.CallAfter(palette.Destroy)
+        self.on_change(unit)
+
+    def _decorate(self, dc, width, height):
+        colour = ui_palette().text if self.IsEnabled() else ui_palette().muted
+        dc.SetPen(wx.Pen(colour))
+        dc.SetBrush(wx.Brush(colour))
+        dc.DrawPolygon([(width - 1, height - 1 - self.MARK), (width - 1, height - 1),
+                        (width - 1 - self.MARK, height - 1)])
 
 
 class MessageLog:
@@ -1579,7 +1668,8 @@ class WorkflowDialog(wx.Dialog):
         )
         self.status = MessageLog(self.messages)
         self.status.last = 'Ready'
-        bitmaps = icons.load(('left', 'right', 'save', 'trash', 'undo', 'reload', 'info'),
+        bitmaps = icons.load(('left', 'right', 'save', 'trash', 'undo', 'reload', 'info',
+                              'unit_mm', 'unit_inch', 'unit_mil'),
                              dark=ui_palette().dark)
 
         def tool(name, tip, handler):
@@ -1610,15 +1700,13 @@ class WorkflowDialog(wx.Dialog):
             'reload', 'Refresh libraries', self.refresh_libraries,
         )
         separator()
-        self.unit_buttons = {}
-        for unit in ('mil', 'mm'):
-            control = wx.ToggleButton(toolbar, label=unit, style=wx.BU_EXACTFIT)
-            control.SetToolTip(f'Show read-only values in {unit}')
-            control.SetValue(unit == self.readout_unit)
-            control.Bind(wx.EVT_TOGGLEBUTTON,
-                         self.guard(lambda event, value=unit: self.set_readout_unit(value)))
-            sizer.Add(control, 0, wx.ALIGN_CENTER_VERTICAL)
-            self.unit_buttons[unit] = control
+        self.unit_button = UnitButton(
+            toolbar, {unit: bitmaps[name] for unit, name in UnitButton.ICONS.items()},
+            self.readout_unit,
+            lambda unit: self.guard(lambda event: self.set_readout_unit(unit))(None),
+        )
+        self.unit_button.SetToolTip('Units of read-only values')
+        sizer.Add(self.unit_button, 0, wx.ALIGN_CENTER_VERTICAL)
         separator()
         self.messages_button = ToolButton(toolbar, bitmaps['info'], toggle=True)
         self.messages_button.SetToolTip('Show messages')
@@ -1630,8 +1718,7 @@ class WorkflowDialog(wx.Dialog):
     def set_readout_unit(self, unit):
         """Switch the unit of read-only values; entry fields keep their own."""
         self.readout_unit = unit
-        for name, control in self.unit_buttons.items():
-            control.SetValue(name == unit)
+        self.unit_button.set_unit(unit)
         self.refresh_placement()
 
     def toggle_messages(self, event=None):

@@ -23,6 +23,8 @@ _STOCK = {
     'trash': wx.ART_DELETE, 'undo': wx.ART_UNDO, 'info': wx.ART_INFORMATION,
     'reload': getattr(wx, 'ART_REFRESH', wx.ART_REDO),
 }
+# Icons that are a word in KiCad too; without the archive the word is drawn.
+_WORDS = {'unit_mm': 'mm', 'unit_inch': 'in', 'unit_mil': 'mil'}
 _cache = {}
 
 
@@ -38,6 +40,21 @@ def archive_path():
                 if candidate.is_file():
                     return candidate
     return None
+
+
+def _word_bitmap(word, size):
+    bitmap = wx.Bitmap.FromRGBA(size, size, 0, 0, 0, 0)
+    memory = wx.MemoryDC(bitmap)
+    dc = wx.GCDC(memory)
+    font = wx.SystemSettings.GetFont(wx.SYS_DEFAULT_GUI_FONT)
+    font.SetPixelSize((0, 11))
+    dc.SetFont(font)
+    dc.SetTextForeground(wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT))
+    width, height = dc.GetTextExtent(word)
+    dc.DrawText(word, max(0, (size - width) // 2), max(0, (size - height) // 2))
+    del dc
+    memory.SelectObject(wx.NullBitmap)
+    return bitmap
 
 
 def load(names, size=24, dark=False):
@@ -64,6 +81,8 @@ def load(names, size=24, dark=False):
         except (OSError, tarfile.TarError):
             result = {}
     for name in names:
+        if name not in result and name in _WORDS:
+            result[name] = _word_bitmap(_WORDS[name], size)
         if name not in result:
             result[name] = wx.ArtProvider.GetBitmap(
                 _STOCK.get(name, wx.ART_MISSING_IMAGE), wx.ART_TOOLBAR, (size, size),
