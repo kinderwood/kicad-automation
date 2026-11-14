@@ -438,7 +438,38 @@ class NativeBackend:
             return via
         if self.p.Version() != '10.0.0':
             raise BackendError('This native runtime cannot set explicit via protection properties')
-        cached = getattr(self, '_explicit_no_via_template', None)
+        via = self.p.PCB_VIA(self._via_template(
+            '\n\t\t(tenting\n\t\t\t(front no)\n\t\t\t(back no)\n\t\t)'
+            '\n\t\t(capping no)'
+            '\n\t\t(covering\n\t\t\t(front no)\n\t\t\t(back no)\n\t\t)'
+            '\n\t\t(plugging\n\t\t\t(front no)\n\t\t\t(back no)\n\t\t)'
+            '\n\t\t(filling no)'
+        ))
+        _set_uuid(via, self.p.KIID(), self.p)
+        return via
+
+    def _new_filled_via(self, board):
+        """Create a via whose native filling mode is ``filled``.
+
+        Every RF transition via is copper plated shut. KiCad carries the
+        filled state into Gerber, ODB++ and IPC-2581 output. KiCad 10.0.0
+        has the property but no Python constant for it, so that endpoint
+        clones a native round-trip template, as for ``_new_unprotected_via``.
+        """
+        if hasattr(self.p, 'FILLING_MODE_FILLED'):
+            via = self.p.PCB_VIA(board)
+            via.SetFillingMode(self.p.FILLING_MODE_FILLED)
+            return via
+        if self.p.Version() != '10.0.0':
+            raise BackendError('This native runtime cannot mark a via as filled')
+        via = self.p.PCB_VIA(self._via_template('\n\t\t(filling yes)'))
+        _set_uuid(via, self.p.KIID(), self.p)
+        return via
+
+    def _via_template(self, protection):
+        """A KiCad 10.0.0 template via loaded with explicit protection states."""
+        templates = self.__dict__.setdefault('_via_templates', {})
+        cached = templates.get(protection)
         if cached is None:
             with tempfile.TemporaryDirectory(
                     prefix='connector-interposer-via-modes-') as temporary:
@@ -452,13 +483,6 @@ class NativeBackend:
                 self.p.SaveBoard(str(path), template_board)
                 text = path.read_text(encoding='utf-8')
                 marker = '\n\t\t(net "")'
-                protection = (
-                    '\n\t\t(tenting\n\t\t\t(front no)\n\t\t\t(back no)\n\t\t)'
-                    '\n\t\t(capping no)'
-                    '\n\t\t(covering\n\t\t\t(front no)\n\t\t\t(back no)\n\t\t)'
-                    '\n\t\t(plugging\n\t\t\t(front no)\n\t\t\t(back no)\n\t\t)'
-                    '\n\t\t(filling no)'
-                )
                 if text.count(marker) != 1:
                     raise BackendError('KiCad 10.0.0 via compatibility template is ambiguous')
                 path.write_text(text.replace(marker, protection + marker), encoding='utf-8')
@@ -467,11 +491,10 @@ class NativeBackend:
                                if isinstance(item, self.p.PCB_VIA)), None)
                 if source is None:
                     raise BackendError('KiCad 10.0.0 could not load explicit via protection states')
+            # Keep the template board alive for as long as its via is cloned.
             cached = (template, source)
-            self._explicit_no_via_template = cached
-        via = self.p.PCB_VIA(cached[1])
-        _set_uuid(via, self.p.KIID(), self.p)
-        return via
+            templates[protection] = cached
+        return cached[1]
 
     def _matching_circle(self, feature, center, circles, claimed, tolerance):
         candidates = [
@@ -710,8 +733,8 @@ class NativeBackend:
                 mount = artifact["payload"].get("layer_roles", {}).get("mount")
                 if mount and mapping.get(mount, mount) != (layers[-1] if expected_side == "back" else layers[0]):
                     raise BackendError("RF mount layer differs from selected footprint side")
-                if compatibility.get("stackup") and [mapping.get(x, x) for x in compatibility["stackup"]] != layers:
-                    raise BackendError("RF artifact requires a different stackup")
+                if compatibility["copper_layer_count"] != len(layers):
+                    raise BackendError("RF artifact requires a different copper layer count")
                 if set(rf.get("nets", {})) != {"signal", "ground"}:
                     raise BackendError("RF signal and ground net bindings are required")
         self._validate_microvias(board, desired, instances)
@@ -945,6 +968,28 @@ class NativeBackend:
                         'key': key, 'point': tuple(_xy(pad.GetPosition())),
                         'before': before_net, 'after': after_net,
                     }
+        # Designer routing starts at an RF transition's handoff, the end of
+        # its managed exit trace, so that point is a route endpoint in the
+        # same way as a pad centre.
+        handoffs = []
+        for key in sorted(old):
+            before = old[key].get('spec') or {}
+            rf = before.get('rf')
+            if not rf:
+                continue
+            pose = before['pose']
+            point = tuple(_xy(self._point(
+                rf['artifact']['payload']['anchors']['handoff'],
+                [pose[0], pose[1], rf.get('clock', pose[2])], rf=True)))
+            before_net = rf['nets']['signal']
+            identity = 'handoff:' + key
+            handoffs.append((identity, point, before_net))
+            after_net = ((new.get(key) or {}).get('rf') or {}).get('nets', {}).get('signal')
+            if after_net != before_net and any(
+                    value['key'] == key and value['before'] == before_net
+                    for value in changes.values()):
+                changes[identity] = {'key': key, 'point': point,
+                                     'before': before_net, 'after': after_net}
         retags = {}
         conflicts = list(topology_conflicts)
         tracks = [item for uid, item in current.items()
@@ -970,8 +1015,9 @@ class NativeBackend:
                 'message': 'Designer copper shape or zone cannot be retagged automatically',
             })
         pad_changes = {value['point']: value for value in changes.values()}
-        pads = [pad for footprint in board.GetFootprints() for pad in footprint.Pads()
-                if pad.GetNumber()]
+        endpoints = [(uuid_of(pad), tuple(_xy(pad.GetPosition())), pad.GetNetname())
+                     for footprint in board.GetFootprints() for pad in footprint.Pads()
+                     if pad.GetNumber()] + handoffs
         for net_name, items in by_net.items():
             remaining = set(range(len(items)))
             while remaining:
@@ -1002,15 +1048,15 @@ class NativeBackend:
                            if value['before'] == net_name and point in points]
                 if not touched:
                     continue
-                boundary = [pad for pad in pads if pad.GetNetname() == net_name and
-                            tuple(_xy(pad.GetPosition())) in points]
+                boundary = [identity for identity, point, net in endpoints
+                            if net == net_name and point in points]
                 targets = {
-                    changes[uuid_of(pad)]['after'] for pad in boundary
-                    if uuid_of(pad) in changes
+                    changes[identity]['after'] for identity in boundary
+                    if identity in changes
                 }
                 safe = (len(boundary) >= 2 and len(targets) == 1 and
                         all(targets) and
-                        all(uuid_of(pad) in changes for pad in boundary) and
+                        all(identity in changes for identity in boundary) and
                         net_name not in non_tracks_by_net)
                 uuids = [uuid_of(items[index]) for index in sorted(component)]
                 endpoint_ids = set(uuids)
@@ -1180,7 +1226,8 @@ class NativeBackend:
         pt = lambda value: self._point(value, pose, rf=True)
         kind = item["type"]
         if kind == "via":
-            obj = p.PCB_VIA(board)
+            # Every transition via is copper plated shut.
+            obj = self._new_filled_via(board)
             obj.SetPosition(pt(item["at"]))
             obj.SetWidth(p.F_Cu, p.FromMM(item["diameter"]))
             obj.SetDrill(p.FromMM(item["drill"]))
@@ -1189,21 +1236,22 @@ class NativeBackend:
                     raise BackendError("This native runtime does not expose supported via-type constants")
                 # KiCad 10.0.0 omitted VIATYPE SWIG constants. Values are from
                 # the exact 10.0.0 pcb_track_types.h; verify native round trips.
-                span = [layer(x) for x in item["layers"]]
-                via_type = {"through": 4, "microvia": 1, "blind_buried":
-                            3 if p.F_Cu not in span and p.B_Cu not in span else 2}[item["via_type"]]
-            elif item["via_type"] == "blind_buried":
-                span = [layer(x) for x in item["layers"]]
-                via_type = (getattr(p, "VIATYPE_BURIED", None) if p.F_Cu not in span and p.B_Cu not in span else
-                            getattr(p, "VIATYPE_BLIND", None))
-                if via_type is None:
-                    via_type = p.VIATYPE_BLIND_BURIED
+                via_type = {"through": 4, "microvia": 1}[item["via_type"]]
             else:
                 via_type = p.VIATYPE_THROUGH if item["via_type"] == "through" else p.VIATYPE_MICROVIA
             obj.SetViaType(via_type)
             obj.SetLayerPair(*[layer(x) for x in item["layers"]])
             if not obj.HasValidLayerPair(board.GetCopperLayerCount()):
                 raise BackendError("Native runtime rejects the requested via layer span")
+            obj.SetNet(self._net(board, nets[item["net"]]))
+        elif kind == "track":
+            # The exit trace is a real track, so the footprint's through-hole
+            # land is drawn on its layer and connectivity sees it.
+            obj = p.PCB_TRACK(board)
+            obj.SetLayer(layer(item["layer"]))
+            obj.SetStart(pt(item["start"]))
+            obj.SetEnd(pt(item["end"]))
+            obj.SetWidth(p.FromMM(item["width"]))
             obj.SetNet(self._net(board, nets[item["net"]]))
         elif kind == "copper":
             obj = p.PCB_SHAPE(board)
@@ -1255,6 +1303,8 @@ class NativeBackend:
                 points = item["points"]
             for point in points:
                 poly.Append(pt(point))
+        # A placed transition is locked, including the exit trace.
+        obj.SetLocked(True)
         return obj
 
     def _materialize(self, board, desired, registry):
@@ -1395,6 +1445,7 @@ class NativeBackend:
                         obj = replacement
                         board.Add(obj)
                         group.AddItem(obj)
+                    obj.SetLocked(True)
                     objects[local] = uuid_of(obj)
             for local, uid in entry.get("objects", {}).items():
                 if local not in objects:

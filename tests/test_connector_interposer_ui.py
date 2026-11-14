@@ -20,22 +20,27 @@ def write_transition(path, part_id, part_sha256, netclass='RF', layer='F.Cu',
                      stack=('F.Cu', 'B.Cu')):
     from plugins.connector_interposer_workflow.artifacts import canonical, sha256
     artifact = {
-        'schema': 'gppo.artifact/1.0', 'artifact_id': 'test-transition',
-        'revision': 1, 'kind': 'rf-transition', 'payload_schema': 'gppo.rf/1.0',
+        'schema': 'gppo.artifact/2.0', 'artifact_id': 'test-transition',
+        'revision': 1, 'kind': 'rf-transition', 'payload_schema': 'gppo.rf/2.0',
         'recipe': {'fixture': True},
         'compatibility': {
             'part_id': part_id, 'part_sha256': part_sha256, 'mount': 'PTH',
-            'side': 'front', 'netclasses': [netclass], 'stackup': list(stack),
+            'side': 'front', 'netclasses': [netclass],
+            'copper_layer_count': len(stack),
         },
-        'required_capabilities': ['net-copper-shapes'],
+        'required_capabilities': ['net-copper-shapes', 'native-tracks'],
         'payload': {
             'units': 'mm', 'coordinates': 'x-right-y-up-ccw',
             'net_roles': ['signal', 'ground'],
-            'anchors': {'signal': [0, 0], 'exit_direction_deg': 0},
+            'anchors': {'signal': [0, 0], 'exit_direction_deg': 0,
+                        'handoff': [2, 0]},
             'layer_roles': {'mount': 'F.Cu', 'signal': layer},
             'objects': [{
                 'id': 'signal-land', 'type': 'copper', 'shape': 'circle',
                 'net': 'signal', 'at': [0, 0], 'diameter': .8, 'layer': layer,
+            }, {
+                'id': 'exit-trace', 'type': 'track', 'net': 'signal',
+                'layer': layer, 'width': .25, 'start': [0, 0], 'end': [2, 0],
             }],
         },
     }

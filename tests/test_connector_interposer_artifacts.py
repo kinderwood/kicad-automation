@@ -12,19 +12,27 @@ from unittest import mock
 
 
 def artifact_fixture(part_sha256="a"*64):
-    artifact = {"schema": "gppo.artifact/1.0", "artifact_id": "approved-sample", "revision": 1,
-                "kind": "rf-transition", "payload_schema": "gppo.rf/1.0", "recipe": {"opaque": "never execute"},
+    artifact = {"schema": "gppo.artifact/2.0", "artifact_id": "approved-sample", "revision": 1,
+                "kind": "rf-transition", "payload_schema": "gppo.rf/2.0", "recipe": {"opaque": "never execute"},
                 "compatibility": {"part_id": "Approved:GPPO", "part_sha256": part_sha256,
                                   "mount": "SMD", "side": "front", "netclasses": ["RF"],
-                                  "stackup": ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"]},
-                "required_capabilities": ["native-vias", "net-copper-shapes", "layer-rule-areas"],
+                                  "copper_layer_count": 4},
+                "required_capabilities": ["native-vias", "net-copper-shapes", "layer-rule-areas",
+                                          "native-tracks", "filled-vias"],
                 "payload": {"units": "mm", "coordinates": "x-right-y-up-ccw",
-                            "net_roles": ["signal", "ground"], "anchors": {"signal": [0, 0], "exit_direction_deg": 0},
+                            "net_roles": ["signal", "ground"],
+                            "anchors": {"signal": [0, 0], "exit_direction_deg": 0, "handoff": [2, 0]},
                             "layer_roles": {"mount": "F.Cu", "signal": "In2.Cu"}, "objects": [
                     {"id": "signal-via", "type": "via", "net": "signal", "at": [0, 0], "diameter": .6,
-                     "drill": .3, "via_type": "through", "layers": ["F.Cu", "B.Cu"]},
+                     "drill": .3, "via_type": "microvia", "layers": ["F.Cu", "In1.Cu"], "fill": "copper"},
+                    {"id": "signal-via-2", "type": "via", "net": "signal", "at": [0, 0], "diameter": .6,
+                     "drill": .3, "via_type": "microvia", "layers": ["In1.Cu", "In2.Cu"], "fill": "copper"},
                     {"id": "signal-land", "type": "copper", "shape": "circle", "net": "signal",
                      "at": [0, 0], "diameter": .8, "layer": "F.Cu"},
+                    {"id": "ground-disc", "type": "copper", "shape": "circle", "purpose": "ground-disc",
+                     "net": "ground", "at": [0, 0], "diameter": 3, "layer": "B.Cu"},
+                    {"id": "exit-trace", "type": "track", "net": "signal", "layer": "In2.Cu",
+                     "width": .25, "start": [0, 0], "end": [2, 0]},
                     {"id": "exclusion", "type": "keepout", "shape": "polygon", "net": "ground",
                      "layers": ["In2.Cu"], "points": [[0, -.2], [2, -.2], [2, .2], [0, .2]], "prohibit": ["copperpour"]}]}}
     return rehash(artifact)
@@ -85,17 +93,82 @@ class ArtifactTests(unittest.TestCase):
                 validate_artifact(artifact)
 
     def test_unsupported_capability_type_and_microvia_span(self):
-        for change in ("capability", "track", "microvia"):
+        for change in ("capability", "primitive", "microvia", "blind", "unfilled",
+                       "treatment", "old-envelope", "old-payload"):
             artifact = artifact_fixture()
+            via = artifact["payload"]["objects"][0]
             if change == "capability":
                 artifact["required_capabilities"].append("unknown")
-            elif change == "track":
-                artifact["payload"]["objects"][0]["type"] = "track"
+            elif change == "primitive":
+                via["type"] = "pad"
+            elif change == "microvia":
+                via["layers"] = ["F.Cu", "In2.Cu"]
+            elif change == "blind":
+                via.update(via_type="blind_buried", layers=["F.Cu", "In2.Cu"])
+            elif change == "unfilled":
+                del via["fill"]
+            elif change == "treatment":
+                via["fill"] = "epoxy"
+            elif change == "old-envelope":
+                artifact["schema"] = "gppo.artifact/1.0"
             else:
-                artifact["payload"]["objects"][0]["via_type"] = "microvia"
+                artifact["payload_schema"] = "gppo.rf/1.0"
             rehash(artifact)
             with self.subTest(change=change), self.assertRaises(ArtifactError):
                 validate_artifact(artifact, layers=["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"])
+
+    def test_exit_trace_handoff_and_ground_disc_are_required(self):
+        def objects(artifact, identity):
+            return next(x for x in artifact["payload"]["objects"] if x["id"] == identity)
+        for change in ("no-trace", "two-traces", "wrong-layer", "ground-trace", "short-trace",
+                       "offset-start", "no-handoff", "no-disc", "disc-layer", "disc-net"):
+            artifact = artifact_fixture()
+            payload = artifact["payload"]
+            trace = objects(artifact, "exit-trace")
+            disc = objects(artifact, "ground-disc")
+            if change == "no-trace":
+                payload["objects"].remove(trace)
+            elif change == "two-traces":
+                payload["objects"].append(dict(trace, id="second"))
+            elif change == "wrong-layer":
+                trace["layer"] = "In1.Cu"
+            elif change == "ground-trace":
+                trace["net"] = "ground"
+            elif change == "short-trace":
+                trace["end"] = [1.5, 0]
+            elif change == "offset-start":
+                trace["start"] = [.1, 0]
+            elif change == "no-handoff":
+                del payload["anchors"]["handoff"]
+            elif change == "no-disc":
+                payload["objects"].remove(disc)
+            elif change == "disc-layer":
+                disc["layer"] = "In1.Cu"
+            else:
+                disc["net"] = "signal"
+            rehash(artifact)
+            with self.subTest(change=change), self.assertRaises(ArtifactError):
+                validate_artifact(artifact)
+        # A through-hole pin needs no ground disc: its barrel passes every layer.
+        artifact = artifact_fixture()
+        artifact["compatibility"]["mount"] = "PTH"
+        artifact["payload"]["objects"] = [x for x in artifact["payload"]["objects"]
+                                          if x["id"] not in ("ground-disc", "signal-via", "signal-via-2")]
+        validate_artifact(rehash(artifact))
+
+    def test_stackup_identity_is_the_copper_layer_count(self):
+        artifact = artifact_fixture()
+        validate_artifact(artifact, layers=["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"])
+        # Any four-layer board accepts a four-layer transition.
+        validate_artifact(artifact, layers=["top", "gnd", "sig", "bottom"])
+        for layers in (["F.Cu", "B.Cu"], ["F.Cu", "In1.Cu", "In2.Cu", "In3.Cu", "In4.Cu", "B.Cu"]):
+            with self.subTest(count=len(layers)), self.assertRaisesRegex(ArtifactError, "layer count"):
+                validate_artifact(artifact, layers=layers)
+        for count in (3, 0, 34, "4", True):
+            bad = artifact_fixture()
+            bad["compatibility"]["copper_layer_count"] = count
+            with self.subTest(count=count), self.assertRaises(ArtifactError):
+                validate_artifact(rehash(bad))
 
     def test_required_compatibility_and_non_simple_polygons(self):
         for mode in ("compatibility", "roles", "crossing", "collinear"):
@@ -118,7 +191,8 @@ class ArtifactTests(unittest.TestCase):
             area = artifact["payload"]["objects"][-1]
             area["purpose"] = "exit-corridor"
             ground = {"id": "ground", "type": "via", "net": "ground", "at": [1, .5],
-                      "diameter": .6, "drill": .3, "via_type": "through", "layers": ["F.Cu", "B.Cu"]}
+                      "diameter": .6, "drill": .3, "via_type": "through", "layers": ["F.Cu", "B.Cu"],
+                      "fill": "copper"}
             if mode == "intrusion":
                 ground["at"][1] -= .01
             elif mode == "above-signal":

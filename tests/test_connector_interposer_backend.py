@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins"))
 import pcbnew as p
 from connector_interposer_workflow.backend import (
+    board_items,
     BackendError, NativeBackend, _set_uuid, board_state, uuid_of,
 )
 from connector_interposer_workflow.recovery import recover
@@ -467,6 +468,92 @@ class BackendTests(unittest.TestCase):
                      if uuid_of(item) == route_uuid)
         self.assertEqual(route.GetNetname(), 'DATA')
 
+    def test_rf_transition_is_placed_as_locked_filled_native_objects(self):
+        first = self.apply_first()
+        text = Path(first["board_path"]).read_text(encoding="utf-8")
+        board = p.LoadBoard(first["board_path"])
+        items = board_items(board)
+        entry = first["registry"]["instances"]["J101-1"]
+        artifact = self.desired["instances"]["J101-1"]["rf"]["artifact"]
+        placed = {local: items[uid] for local, uid in entry["objects"].items()}
+        self.assertEqual(set(placed), {x["id"] for x in artifact["payload"]["objects"]})
+        # The whole placed transition is locked, including the exit trace.
+        self.assertTrue(all(item.IsLocked() for item in placed.values()))
+        vias = [item for item in placed.values() if isinstance(item, p.PCB_VIA)]
+        self.assertEqual(len(vias), 2)
+        # Every transition via is marked filled in the saved native board.
+        self.assertEqual(text.count("(filling yes)"), len(vias))
+        if hasattr(p, "FILLING_MODE_FILLED"):
+            self.assertEqual({via.GetFillingMode() for via in vias}, {p.FILLING_MODE_FILLED})
+        else:
+            self.assertEqual(p.Version(), "10.0.0")
+        trace = placed["exit-trace"]
+        self.assertEqual(trace.GetClass(), "PCB_TRACK")
+        self.assertEqual(trace.GetNetname(), "CLOCK")
+        self.assertEqual(trace.GetLayer(), p.In2_Cu)
+        self.assertEqual(trace.GetWidth(), p.FromMM(.25))
+        # Pose (20, 20) with the 90° clock applied once: local +X is board −Y.
+        self.assertEqual([trace.GetStart().x, trace.GetStart().y], [20000000, 20000000])
+        self.assertEqual([trace.GetEnd().x, trace.GetEnd().y], [20000000, 18000000])
+        disc = placed["ground-disc"]
+        self.assertEqual(disc.GetNetname(), "GND")
+        self.assertEqual(disc.GetLayer(), p.B_Cu)
+        self.assertEqual(disc.GetRadius(), p.FromMM(1.5))
+        self.assertEqual("NOOP", self.backend.preview(first["board_path"], self.desired)["status"])
+
+    def test_designer_route_starting_at_the_handoff_is_retagged(self):
+        desired = copy.deepcopy(self.desired)
+        second = copy.deepcopy(desired['instances']['J101-1'])
+        second.update(gang='E1', kind='interposer', pose=[30, 20, 0])
+        second.pop('rf', None)
+        second.pop('netclass', None)
+        second.pop('signal_layer', None)
+        desired['instances']['E1'] = second
+        first = self.backend.apply(
+            self.backend.preview(self.board_path, desired), self.root / 'handoff-first',
+        )
+        output = Path(first['board_path'])
+        board = p.LoadBoard(str(output))
+        net = next(item for item in board.GetNetInfo().NetsByNetcode().values()
+                   if item.GetNetname() == 'CLOCK')
+        # The designer starts at the handoff (20, 18), the end of the managed
+        # exit trace, not at the connector pad centre (20, 20).
+        route = []
+        for layer, start, end in (
+                (p.In2_Cu, (20000000, 18000000), (30000000, 18000000)),
+                (p.F_Cu, (30000000, 18000000), (30000000, 20000000))):
+            track = p.PCB_TRACK(board)
+            track.SetStart(p.VECTOR2I(*start))
+            track.SetEnd(p.VECTOR2I(*end))
+            track.SetLayer(layer)
+            track.SetWidth(200000)
+            track.SetNet(net)
+            board.Add(track)
+            route.append(uuid_of(track))
+        via = p.PCB_VIA(board)
+        via.SetPosition(p.VECTOR2I(30000000, 18000000))
+        via.SetWidth(p.F_Cu, 600000)
+        via.SetDrill(300000)
+        via.SetNet(net)
+        board.Add(via)
+        route.append(uuid_of(via))
+        p.SaveBoard(str(output), board)
+        changed = copy.deepcopy(desired)
+        for spec in changed['instances'].values():
+            spec['pads']['1'] = 'DATA'
+            if spec.get('rf'):
+                spec['rf']['nets']['signal'] = 'DATA'
+        preview = self.backend.preview(output, changed)
+        self.assertEqual(preview['conflicts'], [])
+        self.assertEqual(preview['desired']['route_retags'],
+                         {uid: {'before': 'CLOCK', 'after': 'DATA'} for uid in route})
+        result = self.backend.apply(preview, self.root / 'handoff-retagged')
+        saved = board_items(p.LoadBoard(result['board_path']))
+        self.assertEqual({saved[uid].GetNetname() for uid in route}, {'DATA'})
+        trace = saved[result['registry']['instances']['J101-1']['objects']['exit-trace']]
+        self.assertEqual(trace.GetNetname(), 'DATA')
+        self.assertTrue(trace.IsLocked())
+
     def test_net_bearing_designer_shape_blocks_route_retag(self):
         desired = copy.deepcopy(self.desired)
         second = copy.deepcopy(desired['instances']['J101-1'])
@@ -719,6 +806,15 @@ class BackendTests(unittest.TestCase):
             with self.subTest(mode=mode), self.assertRaises(ValueError):
                 self.backend.preview(self.board_path, desired)
 
+    def test_rf_stackup_identity_is_the_copper_layer_count(self):
+        # A four-layer transition names only layers a six-layer board also
+        # has, yet it is a different stackup and is rejected.
+        board = p.LoadBoard(str(self.board_path))
+        board.SetCopperLayerCount(6)
+        p.SaveBoard(str(self.board_path), board)
+        with self.assertRaisesRegex(BackendError, "different copper layer count"):
+            self.backend.preview(self.board_path, self.desired)
+
     def test_selected_native_outline_mounting_hole_and_noop(self):
         board = p.LoadBoard(str(self.board_path))
         ids = []
@@ -828,17 +924,24 @@ class BackendTests(unittest.TestCase):
         desired = copy.deepcopy(self.desired)
         artifact = desired["instances"]["J101-1"]["rf"]["artifact"]
         via = artifact["payload"]["objects"][0]
-        artifact["payload"]["objects"] = []
+        artifact["payload"]["objects"] = [x for x in artifact["payload"]["objects"]
+                                          if x["id"] in ("exit-trace", "ground-disc")]
         layers = ["F.Cu", "In1.Cu", "In2.Cu", "In3.Cu", "In4.Cu", "B.Cu"]
-        artifact["compatibility"]["stackup"] = layers
+        artifact["compatibility"]["copper_layer_count"] = len(layers)
+        # The ground disc sits directly below the In2.Cu exit layer.
+        artifact["payload"]["objects"][0]["layer"] = "In3.Cu"
+        for i in range(2):
+            obj = dict(via, id="stack-"+str(i), layers=layers[i:i+2])
+            artifact["payload"]["objects"].append(obj)
         for i in range(5):
-            obj = dict(via, id="stack-"+str(i), via_type="microvia", layers=layers[i:i+2])
+            obj = dict(via, id="ground-"+str(i), net="ground", at=[0, 3], layers=layers[i:i+2])
             artifact["payload"]["objects"].append(obj)
         rehash(artifact)
         result = self.backend.apply(self.backend.preview(self.board_path, desired), self.root/"stack")
         board = p.LoadBoard(result["board_path"])
-        self.assertEqual(5, len(list(board.GetTracks())))
-        self.assertTrue(all(v.HasValidLayerPair(6) for v in board.GetTracks()))
+        vias = [item for item in board.GetTracks() if isinstance(item, p.PCB_VIA)]
+        self.assertEqual(7, len(vias))
+        self.assertTrue(all(v.HasValidLayerPair(6) for v in vias))
 
     def test_native_copper_arc_polygon_and_circular_rule_area(self):
         desired = copy.deepcopy(self.desired)

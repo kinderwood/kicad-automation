@@ -14,7 +14,14 @@ from pathlib import Path
 
 
 CAPABILITIES = frozenset(("native-vias", "net-copper-shapes", "layer-rule-areas",
-                          "adjacent-microvia-stacks"))
+                          "adjacent-microvia-stacks", "native-tracks", "filled-vias"))
+
+
+def copper_layer_names(count):
+    """Literal KiCad copper layer names, top to bottom, for a layer count."""
+    if isinstance(count, bool) or not isinstance(count, int) or count not in range(2, 33, 2):
+        raise ArtifactError("Artifact requires an even copper layer count from 2 to 32")
+    return ["F.Cu"] + ["In%d.Cu" % index for index in range(1, count - 1)] + ["B.Cu"]
 
 
 class ArtifactError(ValueError):
@@ -73,9 +80,9 @@ def validate_artifact(artifact, *, layers=None, part_sha256=None, netclass=None)
     """Validate exact supported semantics and integrity, retaining opaque recipes."""
     try:
         canonical(artifact)
-        if not artifact["schema"].startswith("gppo.artifact/1."):
+        if not artifact["schema"].startswith("gppo.artifact/2."):
             raise ArtifactError("Unsupported artifact envelope")
-        if artifact["payload_schema"] != "gppo.rf/1.0" or artifact["kind"] != "rf-transition":
+        if artifact["payload_schema"] != "gppo.rf/2.0" or artifact["kind"] != "rf-transition":
             raise ArtifactError("Unsupported RF payload schema")
         if not artifact["artifact_id"] or not isinstance(artifact["revision"], (str, int)):
             raise ArtifactError("Missing artifact identity/revision")
@@ -96,22 +103,26 @@ def validate_artifact(artifact, *, layers=None, part_sha256=None, netclass=None)
             raise ArtifactError("Artifact requires an exact approved footprint identity/hash")
         if compatibility["mount"] not in ("SMD", "PTH") or compatibility["side"] not in ("front", "back"):
             raise ArtifactError("Artifact requires explicit mount and side compatibility")
-        declared_layers = compatibility["stackup"]
-        if not isinstance(declared_layers, list) or len(declared_layers) < 2 or len(set(declared_layers)) != len(declared_layers):
-            raise ArtifactError("Artifact requires a unique ordered copper stackup")
+        # Stackup identity is the copper layer count; the payload's layer
+        # names are the literal KiCad names for that count.
+        declared_layers = copper_layer_names(compatibility["copper_layer_count"])
         if not compatibility["netclasses"] or any(not isinstance(c, str) or not c for c in compatibility["netclasses"]):
             raise ArtifactError("Artifact requires explicit allowed netclasses")
-        if payload["net_roles"] != ["signal", "ground"] or payload["anchors"]["signal"] != [0, 0] or payload["anchors"]["exit_direction_deg"] != 0:
+        anchors = payload["anchors"]
+        if payload["net_roles"] != ["signal", "ground"] or anchors["signal"] != [0, 0] or anchors["exit_direction_deg"] != 0:
             raise ArtifactError("Unsupported RF net-role or anchor convention")
+        # Designer routing starts at the handoff, the end of the exit trace.
+        _point(anchors["handoff"])
         if set(payload["layer_roles"]) != {"mount", "signal"} or any(x not in declared_layers for x in payload["layer_roles"].values()):
             raise ArtifactError("Artifact requires valid mount and signal layer roles")
         if part_sha256 is not None and compatibility.get("part_sha256") not in (None, "", part_sha256):
             raise ArtifactError("Artifact is incompatible with selected footprint revision")
         if netclass is not None and compatibility.get("netclasses") and netclass not in compatibility["netclasses"]:
             raise ArtifactError("Artifact does not allow selected netclass")
-        if layers is not None and compatibility.get("stackup") and list(compatibility["stackup"]) != list(layers):
-            raise ArtifactError("Artifact stackup differs from board copper stack")
-        layers = declared_layers if layers is None else layers
+        if layers is not None and len(layers) != len(declared_layers):
+            raise ArtifactError("Artifact copper layer count differs from the board")
+        layers = declared_layers
+        traces = 0
         ids = set()
         for item in payload["objects"]:
             if not item["id"] or item["id"] in ids:
@@ -129,23 +140,31 @@ def validate_artifact(artifact, *, layers=None, part_sha256=None, netclass=None)
                 span = item["layers"]
                 if len(span) != 2 or span[0] == span[1]:
                     raise ArtifactError("Via requires two distinct layer endpoints")
-                if item["via_type"] not in ("through", "microvia", "blind_buried"):
+                if item["via_type"] not in ("through", "microvia"):
                     raise ArtifactError("Unknown via type")
-                if item.get("treatment", "untreated") != "untreated":
-                    raise ArtifactError("Requested via treatment is not supported by this renderer")
-                if layers is not None:
-                    if any(x not in layers for x in span):
-                        raise ArtifactError("Via references nonexistent copper layer")
-                    a, b = [list(layers).index(x) for x in span]
-                    if a >= b:
-                        raise ArtifactError("Via endpoints must follow stack order")
-                    if item["via_type"] == "microvia" and b - a != 1:
-                        raise ArtifactError("Microvia must span adjacent copper layers")
-                    if item["via_type"] == "through" and (a != 0 or b != len(layers) - 1):
-                        raise ArtifactError("Through via must span the full copper stack")
+                if item.get("fill") != "copper":
+                    raise ArtifactError("Every transition via must be marked copper plated shut")
+                if any(x not in layers for x in span):
+                    raise ArtifactError("Via references nonexistent copper layer")
+                a, b = [layers.index(x) for x in span]
+                if a >= b:
+                    raise ArtifactError("Via endpoints must follow stack order")
+                if item["via_type"] == "microvia" and b - a != 1:
+                    raise ArtifactError("Microvia must span adjacent copper layers")
+                if item["via_type"] == "through" and (a != 0 or b != len(layers) - 1):
+                    raise ArtifactError("Through via must span the full copper stack")
+            elif kind == "track":
+                traces += 1
+                _positive(item["width"], "exit trace width")
+                _point(item["start"])
+                _point(item["end"])
+                if item["net"] != "signal" or item["layer"] != payload["layer_roles"]["signal"]:
+                    raise ArtifactError("The exit trace must be signal copper on the exit layer")
+                if list(item["start"]) != [0, 0] or list(item["end"]) != list(anchors["handoff"]):
+                    raise ArtifactError("The exit trace must run from the signal centre to the handoff")
             elif kind in ("copper", "keepout"):
                 item_layers = item.get("layers", [item.get("layer")])
-                if not item_layers or any(not x or (layers is not None and x not in layers) for x in item_layers):
+                if not item_layers or any(x not in layers for x in item_layers):
                     raise ArtifactError("Object references nonexistent copper layer")
                 shape = item.get("shape", "circle")
                 if shape == "circle":
@@ -164,9 +183,20 @@ def validate_artifact(artifact, *, layers=None, part_sha256=None, netclass=None)
                         "copperpour", "tracks", "vias", "pads", "footprints"}):
                     raise ArtifactError("Unknown rule-area prohibition")
             else:
-                raise ArtifactError("Unsupported RF primitive; signal tracks are not generated")
-        if compatibility["mount"] == "SMD" and not any(x["type"] == "via" and x["net"] == "signal" for x in payload["objects"]):
-            raise ArtifactError("RF artifact must contain an actual signal via")
+                raise ArtifactError("Unsupported RF primitive")
+        if traces != 1:
+            raise ArtifactError("RF artifact must contain exactly one exit trace")
+        if compatibility["mount"] == "SMD":
+            if not any(x["type"] == "via" and x["net"] == "signal" for x in payload["objects"]):
+                raise ArtifactError("RF artifact must contain an actual signal via")
+            # Solid ground directly below the exit layer, further from the mount side.
+            exit_index = layers.index(payload["layer_roles"]["signal"])
+            below = exit_index + (1 if compatibility["side"] == "front" else -1)
+            if not 0 <= below < len(layers) or not any(
+                    x["type"] == "copper" and x.get("purpose") == "ground-disc" and x["net"] == "ground" and
+                    x.get("shape", "circle") == "circle" and x.get("layer") == layers[below] and
+                    list(x["at"]) == [0, 0] for x in payload["objects"]):
+                raise ArtifactError("SMD RF artifact must contain the ground disc below its exit layer")
         # Independently check generated ground envelopes against saved exclusion
         # geometry. No authoring recipe execution is needed for this validation.
         for area in payload["objects"]:
@@ -179,7 +209,7 @@ def validate_artifact(artifact, *, layers=None, part_sha256=None, netclass=None)
                 if item["net"] != "ground" or item["type"] not in ("via", "copper"):
                     continue
                 if item["type"] == "via":
-                    a, b = [list(layers).index(x) for x in item["layers"]]
+                    a, b = [layers.index(x) for x in item["layers"]]
                     present = layers[a:b+1]
                 else:
                     present = [item["layer"]]

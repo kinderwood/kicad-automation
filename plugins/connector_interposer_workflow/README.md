@@ -1,6 +1,6 @@
 # Connector to Interposer Workflow
 
-Version **0.7.11**, testing release. The package targets KiCad 10.0.0 through
+Version **0.8.0**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
@@ -149,8 +149,12 @@ files changed after the transaction.
    `(netclass, mapped KiCad layer, connector footprint)` requirement. One row can
    cover locations in several gangs. Unassigned requirements do not block Review
    Changes or board generation. Once assigned, the workflow validates the exact footprint
-   revision and mount type, board side, ordered copper stack, allowed netclass,
-   signal layer and artifact hash before Review changes. **Refresh libraries**
+   revision and mount type, board side, copper layer count, allowed netclass,
+   exit layer and artifact hash before Review changes. Any board with the same
+   number of copper layers accepts the transition. Apply places it at the
+   connector's position and clock angle as saved: filled vias, copper discs,
+   antipad and corridor rule areas, the SMD ground disc and the exit trace, all
+   locked. **Refresh libraries**
    in the toolbar discovers published `.gppo-rf.json` files beneath the project;
    **Browse artifact…** can select a catalog artifact elsewhere. **Open RF
    Transition Designer…** is a disabled placeholder in this release.
@@ -316,8 +320,13 @@ metadata contract and is pinned for provenance; its graphical body is not copied
 into the generated split presentation. A fully explicit presentation is a
 future direction. DXF text is retained only for visual context; circle identity
 comes from explicit center, RF location-1, DC pin-1 and mounting-hole selections
-plus geometric matching. DC support is limited to single-unit symbols. RF objects stop at
-the signal via; no signal route is generated beyond the handoff. Interposer
+plus geometric matching. DC support is limited to single-unit symbols. A placed RF
+transition includes its exit trace, a locked track from the signal pin to the
+handoff point at the ground ring radius; no signal route is generated beyond
+the handoff, and designer routing starts there. Every transition via is marked
+filled in KiCad, so the fill appears in Gerber, ODB++ and IPC-2581 output;
+those files cannot name the fill material, so the copper callout belongs in
+the fabrication notes. Interposer
 microvia generation does not prove plane connectivity, stackup manufacturability
 or production acceptance. Saved geometry and native round trips do not establish
 impedance, fabricator stackup approval, manufacturing qualification or full

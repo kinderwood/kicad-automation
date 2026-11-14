@@ -216,9 +216,9 @@ requirement for every unique `(netclass, mapped KiCad layer, connector
 footprint)` tuple used by an RF location and assigns one compatible, published
 transition artifact to that requirement when one is available. An unassigned
 requirement does not block review or board generation. An explicitly selected
-but incompatible artifact remains a blocking error. Artifact side, stackup, revision and
-footprint hash remain compatibility checks rather than parts of the requirement
-identity. Existing artifacts are immutable library inputs. An optional **Open
+but incompatible artifact remains a blocking error. Artifact side, copper layer
+count, revision and footprint hash remain compatibility checks rather than parts
+of the requirement identity. Existing artifacts are immutable library inputs. An optional **Open
 RF Transition Designer…** action may launch the separately installed authoring
 tool, but this workflow must remain usable when that package is absent. The two
 tools communicate through the versioned artifact/catalog contract and an
@@ -382,8 +382,30 @@ project snapshots preserve exact selected revisions rather than newly authored
 variants. RF payloads are declarative;
 opaque recipes are retained as provenance and never executed. Transition
 assignments are reconciled by electrical requirement across all RF locations;
-the workflow rejects incompatible saved layer, side, stackup, revision or
-footprint roles rather than silently retuning geometry.
+the workflow rejects incompatible saved layer, side, copper layer count, revision
+or footprint roles rather than silently retuning geometry.
+
+The physical contract for a placed transition is
+`docs/rf-transition-contract.md`, "What the Workflow must do". The consumer
+reads the `gppo.artifact/2.x` envelope with a `gppo.rf/2.0` payload only.
+Stackup identity is the copper layer count; payload layer names are KiCad's
+literal names for that count. Each saved object is created exactly, at the
+connector position with the clock applied once to the whole transition:
+
+- a `via` becomes a native via whose filling mode is filled. KiCad 10.0.8 sets
+  it with `PCB_VIA.SetFillingMode(FILLING_MODE_FILLED)`. KiCad 10.0.0 has the
+  property but no Python constant for it and rejects a plain integer, so that
+  runtime clones a template via read from a board file that says
+  `(filling yes)`. Only `through` and adjacent-layer `microvia` types exist;
+- a `copper` circle becomes net copper, including the SMD ground disc on the
+  layer below the exit layer, which a validated SMD artifact must contain;
+- a `keepout` becomes a rule area with its saved vertices;
+- the one `track` becomes the exit trace, a real track on the exit layer from
+  the signal centre to the `handoff` anchor.
+
+Every placed transition object is locked. Designer routing starts at the
+handoff, so the reviewed net-swap of an isolated designer route treats the
+handoff as a route endpoint in the same way as a pad centre.
 
 Apply first materializes and verifies an isolated candidate, then durably stages
 exact before/after project files. On the UI thread it reconciles the active BOARD,
