@@ -453,10 +453,10 @@ def interposer_pad_centers() -> list[tuple[str, tuple[float, float]]]:
 def rf_artifacts() -> dict:
     """Author the demo RF transitions, one per exit layer, deterministically.
 
-    The footprint is through-hole, so its own barrel is the signal conductor.
-    Eight ground vias leave the 180° position empty: in the rectangular
-    revision B gang the connector behind sits 150 mil away on the exit axis,
-    and a via there would land on its neighbour's exit trace.
+    The footprint is through-hole, so its own barrel is the signal conductor
+    and the ground ring runs through the whole board. The Designer's defaults
+    apply: stacked 5 mil drill, 10 mil pad microvias, placed in the footprint's
+    annular ground pad on its mid-radius, eleven positions from 30° to 330°.
     """
     part = read_base_part(LIBRARY / (RF_FOOTPRINT + ".kicad_mod"), approved=True)
     result = {}
@@ -465,7 +465,6 @@ def rf_artifacts() -> dict:
         params = recipe["parameters"]
         params["netclasses"] = ["CLOCK", "DATA"]
         params["signal_layer"] = copper
-        params["ground_ring"]["count"] = 8
         params["tuned_signal_copper"] = {
             layer: 0.65 if layer == copper else None for layer in params["stackup"]}
         result[architecture] = make_artifact(

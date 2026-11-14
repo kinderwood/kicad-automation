@@ -86,6 +86,7 @@
 		(at 1.11125 0)
 		(size 0.2 0.2)
 		(layers "F.Cu" "F.Mask" "F.Paste")
+		(zone_connect 2)
 		(options
 			(clearance outline)
 			(anchor circle)

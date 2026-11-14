@@ -36,7 +36,8 @@ LAYER_MAP = {"L2": "In1.Cu", "L3": "In2.Cu"}
 BOARD_MM = 111.125
 INTERPOSER_POSE = (42.5625, 42.5625)
 RF_COUNT = 28
-GROUND_VIAS = 8
+# Eleven ring positions, a stacked microvia on each of the three layer pairs.
+GROUND_VIAS = 11 * 3
 PROJECT_ID = '6bb2ad73-7210-4a29-a3e1-91e8f65f59af'
 
 
@@ -164,10 +165,12 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
                                      placed(artifact["payload"]["anchors"]["handoff"]))
                 elif obj["type"] == "via":
                     self.assertEqual(actual.GetNetname(), "GND")
-                    if not hasattr(p, "VIATYPE_THROUGH"):
+                    if not hasattr(p, "VIATYPE_MICROVIA"):
                         self.assertEqual(p.Version(), "10.0.0")
-                    self.assertEqual(actual.GetViaType(), getattr(p, "VIATYPE_THROUGH", 4))
-                    self.assertEqual([actual.TopLayer(), actual.BottomLayer()], [p.F_Cu, p.B_Cu])
+                    self.assertEqual(actual.GetViaType(), getattr(p, "VIATYPE_MICROVIA", 1))
+                    self.assertEqual([actual.TopLayer(), actual.BottomLayer()],
+                                     [board.GetLayerID(name) for name in obj["layers"]])
+                    self.assertEqual(actual.GetWidth(p.F_Cu), p.FromMM(0.254))
                     self.assertEqual([actual.GetPosition().x, actual.GetPosition().y], placed(obj["at"]))
                     self.assertEqual(actual.GetDrillValue(), p.FromMM(obj["drill"]))
                 elif obj["type"] == "copper":

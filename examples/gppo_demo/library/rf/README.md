@@ -8,23 +8,26 @@ Both allow CLOCK and DATA independently of routing-layer choice, matching both
 example workbook A and workbook B. They pin the exact experimental
 `Example:GPPO_B012_L13_01_EXPERIMENTAL` source bytes derived from the supplied
 OL-B012-L1X-01 revision B drawing. The source has a plated center pin, so these
-artifacts add no duplicate signal via and no ground disc. They add eight ground
-through vias marked copper plated shut, one tuned signal-copper enlargement on
-the exit layer, an antipad on each of the four layers, the exit trace from the
-pin to the 2.0 mm ground ring radius, and an exit corridor that stops at the
-trace end. The trace end is the handoff where designer routing starts. The
-ring leaves the 180° position empty: in the rectangular revision B gang the
-connector behind is 150 mil away on the exit axis, and a ground via there
-would land on its neighbour's exit trace.
+artifacts add no duplicate signal via and no ground disc, and the ground ring
+runs through the whole board. They use the Designer's defaults: stacked
+microvias with a 5 mil drill and 10 mil pad, marked copper plated shut, placed
+in the footprint's annular ground pad on its 43.75 mil (1.11125 mm)
+mid-radius, at eleven positions from 30° to 330° on each of the three layer
+pairs. They also add one tuned signal-copper enlargement on the exit layer, an
+antipad on each of the four layers, the exit trace from the pin to the ground
+ring radius, and an exit corridor that stops at the trace end. The trace end
+is the handoff where designer routing starts.
 
 The files are the output of `examples/gppo_demo/generate_fixtures.py`
 (`rf_artifacts` and `write_rf_library`), which uses the independent RF
 Transition Designer's `read_base_part`, `default_recipe`, `make_artifact` and
-`publish_bundle` APIs. The Designer reports one warning for them: the source's
-0.508 mm land on a 0.381 mm hole leaves a 0.0635 mm annular ring, under 5 mil.
+`publish_bundle` APIs. The Designer reports two annular-ring warnings for
+them, both 0.0635 mm (2.5 mil) against the 5 mil limit: the source's 0.508 mm
+land on its 0.381 mm hole, and the 10 mil microvia pad on its 5 mil drill.
 Each includes the complete recipe, source pin, exact declarative payload,
 capabilities and integrity hashes. `manifest.json` indexes the immutable files.
-The source central footprint is unchanged.
+Publishing leaves the source footprint unchanged. That footprint's annular
+ground pad is set to a solid zone connection, which the Designer requires.
 
 `tests/test_connector_interposer_contract.py` reproduces these outputs with the
 same generator function, checks
