@@ -20,6 +20,8 @@ code changes to match this document, not the reverse. The artifact file format
 
 ## What the footprint must provide
 
+- **Exactly two electrical pads:** one signal pad and one ground pad. There
+  are no other numbered plated pads.
 - **Pin 1 is signal, pin 2 is ground.** The footprint is drawn mounted on the
   front. These are defaults; the Designer's advanced settings can override
   the pad numbers and the mount side.
@@ -31,17 +33,23 @@ code changes to match this document, not the reverse. The artifact file format
   layer where copper connects, all at one diameter. That diameter is the
   minimum manufacturable land for the hole. Unconnected inner layers carry
   the bare barrel only.
-- **Ground pad:** one SMD annular (donut) pad on the mount side. Its outer
-  and inner diameters sit tight to the connector body, so the board's ground
-  flood fills in around and inside it.
+- **Ground pad:** exactly one SMD annular (donut) pad on the mount side,
+  centred on the signal. This holds for through-hole and SMD signal pins
+  alike. Its outer and inner diameters sit tight to the connector body, so
+  the board's ground flood fills in around and inside it.
 - **Zone connection:** solid on the ground pad. RF connectors never use
-  thermal reliefs.
+  thermal reliefs. The pad itself is set to solid, or it inherits and the
+  footprint is set to solid. A pad and footprint that both inherit leave the
+  choice to each zone's default, which does not satisfy this contract.
 
 ## What a transition defines
 
 A transition is authored for one footprint, one copper layer count, one mount
 side and one exit layer. All geometry is local: signal at the origin, exit
 along +X.
+
+**The exit layer is always an inner layer.** Routing on the outer layers is
+never allowed, for through-hole and SMD parts alike.
 
 ### Signal
 
@@ -71,7 +79,12 @@ along +X.
       pattern, on the same radius. The pattern as entered applies to the pair
       at the mount layer. A partial arc of N vias has N−1 midpoints; a full
       circle keeps N.
-- A microvia ring may run through the whole board or stop at a chosen layer.
+- The extent of the ring is never chosen by the user:
+  - **Through-hole pin:** the ring runs through the entire board, as through
+    vias or as microvias on every layer pair.
+  - **SMD pin:** a microvia ring runs from the mount layer to the layer below
+    the exit layer, where the ground disc is. Through vias span the board as
+    always.
 - Lands may be tangent to each other. They may not overlap. In a staggered
   ring this is tested on every layer where both sets have lands.
 - There is no blind or buried mechanical via type.
@@ -98,7 +111,7 @@ outer diameter. It has no antipad.
 - It is real copper on the ground net and joins the ground flood solid.
 - Its purpose is to make ordinary clearance checking fail any non-ground
   track or via that passes under the launch.
-- A microvia ground ring may extend down to this layer.
+- A microvia ground ring runs down to this layer and lands on the disc.
 - Below this layer the transition adds nothing. Through ground vias still
   pass through those layers; they get no special treatment there.
 
@@ -133,10 +146,29 @@ the complete set.
   exit layer (tangent passes).
 - An SMD signal stack is continuous from the mount layer to the exit layer.
 - The footprint matches "What the footprint must provide".
+- The exit layer is an inner layer.
 - **Warning:** any annular ring, (land − drill) / 2, under 5 mil. This
   applies to transition vias and to footprint lands.
+- **Warning (SMD pin):** the ground ring does not land on both the footprint
+  ground pad and the ground disc. The disc then relies on the board's flood
+  for its connection to ground; see "Verified KiCad 10.0.8 behaviour" for why
+  that connection matters.
 
 Unsatisfiable requests are reported. Values are never adjusted silently.
+
+## Designer defaults
+
+The owner works in mils. Millimetres are used only for parts natively drawn
+in millimetres. Values are stored in millimetres and converted exactly, once,
+at the boundary.
+
+- Signal microvia: 5 mil drill, 10 mil pad.
+- Ground ring: stacked microvias, 5 mil drill, 10 mil pad, placed in the
+  footprint's ground pad (via-in-pad). The default ring radius is the
+  mid-radius of the ground pad annulus.
+- Ground ring pattern: eleven positions from 30° to 330°, 30° apart.
+- A 10 mil pad on a 5 mil drill is a 2.5 mil annular ring, so these defaults
+  raise the annular ring warning. The 5 mil threshold is under review.
 
 ## What the Workflow must do
 
@@ -173,6 +205,17 @@ Tested on a six-layer board on 2026-11-14.
   make KiCad draw the pad there. The disc itself is the copper. In Gerber it
   is drawn copper tagged `Conductor` and carries its net; the flood clears
   it.
+- KiCad propagates nets from pads to the non-pad copper they touch. A copper
+  disc, track or via that touches a pad of another net is renamed to that
+  pad's net when the board is saved from Python, with no DRC finding, when
+  the disc is not otherwise tied to a pad of its own net. Locking the disc
+  does not prevent it.
+- When the disc is tied to a pad of its own net, as the ground disc is to the
+  footprint's ground pad through the ground ring vias, nothing is renamed and
+  a foreign routed track or via touching the disc is reported by DRC as
+  "Items shorting two nets". So the ground disc does force a DRC error as
+  intended, provided the ground ring connects it to the ground pad. No extra
+  keepout is needed.
 - Via filling, capping and plugging are settable from Python. Filled vias
   produce separate Gerber files (`…-filling-<span>.gbr`), ODB++ `filling_…`
   layers and IPC-2581 `HOLEFILL` layers. Excellon drill files and copper
@@ -180,10 +223,9 @@ Tested on a six-layer board on 2026-11-14.
 
 ## Not yet implemented
 
-As of GPPO RF Transition Designer 0.2.0 and Connector to Interposer Workflow
-0.8.0 the code differs from this contract in these ways:
+As of GPPO RF Transition Designer 0.3.0 and Connector to Interposer Workflow
+0.8.0 the code differs from this contract in this way:
 
 | Contract | Code today |
 |---|---|
 | Pin 1 / pin 2 / front as defaults | Reader defaults match; the dialog asks every time |
-| Ground pad is one annular pad with a solid zone connection | The zone connection is not read. One annular pad centred on the signal is required only for an SMD pin, whose ground disc needs it; a through-hole part may have several ground pads of any shape |

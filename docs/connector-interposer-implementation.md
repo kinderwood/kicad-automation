@@ -2,7 +2,7 @@
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
 are authorized. Connector to Interposer Workflow is version 0.8.0 and the
-separate GPPO RF Transition Designer is version 0.2.0; both have `testing`
+separate GPPO RF Transition Designer is version 0.3.0; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The BGA
 Interposer Wizard remains an independent package at version 0.16.1.
 
@@ -513,6 +513,18 @@ count. The Designer reports an annular ring under 5 mil as a warning that does
 not block. Workflow locks every placed transition object and treats the
 handoff as the start of designer routing when it reviews a net swap.
 
+RF Transition Designer 0.3.0 applies the owner's follow-up decisions. The
+exit layer must be an inner layer. The extent of the ground ring is derived,
+not chosen: the whole board for a through-hole pin, the mount layer to the
+ground disc layer for an SMD pin's microvias. A footprint has exactly two
+electrical pads, and its one annular ground pad must resolve to a solid zone
+connection, so the example GPPO footprint now sets that on its ground pad.
+Defaults are 5 mil drill, 10 mil pad microvias with the ground ring in the
+footprint's ground pad. A second warning reports an SMD ground disc that the
+ring does not tie to the ground pad. The recipe schema is
+`gppo.rf-recipe/3.0`; the artifact envelope and payload schemas are unchanged,
+so Workflow 0.8.0 consumes the regenerated example library as it is.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal
@@ -559,7 +571,8 @@ this implementation and these fixtures.
 ## Worked-project evidence
 
 The example uses 28 GPPOs, an 800-pad interposer, mixed L2/L3 RF artifacts,
-224 native filled RF ground vias, 28 exit traces, 140 rule areas and a
+924 native filled RF ground microvias (eleven ring positions on each of three
+layer pairs per connector), 28 exit traces, 140 rule areas and a
 validated outer boundary. The
 A/B native contract covers all 29 footprints and verifies that 56 signal-pad
 assignments change: 28 connector pads and 28 interposer pads. The complete C
@@ -569,6 +582,7 @@ preview without warnings.
 
 The 4.375-inch square fixture deliberately remains unrouted and lacks completed
 ground planes. Physical DRC is therefore expected to report annular-width,
+via-diameter (the 10 mil microvia pads against the project's default minimum),
 copper-to-edge, dangling-via, dangling-track (each exit trace ends at its
 unrouted handoff) and unconnected-item findings. The annular ring
 and cutout relationships still need librarian and fabricator review; neither a
