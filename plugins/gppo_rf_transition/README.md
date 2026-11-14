@@ -175,7 +175,7 @@ Blocking errors stop validation. Warnings are reported and do not block.
 
 | `code` | Raised when |
 |---|---|
-| `annular-ring` | An annular ring, `(land − drill) / 2`, is under 5 mil (0.127 mm). Checked for the signal via, the ground via, the footprint's through-hole signal land, and a tuning disc added around a bare barrel |
+| `annular-ring` | An annular ring, `(land − drill) / 2`, is strictly under the limit for its hole type: 5 mil (0.127 mm) for a mechanically drilled plated hole (the through-hole signal pin, through ground vias), 2.5 mil (0.0635 mm) for a microvia. Checked for the signal via, the ground via, the footprint's through-hole signal land, and every signal or ground tuning disc against the barrel or microvia it surrounds on its layer. The record's `limit_mm` is the limit applied |
 | `ground-disc-not-tied-to-pad` | SMD pin: the ground ring does not land on both the footprint ground pad and the ground disc |
 
 ### Defaults
@@ -194,8 +194,8 @@ The owner works in mils. Values are stored in millimetres, converted exactly.
 - a four-layer board, an `In2.Cu` exit, 0.25 mm trace width, 0.20 mm
   ground-pour gap and 1.1 mm antipads.
 
-A 10 mil pad on a 5 mil drill is a 2.5 mil annular ring, so the defaults raise
-the `annular-ring` warning for each microvia setting.
+A 10 mil pad on a 5 mil drill is a 2.5 mil annular ring, exactly the microvia
+limit, so the defaults raise no warning of their own.
 
 Unsatisfiable requests are reported; parameters are never silently adjusted.
 
@@ -218,7 +218,8 @@ back-mounted part needs its own source and transition.
 
 The actual experimental B012-L13-01 source derived from the supplied drawing is
 supported: 0.381 mm plated hole, 0.508 mm signal land and a custom annular
-ground pad. Its 0.0635 mm annular ring is reported as a warning. The ground
+ground pad. Its 0.0635 mm annular ring, under the 5 mil limit for a drilled
+hole, is reported as a warning. The ground
 pad's single unfilled circle primitive is read as an exact annulus, including
 its opening. Its zone connection is set to solid on the pad.
 

@@ -147,8 +147,14 @@ the complete set.
 - An SMD signal stack is continuous from the mount layer to the exit layer.
 - The footprint matches "What the footprint must provide".
 - The exit layer is an inner layer.
-- **Warning:** any annular ring, (land − drill) / 2, under 5 mil. This
-  applies to transition vias and to footprint lands.
+- **Warning:** any annular ring, (land − drill) / 2, strictly under the limit
+  for its hole type: 5 mil (0.127 mm) for a mechanically drilled plated hole
+  (the through-hole signal pin and through ground vias), 2.5 mil (0.0635 mm)
+  for a microvia. A ring exactly at the limit does not warn. This applies to
+  every via land, every footprint land and every tuning disc that surrounds
+  a hole on its layer, including a tuning disc on an inner layer with no
+  connection; a disc is measured against the barrel or microvia it
+  surrounds, with that hole type's limit.
 - **Warning (SMD pin):** the ground ring does not land on both the footprint
   ground pad and the ground disc. The disc then relies on the board's flood
   for its connection to ground; see "Verified KiCad 10.0.8 behaviour" for why
@@ -167,8 +173,8 @@ at the boundary.
   footprint's ground pad (via-in-pad). The default ring radius is the
   mid-radius of the ground pad annulus.
 - Ground ring pattern: eleven positions from 30° to 330°, 30° apart.
-- A 10 mil pad on a 5 mil drill is a 2.5 mil annular ring, so these defaults
-  raise the annular ring warning. The 5 mil threshold is under review.
+- A 10 mil pad on a 5 mil drill is a 2.5 mil annular ring, exactly the
+  microvia limit, so these defaults raise no annular ring warning.
 
 ## What the Workflow must do
 

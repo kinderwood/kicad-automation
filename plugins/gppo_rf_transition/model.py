@@ -23,7 +23,10 @@ TOLERANCE_MM = 0.001
 # Every transition via is copper plated shut. This is a fixed property of the
 # payload, never a recipe setting.
 VIA_FILL = "copper"
-MIN_ANNULAR_RING_MM = 0.127  # 5 mil; smaller rings are reported as warnings.
+# Annular rings strictly under these limits are reported as warnings. The
+# limit follows the hole type: 5 mil for a mechanically drilled plated hole
+# (the through-hole signal pin and through vias), 2.5 mil for a microvia.
+MIN_ANNULAR_RING_MM = {"drilled": 0.127, "microvia": 0.0635}
 MIL_MM = 0.0254  # Exact. Defaults are authored in mils and stored in millimetres.
 
 
@@ -244,14 +247,21 @@ def _via(identity, net, at, pair, config, via_type):
             "drill": config["drill"], "via_type": via_type, "fill": VIA_FILL}
 
 
-def _annular_warning(subject, land, drill):
+def _annular_warning(subject, land, drill, hole_type):
+    """Warn when (land − drill) / 2 is strictly under the hole type's limit.
+
+    A ring exactly at the limit does not warn; the tolerance absorbs the
+    floating-point error of mil values stored in millimetres.
+    """
+    limit = MIN_ANNULAR_RING_MM[hole_type]
     ring = (land - drill) / 2
-    if ring >= MIN_ANNULAR_RING_MM - 1e-9:
+    if ring >= limit - 1e-9:
         return []
     return [{"code": "annular-ring", "subject": subject,
-             "value_mm": round(ring, 6), "limit_mm": MIN_ANNULAR_RING_MM,
-             "message": f"{subject}: annular ring {ring:.4f} mm is under "
-                        f"{MIN_ANNULAR_RING_MM} mm (5 mil)"}]
+             "value_mm": round(ring, 6), "limit_mm": limit,
+             "message": f"{subject}: annular ring {round(ring, 6):g} mm is under the "
+                        f"{limit} mm ({limit / MIL_MM:g} mil) limit for a "
+                        f"{'microvia' if hole_type == 'microvia' else 'mechanically drilled hole'}"}]
 
 
 def review_recipe(recipe):
@@ -343,7 +353,7 @@ def _generate(recipe):
                 base[layer] = land
             else:
                 hole[layer] = part["signal_drill"]
-        warnings += _annular_warning("footprint signal land", land, part["signal_drill"])
+        warnings += _annular_warning("footprint signal land", land, part["signal_drill"], "drilled")
     else:
         config = params["signal_via"]
         _keys(config, ["diameter", "drill"], "signal via")
@@ -354,7 +364,7 @@ def _generate(recipe):
             objects.append(via)
             for layer in via["layers"]:
                 base[layer] = max(base.get(layer, 0), via["diameter"])
-        warnings += _annular_warning("signal via", config["diameter"], config["drill"])
+        warnings += _annular_warning("signal via", config["diameter"], config["drill"], "microvia")
     antipad_layers = layers if pth else sorted(order[:exit_depth + 1], key=layers.index)
 
     tuned = params["tuned_signal_copper"]
@@ -372,7 +382,13 @@ def _generate(recipe):
         if layer in hole:
             if diameter <= hole[layer]:
                 raise RFError(f"{layer}: tuned copper must exceed the plated signal hole")
-            warnings += _annular_warning(f"signal copper {layer}", diameter, hole[layer])
+        # A tuning disc is measured against the hole it surrounds on its
+        # layer: the pin's barrel, or the signal microvia.
+        if pth:
+            warnings += _annular_warning(f"signal copper {layer}", diameter, part["signal_drill"], "drilled")
+        else:
+            warnings += _annular_warning(f"signal copper {layer}", diameter,
+                                         params["signal_via"]["drill"], "microvia")
         if diameter > base.get(layer, 0):
             objects.append({"id": f"signal-copper-{layer}", "type": "copper", "shape": "circle",
                             "purpose": "signal-overlay", "net": "signal", "at": [0, 0],
@@ -412,7 +428,8 @@ def _generate(recipe):
                     lands.setdefault(layer, {})[name] = (angle, via["at"])
     else:
         raise RFError("ground via type must be through or microvia")
-    warnings += _annular_warning("ground via", ground["diameter"], ground["drill"])
+    ground_hole = "microvia" if ground["via_type"] == "microvia" else "drilled"
+    warnings += _annular_warning("ground via", ground["diameter"], ground["drill"], ground_hole)
     ground_copper = params["tuned_ground_copper"]
     if any(layer not in layers for layer in ground_copper):
         raise RFError("ground tuned copper names a nonexistent layer")
@@ -422,6 +439,7 @@ def _generate(recipe):
         if diameter is not None:
             if number(diameter, "ground tuned copper", True) < size:
                 raise RFError("ground enlargement cannot shrink minimum via copper")
+            warnings += _annular_warning(f"ground copper {layer}", diameter, ground["drill"], ground_hole)
             if diameter > size:
                 size = diameter
                 for name, (_angle, center) in lands[layer].items():

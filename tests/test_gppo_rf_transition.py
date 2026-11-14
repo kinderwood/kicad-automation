@@ -530,40 +530,76 @@ class RFRecipeTests(unittest.TestCase):
         with self.assertRaisesRegex(rf.RFError, "signal_via must be null"):
             rf.generate_payload(recipe)
 
-    def test_annular_ring_under_five_mil_is_a_warning_not_a_block(self):
+    def test_annular_ring_under_the_hole_type_limit_is_a_warning_not_a_block(self):
         def rings(recipe):
-            return [w for w in rf.recipe_warnings(recipe) if w["code"] == "annular-ring"]
-        recipe = self.recipe()
+            return [(w["subject"], w["value_mm"], w["limit_mm"])
+                    for w in rf.recipe_warnings(recipe) if w["code"] == "annular-ring"]
+        # Microvias: 2.5 mil (0.0635 mm). A ring exactly at the limit, such as
+        # the 5 mil drill / 10 mil pad default, does not warn.
+        recipe = rf.default_recipe(smd_part())
         review = rf.review_recipe(recipe)
         self.assertEqual(review["payload"], rf.generate_payload(recipe))
         self.assertEqual(rf.recipe_warnings(recipe), review["warnings"])
-        # Signal microvia: (0.45 − 0.2) / 2 = 0.125 mm, under 0.127 mm.
-        self.assertEqual(rings(recipe), [
-            {"code": "annular-ring", "subject": "signal via", "value_mm": 0.125, "limit_mm": 0.127,
-             "message": "signal via: annular ring 0.1250 mm is under 0.127 mm (5 mil)"}])
-        # Exactly 5 mil passes without a warning.
-        recipe["parameters"]["signal_via"]["diameter"] = 0.454
-        recipe["parameters"]["tuned_signal_copper"]["In1.Cu"] = 0.55
+        self.assertEqual(review["warnings"], [])
+        for mil in (4, 6, 7.5, 8, 10, 12.5):  # Exact-limit rings at other mil sizes.
+            exact = rf.default_recipe(smd_part())
+            exact["parameters"]["signal_via"] = {"drill": mil * 0.0254, "diameter": (mil + 5) * 0.0254}
+            exact["parameters"]["ground_via"].update(drill=mil * 0.0254, diameter=(mil + 5) * 0.0254)
+            self.assertEqual(rings(exact), [], mil)
+        recipe["parameters"]["signal_via"]["diameter"] = 0.2539
+        self.assertEqual(rf.recipe_warnings(recipe), [
+            {"code": "annular-ring", "subject": "signal via", "value_mm": 0.06345, "limit_mm": 0.0635,
+             "message": "signal via: annular ring 0.06345 mm is under the 0.0635 mm (2.5 mil) "
+                        "limit for a microvia"}])
+        recipe = rf.default_recipe(smd_part())
+        recipe["parameters"]["ground_via"]["diameter"] = 0.25
+        self.assertEqual(rings(recipe), [("ground via", 0.0615, 0.0635)])
+        # A tuning disc is measured against the microvia it surrounds.
+        recipe = rf.default_recipe(smd_part())
+        recipe["parameters"]["signal_via"] = {"drill": 0.5, "diameter": 0.56}
+        recipe["parameters"]["tuned_signal_copper"].update({"In1.Cu": 0.6, "In2.Cu": 0.65})
+        self.assertEqual(rings(recipe), [("signal via", 0.03, 0.0635), ("signal copper In1.Cu", 0.05, 0.0635)])
+        # Mechanically drilled holes: 5 mil (0.127 mm). Through ground vias:
+        recipe = self.recipe()
         self.assertEqual(rings(recipe), [])
-        recipe["parameters"]["ground_via"].update(diameter=0.5, drill=0.3)
-        self.assertEqual([w["subject"] for w in rings(recipe)], ["ground via"])
-        # Footprint lands are covered too: 0.508 land on a 0.381 hole is 0.0635 mm.
+        recipe["parameters"]["ground_via"].update(diameter=0.554, drill=0.3)
+        self.assertEqual(rings(recipe), [])  # Exactly 5 mil.
+        recipe["parameters"]["ground_via"]["diameter"] = 0.55
+        self.assertEqual(rings(recipe), [("ground via", 0.125, 0.127)])
+        # An enlarged ground land is measured against its via too.
+        recipe["parameters"]["tuned_ground_copper"] = {"F.Cu": 0.552, "In1.Cu": 0.56}
+        self.assertEqual(rings(recipe), [("ground via", 0.125, 0.127), ("ground copper F.Cu", 0.126, 0.127)])
+        # The same 0.125 mm ring on a microvia is well inside its 2.5 mil limit.
+        recipe = self.recipe()
+        recipe["parameters"]["ground_via"].update(via_type="microvia", construction="stacked",
+                                                  diameter=0.55, drill=0.3)
+        self.assertEqual(rings(recipe), [])
+        # The footprint's through-hole land: 0.508 on a 0.381 hole is 0.0635 mm.
         recipe = self.pth_recipe()
-        warnings = rf.recipe_warnings(recipe)
-        self.assertEqual([(w["subject"], w["value_mm"]) for w in warnings], [("footprint signal land", 0.0635)])
-        recipe["parameters"]["tuned_signal_copper"]["In1.Cu"] = 0.5
-        self.assertEqual([w["subject"] for w in rf.recipe_warnings(recipe)],
-                         ["footprint signal land", "signal copper In1.Cu"])
-        recipe["dependencies"]["base_part"]["signal_land"] = 0.635
-        recipe["parameters"]["tuned_signal_copper"] = {l: None for l in recipe["parameters"]["stackup"]}
+        self.assertEqual(rf.recipe_warnings(recipe), [
+            {"code": "annular-ring", "subject": "footprint signal land", "value_mm": 0.0635,
+             "limit_mm": 0.127,
+             "message": "footprint signal land: annular ring 0.0635 mm is under the 0.127 mm "
+                        "(5 mil) limit for a mechanically drilled hole"}])
+        # Tuning discs around the barrel, on a land layer (the In2.Cu exit) and
+        # on an inner layer with no connection (In1.Cu), use the drilled limit.
+        recipe["parameters"]["tuned_signal_copper"].update({"In1.Cu": 0.5, "In2.Cu": 0.6})
+        self.assertEqual(rings(recipe), [("footprint signal land", 0.0635, 0.127),
+                                         ("signal copper In1.Cu", 0.0595, 0.127),
+                                         ("signal copper In2.Cu", 0.1095, 0.127)])
+        recipe["parameters"]["tuned_signal_copper"].update({"In1.Cu": 0.635, "In2.Cu": 0.7})
         recipe["parameters"]["antipads"] = {l: 1.2 for l in recipe["parameters"]["stackup"]}
+        self.assertEqual(rings(recipe), [("footprint signal land", 0.0635, 0.127)])
+        recipe["dependencies"]["base_part"]["signal_land"] = 0.635
         self.assertEqual(rf.recipe_warnings(recipe), [])
         # Warnings never change the payload or block publication; blocks still raise.
-        rf.make_artifact(self.recipe(), "warned")
-        recipe = self.recipe()
-        recipe["parameters"]["signal_via"]["drill"] = 0.45
+        warned = rf.default_recipe(smd_part())
+        warned["parameters"]["signal_via"]["diameter"] = 0.25
+        self.assertTrue(rf.recipe_warnings(warned))
+        rf.make_artifact(warned, "warned")
+        warned["parameters"]["signal_via"]["drill"] = 0.25
         with self.assertRaisesRegex(rf.RFError, "via diameter must exceed drill"):
-            rf.recipe_warnings(recipe)
+            rf.recipe_warnings(warned)
 
     def test_defaults_are_five_mil_microvias_with_the_ground_ring_in_the_pad(self):
         for part in (smd_part(), pth_part()):
@@ -578,9 +614,10 @@ class RFRecipeTests(unittest.TestCase):
             self.assertEqual(params["ground_ring"],
                              {"radius": 1.11125, "start_deg": 30.0, "end_deg": 330.0, "count": 11})
             review = rf.review_recipe(recipe)
-            self.assertEqual({w["code"] for w in review["warnings"]}, {"annular-ring"})
-            # A 10 mil pad on a 5 mil drill is a 2.5 mil ring: the warning fires.
-            self.assertIn(("ground via", 0.0635), [(w["subject"], w["value_mm"]) for w in review["warnings"]])
+            # A 10 mil pad on a 5 mil drill is exactly the 2.5 mil microvia
+            # limit, so the defaults themselves raise no warning.
+            self.assertEqual([w["subject"] for w in review["warnings"]],
+                             ["footprint signal land"] if part["mount"] == "PTH" else [])
             self.assertEqual(review["payload"]["anchors"]["handoff"], [1.11125, 0])
             # The same pattern also validates as a staggered ring.
             params["ground_via"]["construction"] = "staggered"
@@ -889,7 +926,7 @@ class RFNativeTests(unittest.TestCase):
             # The ground disc takes the footprint ground pad's outer diameter,
             # and the via-in-pad ring ties it to that pad.
             self.assertEqual(objects(review["payload"], purpose="ground-disc")[0]["diameter"], 3.175)
-            self.assertEqual({w["code"] for w in review["warnings"]}, {"annular-ring"})
+            self.assertEqual(review["warnings"], [])
             # A front-drawn source is not mirrored: back mounting needs its own.
             with self.assertRaisesRegex(rf.RFError, "selected mount side"):
                 read_base_part(path, side="back", approved=True)
@@ -904,15 +941,14 @@ class RFNativeTests(unittest.TestCase):
             dialog.Show()
             app.Yield()
             self.assertFalse(dialog.save.IsEnabled())
-            dialog.set_recipe(rf.default_recipe(smd_part()))
+            dialog.set_recipe(wide_ring(rf.default_recipe(smd_part())))
             dialog.validate(None)
             app.Yield()
             self.assertTrue(dialog.save.IsEnabled(), dialog.report.GetValue())
             self.assertTrue(dialog.preview.payload)
             # A warning is shown in the report and does not block publication.
-            self.assertIn("2 warnings", dialog.report.GetValue())
-            self.assertIn("WARNING · signal via: annular ring", dialog.report.GetValue())
-            self.assertIn("WARNING · ground via: annular ring", dialog.report.GetValue())
+            self.assertIn("1 warnings", dialog.report.GetValue())
+            self.assertIn("WARNING · ground disc: the ground ring does not land", dialog.report.GetValue())
             original = dialog.validated[1]
             dialog.artifact = original
             dialog.revision(None)

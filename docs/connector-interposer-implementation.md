@@ -520,8 +520,10 @@ ground disc layer for an SMD pin's microvias. A footprint has exactly two
 electrical pads, and its one annular ground pad must resolve to a solid zone
 connection, so the example GPPO footprint now sets that on its ground pad.
 Defaults are 5 mil drill, 10 mil pad microvias with the ground ring in the
-footprint's ground pad. A second warning reports an SMD ground disc that the
-ring does not tie to the ground pad. The recipe schema is
+footprint's ground pad. The annular ring warning limit follows the hole type:
+5 mil for a mechanically drilled hole and 2.5 mil for a microvia. A second
+warning reports an SMD ground disc that the ring does not tie to the ground
+pad. The recipe schema is
 `gppo.rf-recipe/3.0`; the artifact envelope and payload schemas are unchanged,
 so Workflow 0.8.0 consumes the regenerated example library as it is.
 
