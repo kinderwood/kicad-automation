@@ -1,12 +1,12 @@
 # Connector to Interposer Workflow
 
-Version **0.8.0**, testing release. The package targets KiCad 10.0.0 through
+Version **0.9.0**, testing release. The package targets KiCad 10.0.0 through
 10.0.8; repository compatibility checks and the bounded runtime evidence must
 be considered separately from fabrication or RF qualification.
 
 This independent PCB Action Plugin consumes librarian-approved connector
-footprints and symbols, interposer footprints, and optional immutable RF artifact
-bundles. RF locations use individual signal-plus-ground/shield parts. DC
+footprints and symbols, interposer footprints, and optional named RF transition
+files. RF locations use individual signal-plus-ground/shield parts. DC
 connectors use one selected single-unit multi-pin symbol and footprint; unused
 DC pins remain explicitly unconnected.
 It never invokes the BGA Interposer Wizard or an RF authoring tool and exposes
@@ -145,18 +145,31 @@ files changed after the transaction.
    controls without reverting assignments already made. The workflow instantiates these librarian-authored parts; it
    does not generate library symbols or footprints. Placement and BOM overrides
    are not entered on this page.
-6. **RF transitions:** optionally assign one immutable published transition to each unique
+6. **RF transitions:** optionally assign one saved transition to each unique
    `(netclass, mapped KiCad layer, connector footprint)` requirement. One row can
    cover locations in several gangs. Unassigned requirements do not block Review
-   Changes or board generation. Once assigned, the workflow validates the exact footprint
-   revision and mount type, board side, copper layer count, allowed netclass,
-   exit layer and artifact hash before Review changes. Any board with the same
-   number of copper layers accepts the transition. Apply places it at the
+   Changes or board generation. The netclass only organises this page: a
+   transition names no netclass, and any transition whose connector footprint
+   (identity and hash), copper layer count, mount side and exit layer match
+   may be assigned to any requirement. Once assigned, the workflow checks
+   those four things, the signal pad's mount type and the file's hash before
+   Review changes. Any board with the same number of copper layers accepts
+   the transition.
+
+   A transition is identified by its name and may be saved again in the
+   library under the same name. The assignment records the file's hash, and
+   Apply keeps a pinned copy of the assigned content in the project. A
+   re-saved library file never changes placed instances by itself. Before
+   the first Apply it blocks Review with a message to select the transition
+   again. After Apply the project keeps using its pinned copy. In both
+   cases, selecting the transition again adopts the new content, and Review
+   changes then lists each affected connector as a change from the old hash
+   to the new one before Apply replaces its objects. Apply places it at the
    connector's position and clock angle as saved: filled vias, copper discs,
    antipad and corridor rule areas, the SMD ground disc and the exit trace, all
    locked. **Refresh libraries**
-   in the toolbar discovers published `.gppo-rf.json` files beneath the project;
-   **Browse artifact…** can select a catalog artifact elsewhere. **Open RF
+   in the toolbar discovers `.gppo-rf.json` files beneath the project;
+   **Browse…** can select a transition file elsewhere. **Open RF
    Transition Designer…** is a disabled placeholder in this release.
 7. **Define RF gangs:** select an RF gang from the searchable netlist-derived list.
    On **Pattern**, add or remove rows, set the number of positions and X offset
@@ -268,7 +281,7 @@ is snapshotted under `.connector-interposer-inputs`; selected parts, approved
 symbols and RF artifacts remain pinned under `.connector-interposer-pinned`.
 Generated project-local footprint
 aliases avoid taking over designer library-table entries. Generated-file ownership,
-instance UUIDs and immutable artifact pins are stored separately in the project.
+instance UUIDs and hash-named pinned copies are stored separately in the project.
 The project root schematic remains designer-owned. The workflow maintains one
 stable root-sheet entry and writes its generated sheets and symbol libraries
 under `.connector-interposer-managed/`; unrelated root sheets and symbols survive
@@ -294,8 +307,8 @@ workflow retains the resolved source and content hash internally so a selected
 library revision remains deterministic without exposing filesystem paths as the
 primary user interface. Connector assignment footprint dropdowns apply the
 selected symbol's `ki_fp_filters` and require exact symbol-pin to footprint-pad
-compatibility. RF transition artifacts remain separate immutable
-catalog files in this release. This release browses native `.pretty` footprint
+compatibility. RF transitions are separate named files in a library
+directory, read by scanning it. This release browses native `.pretty` footprint
 libraries and `.kicad_sym` symbol libraries; database, legacy and other
 non-native library types are not offered.
 

@@ -16,16 +16,16 @@ from plugins.connector_interposer_workflow.controller import (
 )
 
 
-def write_transition(path, part_id, part_sha256, netclass='RF', layer='F.Cu',
-                     stack=('F.Cu', 'B.Cu')):
+def write_transition(path, part_id, part_sha256, layer='F.Cu',
+                     stack=('F.Cu', 'B.Cu'), name='test-transition', diameter=.8):
     from plugins.connector_interposer_workflow.artifacts import canonical, sha256
     artifact = {
-        'schema': 'gppo.artifact/2.0', 'artifact_id': 'test-transition',
-        'revision': 1, 'kind': 'rf-transition', 'payload_schema': 'gppo.rf/2.0',
+        'schema': 'gppo.artifact/3.0', 'name': name,
+        'kind': 'rf-transition', 'payload_schema': 'gppo.rf/2.0',
         'recipe': {'fixture': True},
         'compatibility': {
             'part_id': part_id, 'part_sha256': part_sha256, 'mount': 'PTH',
-            'side': 'front', 'netclasses': [netclass],
+            'side': 'front',
             'copper_layer_count': len(stack),
         },
         'required_capabilities': ['net-copper-shapes', 'native-tracks'],
@@ -37,7 +37,7 @@ def write_transition(path, part_id, part_sha256, netclass='RF', layer='F.Cu',
             'layer_roles': {'mount': 'F.Cu', 'signal': layer},
             'objects': [{
                 'id': 'signal-land', 'type': 'copper', 'shape': 'circle',
-                'net': 'signal', 'at': [0, 0], 'diameter': .8, 'layer': layer,
+                'net': 'signal', 'at': [0, 0], 'diameter': diameter, 'layer': layer,
             }, {
                 'id': 'exit-trace', 'type': 'track', 'net': 'signal',
                 'layer': layer, 'width': .25, 'start': [0, 0], 'end': [2, 0],
@@ -486,7 +486,8 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.gang('J202')['display_units']['anchor_x'], 'um')
         self.assertEqual(self.controller.gang('J202')['display_units']['anchor_y'], 'mil')
 
-    def test_rf_requirements_group_by_netclass_layer_and_footprint(self):
+    def _rf_requirement(self):
+        """The one RF requirement of a two-layer board with a through-hole GPPO."""
         self.controller.set_layers(('F.Cu', 'B.Cu'))
         self.controller.set_layer_mapping('L1', 'F.Cu')
         self.controller.set_netclass_type('Control', 'DC')
@@ -506,7 +507,11 @@ class ControllerTests(unittest.TestCase):
         })
         requirements = self.controller.rf_transition_requirements()
         self.assertEqual(len(requirements), 1)
-        requirement = requirements[0]
+        return requirements[0]
+
+    def test_rf_requirements_group_by_netclass_layer_and_footprint(self):
+        requirement = self._rf_requirement()
+        part_sha = requirement['part_sha256s'][0]
         self.assertEqual(
             (requirement['netclass'], requirement['layer'], requirement['footprint']),
             ('RF', 'F.Cu', 'Approved:GPPO'),
@@ -519,8 +524,63 @@ class ControllerTests(unittest.TestCase):
         )
         self.controller.set_rf_transition(requirement['key'], artifact)
         refreshed = self.controller.rf_transition_requirements()[0]
-        self.assertEqual(self.controller.validate_rf_transition(refreshed)['artifact_id'],
+        self.assertEqual(self.controller.validate_rf_transition(refreshed)['name'],
                          'test-transition')
+        self.assertEqual(set(refreshed['assignment']), {'path', 'sha256', 'name'})
+
+    def test_rf_transition_is_netclass_agnostic(self):
+        requirement = self._rf_requirement()
+        # The requirement is organised by its netclass, but nothing in the
+        # transition names one: the same file serves any netclass.
+        self.assertEqual(requirement['netclass'], 'RF')
+        artifact = write_transition(
+            self.root / 'transition.gppo-rf.json', 'Approved:GPPO',
+            requirement['part_sha256s'][0],
+        )
+        self.assertNotIn('RF', artifact.read_text())
+        for netclass in ('RF', 'CLOCK', 'anything'):
+            self.controller._checked_transition({**requirement, 'netclass': netclass}, artifact)
+        # It still matches on footprint id and hash, layer count, side and exit layer.
+        for change, message in (({'footprint': 'Approved:Other'}, 'different connector footprint'),
+                                ({'part_sha256s': ('f' * 64,)}, 'footprint revision'),
+                                ({'sides': ('B',)}, 'different board side'),
+                                ({'layer': 'B.Cu'}, 'signal layer')):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, message):
+                self.controller._checked_transition({**requirement, **change}, artifact)
+        self.controller.copper_layers = ('F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu')
+        with self.assertRaisesRegex(ValueError, 'layer count'):
+            self.controller._checked_transition(requirement, artifact)
+
+    def test_resaved_library_transition_is_never_adopted_silently(self):
+        requirement = self._rf_requirement()
+        sha = requirement['part_sha256s'][0]
+        library = self.root / 'transition.gppo-rf.json'
+        write_transition(library, 'Approved:GPPO', sha)
+        self.controller.set_rf_transition(requirement['key'], library)
+        assigned = self.controller.rf_transition_requirements()[0]
+        first = self.controller.validate_rf_transition(assigned)
+        # The same name is saved again in the library with different content.
+        write_transition(library, 'Approved:GPPO', sha, diameter=.9)
+        with self.assertRaisesRegex(ValueError, 'test-transition was saved again with different '
+                                    'content; select it again'):
+            self.controller.validate_rf_transition(assigned)
+        self.assertTrue(any(issue.code == 'rf_transition' for issue in self.controller.validate()))
+        # Once the project holds its pinned copy of the assigned content,
+        # the project keeps using that copy and ignores the library file.
+        pinned = (self.controller.board_path.parent / '.connector-interposer-pinned' / 'rf' /
+                  (first['hashes']['artifact'] + '.json'))
+        pinned.parent.mkdir(parents=True)
+        from plugins.connector_interposer_workflow.artifacts import canonical
+        pinned.write_bytes(canonical(first))
+        self.assertEqual(self.controller.validate_rf_transition(assigned), first)
+        # Selecting the transition again is the explicit step that adopts
+        # the new content, under the same name with a new hash.
+        self.controller.set_rf_transition(requirement['key'], library)
+        adopted = self.controller.rf_transition_requirements()[0]
+        self.assertEqual(adopted['assignment']['name'], 'test-transition')
+        self.assertNotEqual(adopted['assignment']['sha256'], assigned['assignment']['sha256'])
+        second = self.controller.validate_rf_transition(adopted)
+        self.assertEqual(second['payload']['objects'][0]['diameter'], .9)
 
     def test_changed_external_artifact_blocks_apply(self):
         artifact = self.root/'rf.json'
@@ -1677,7 +1737,7 @@ class NativeDialogTests(unittest.TestCase):
                              'Found 0 transitions in the project folder')
             artifact = write_transition(
                 Path(temporary.name) / 'test.gppo-rf.json', 'Approved:GPPO',
-                part.sha256, netclass='CLOCK',
+                part.sha256,
             )
             dialog.controller.set_rf_transition(requirements[0]['key'], artifact)
             dialog.refresh_rf_transitions()

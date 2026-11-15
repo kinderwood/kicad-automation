@@ -213,15 +213,26 @@ group. Error text states the failed condition and the corrective action.
 
 RF transitions is an optional, separate project-wide reconciliation step. It derives one
 requirement for every unique `(netclass, mapped KiCad layer, connector
-footprint)` tuple used by an RF location and assigns one compatible, published
-transition artifact to that requirement when one is available. An unassigned
+footprint)` tuple used by an RF location and assigns one compatible saved
+transition to that requirement when one is available. An unassigned
 requirement does not block review or board generation. An explicitly selected
-but incompatible artifact remains a blocking error. Artifact side, copper layer
-count, revision and footprint hash remain compatibility checks rather than parts
-of the requirement identity. Existing artifacts are immutable library inputs. An optional **Open
+but incompatible transition remains a blocking error. A transition's side,
+copper layer count, exit layer and footprint identity and hash are
+compatibility checks. The requirement's netclass is an organisational key of
+this page only: a transition names no netclass and is never compared with one.
+
+A transition is identified by its name and has no revision. A library file
+may be saved again under the same name, so "changed" means that its hash
+differs from the hash recorded with the assignment, or from the copy pinned
+in the project under that hash. The Workflow never follows a changed library
+file on its own: an assignment that has no pinned copy yet blocks with a
+request to select the transition again, an applied project keeps resolving
+its pinned copy, and only an explicit selection records the new hash. The
+resulting difference is an ordinary reviewed update of each instance, shown
+as the same name with the old and new hash. An optional **Open
 RF Transition Designer…** action may launch the separately installed authoring
 tool, but this workflow must remain usable when that package is absent. The two
-tools communicate through the versioned artifact/catalog contract and an
+tools communicate through the versioned artifact file contract and an
 explicit library refresh, not an in-memory runtime dependency.
 
 Interposer microvias is an optional, compact derivation step after placement and
@@ -382,12 +393,12 @@ project snapshots preserve exact selected revisions rather than newly authored
 variants. RF payloads are declarative;
 opaque recipes are retained as provenance and never executed. Transition
 assignments are reconciled by electrical requirement across all RF locations;
-the workflow rejects incompatible saved layer, side, copper layer count, revision
-or footprint roles rather than silently retuning geometry.
+the workflow rejects incompatible saved layer, side, copper layer count or
+footprint roles rather than silently retuning geometry.
 
 The physical contract for a placed transition is
 `docs/rf-transition-contract.md`, "What the Workflow must do". The consumer
-reads the `gppo.artifact/2.x` envelope with a `gppo.rf/2.0` payload only.
+reads the `gppo.artifact/3.x` envelope with a `gppo.rf/2.0` payload only.
 Stackup identity is the copper layer count; payload layer names are KiCad's
 literal names for that count. Each saved object is created exactly, at the
 connector position with the clock applied once to the whole transition:

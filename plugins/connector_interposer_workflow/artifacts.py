@@ -76,16 +76,18 @@ def _circle_intrudes(points, center, radius, tolerance=1e-9):
     return inside or minimum < radius - tolerance
 
 
-def validate_artifact(artifact, *, layers=None, part_sha256=None, netclass=None):
+def validate_artifact(artifact, *, layers=None, part_sha256=None):
     """Validate exact supported semantics and integrity, retaining opaque recipes."""
     try:
         canonical(artifact)
-        if not artifact["schema"].startswith("gppo.artifact/2."):
+        if not artifact["schema"].startswith("gppo.artifact/3."):
             raise ArtifactError("Unsupported artifact envelope")
         if artifact["payload_schema"] != "gppo.rf/2.0" or artifact["kind"] != "rf-transition":
             raise ArtifactError("Unsupported RF payload schema")
-        if not artifact["artifact_id"] or not isinstance(artifact["revision"], (str, int)):
-            raise ArtifactError("Missing artifact identity/revision")
+        # A transition is identified by its name. It has no revision: a file
+        # re-saved under the same name is told apart by its hash alone.
+        if not isinstance(artifact["name"], str) or not artifact["name"]:
+            raise ArtifactError("RF transition has no name")
         hashes = artifact["hashes"]
         for name in ("payload", "recipe"):
             if hashes[name] != sha256(artifact[name]):
@@ -106,8 +108,6 @@ def validate_artifact(artifact, *, layers=None, part_sha256=None, netclass=None)
         # Stackup identity is the copper layer count; the payload's layer
         # names are the literal KiCad names for that count.
         declared_layers = copper_layer_names(compatibility["copper_layer_count"])
-        if not compatibility["netclasses"] or any(not isinstance(c, str) or not c for c in compatibility["netclasses"]):
-            raise ArtifactError("Artifact requires explicit allowed netclasses")
         anchors = payload["anchors"]
         if payload["net_roles"] != ["signal", "ground"] or anchors["signal"] != [0, 0] or anchors["exit_direction_deg"] != 0:
             raise ArtifactError("Unsupported RF net-role or anchor convention")
@@ -117,8 +117,6 @@ def validate_artifact(artifact, *, layers=None, part_sha256=None, netclass=None)
             raise ArtifactError("Artifact requires valid mount and signal layer roles")
         if part_sha256 is not None and compatibility.get("part_sha256") not in (None, "", part_sha256):
             raise ArtifactError("Artifact is incompatible with selected footprint revision")
-        if netclass is not None and compatibility.get("netclasses") and netclass not in compatibility["netclasses"]:
-            raise ArtifactError("Artifact does not allow selected netclass")
         if layers is not None and len(layers) != len(declared_layers):
             raise ArtifactError("Artifact copper layer count differs from the board")
         layers = declared_layers
@@ -258,7 +256,7 @@ def load_artifact(path, **checks):
 
 
 def pin_artifact(path, destination, **checks):
-    """Pin exact approved bytes; never rewrite or alter the librarian source."""
+    """Pin the exact bytes of a library file; never rewrite or alter the source."""
     source = Path(path)
     data = source.read_bytes()
     artifact = validate_artifact(json.loads(data), **checks)
@@ -266,7 +264,7 @@ def pin_artifact(path, destination, **checks):
     if target.resolve() == source.resolve():
         raise ArtifactError("Pinned snapshot must be separate from library source")
     if target.exists() and target.read_bytes() != data:
-        raise ArtifactError("Pinned artifact revision collision")
+        raise ArtifactError("Pinned RF transition copy does not match its hash")
     if not target.exists():
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)

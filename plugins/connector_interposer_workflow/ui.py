@@ -4479,7 +4479,7 @@ class WorkflowDialog(wx.Dialog):
             return 'Blocked', 'Requirement inputs are incomplete or inconsistent'
         try:
             artifact = self.controller.validate_rf_transition(requirement)
-            return 'Ready', f'{artifact["artifact_id"]} r{artifact["revision"]}'
+            return 'Ready', artifact["name"]
         except (OSError, ValueError) as error:
             return 'Blocked', str(error)
 
@@ -4507,8 +4507,7 @@ class WorkflowDialog(wx.Dialog):
             if wanted and wanted != 'All statuses' and wanted != state:
                 continue
             assignment = requirement.get('assignment', {})
-            label = (f'{assignment.get("artifact_id")} r{assignment.get("revision")}'
-                     if assignment.get('artifact_id') else detail)
+            label = assignment.get('name') or detail
             row = self.transition_list.InsertItem(self.transition_list.GetItemCount(), state)
             for column, value in enumerate((
                 requirement['netclass'], requirement['layer'] or 'Unmapped',
@@ -4558,17 +4557,16 @@ class WorkflowDialog(wx.Dialog):
         )
         compatible = []
         for path, artifact in sorted(self.transition_catalog.items(), key=lambda item: (
-                item[1]['artifact_id'], str(item[1]['revision']), item[0])):
+                item[1]['name'], item[0])):
             try:
                 self.controller._checked_transition(requirement, path)
             except (OSError, ValueError):
                 continue
-            compatible.append((path, f'{artifact["artifact_id"]} r{artifact["revision"]}'))
+            compatible.append((path, artifact['name']))
         assigned_path = requirement.get('assignment', {}).get('path', '')
         if assigned_path and assigned_path not in {path for path, _label in compatible}:
-            label = requirement['assignment'].get('artifact_id', Path(assigned_path).name)
-            revision = requirement['assignment'].get('revision', '')
-            compatible.append((assigned_path, f'{label} r{revision}'.rstrip()))
+            compatible.append((assigned_path, requirement['assignment'].get(
+                'name', Path(assigned_path).name)))
         self._transition_choice_paths = [''] + [path for path, _label in compatible]
         self.transition_choice.Set(['Choose from project transition library'] +
                                    [label for _path, label in compatible])

@@ -12,10 +12,10 @@ from unittest import mock
 
 
 def artifact_fixture(part_sha256="a"*64):
-    artifact = {"schema": "gppo.artifact/2.0", "artifact_id": "approved-sample", "revision": 1,
+    artifact = {"schema": "gppo.artifact/3.0", "name": "approved-sample",
                 "kind": "rf-transition", "payload_schema": "gppo.rf/2.0", "recipe": {"opaque": "never execute"},
                 "compatibility": {"part_id": "Approved:GPPO", "part_sha256": part_sha256,
-                                  "mount": "SMD", "side": "front", "netclasses": ["RF"],
+                                  "mount": "SMD", "side": "front",
                                   "copper_layer_count": 4},
                 "required_capabilities": ["native-vias", "net-copper-shapes", "layer-rule-areas",
                                           "native-tracks", "filled-vias"],
@@ -68,25 +68,25 @@ class ArtifactTests(unittest.TestCase):
             with mock.patch.object(artifacts, "validate_artifact",
                                    wraps=artifacts.validate_artifact) as validate:
                 first = load_artifact(source, layers=layers)
-                first["artifact_id"] = "caller edits never reach the next reader"
-                self.assertEqual(load_artifact(source, layers=layers)["artifact_id"],
+                first["name"] = "caller edits never reach the next reader"
+                self.assertEqual(load_artifact(source, layers=layers)["name"],
                                  "approved-sample")
                 self.assertEqual(validate.call_count, 1)
                 # Other checks are a different question about the same bytes.
                 with self.assertRaises(ArtifactError):
-                    load_artifact(source, layers=layers, netclass="OTHER")
+                    load_artifact(source, layers=layers, part_sha256="f" * 64)
                 with self.assertRaises(ArtifactError):
-                    load_artifact(source, layers=layers, netclass="OTHER")
+                    load_artifact(source, layers=layers, part_sha256="f" * 64)
                 self.assertEqual(validate.call_count, 2)
                 tampered = artifact_fixture()
-                tampered["artifact_id"] = "tampered"
+                tampered["name"] = "tampered"
                 source.write_bytes(canonical(tampered))
                 with self.assertRaises(ArtifactError):
                     load_artifact(source, layers=layers)
                 self.assertEqual(validate.call_count, 3)
 
     def test_integrity_protects_metadata_and_payload(self):
-        for field in ("artifact_id", "recipe", "payload"):
+        for field in ("name", "recipe", "payload"):
             artifact = artifact_fixture()
             artifact[field] = "tampered"
             with self.subTest(field=field), self.assertRaises(ArtifactError):
@@ -110,7 +110,7 @@ class ArtifactTests(unittest.TestCase):
             elif change == "treatment":
                 via["fill"] = "epoxy"
             elif change == "old-envelope":
-                artifact["schema"] = "gppo.artifact/1.0"
+                artifact["schema"] = "gppo.artifact/2.0"
             else:
                 artifact["payload_schema"] = "gppo.rf/1.0"
             rehash(artifact)
@@ -155,6 +155,25 @@ class ArtifactTests(unittest.TestCase):
         artifact["payload"]["objects"] = [x for x in artifact["payload"]["objects"]
                                           if x["id"] not in ("ground-disc", "signal-via", "signal-via-2")]
         validate_artifact(rehash(artifact))
+
+    def test_transition_is_named_netclass_agnostic_and_has_no_revision(self):
+        artifact = artifact_fixture()
+        self.assertNotIn("revision", artifact)
+        self.assertNotIn("netclasses", artifact["compatibility"])
+        validate_artifact(artifact)
+        # A netclass is no longer a question the consumer can ask.
+        with self.assertRaises(TypeError):
+            validate_artifact(artifact, netclass="RF")
+        for name in ("", None, 3):
+            bad = artifact_fixture()
+            bad["name"] = name
+            with self.subTest(name=name), self.assertRaisesRegex(ArtifactError, "no name"):
+                validate_artifact(rehash(bad))
+        bad = artifact_fixture()
+        del bad["name"]
+        bad["artifact_id"] = "approved-sample"
+        with self.assertRaises(ArtifactError):
+            validate_artifact(rehash(bad))
 
     def test_stackup_identity_is_the_copper_layer_count(self):
         artifact = artifact_fixture()

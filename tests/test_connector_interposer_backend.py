@@ -750,10 +750,8 @@ class BackendTests(unittest.TestCase):
         output = Path(first["board_path"])
         desired = copy.deepcopy(self.desired)
         spec = desired["instances"]["J101-1"]
+        # The transition is netclass-agnostic, so it serves the new class as it is.
         spec["netclass"] = "DATA"
-        spec["rf"]["artifact"]["revision"] = 2
-        spec["rf"]["artifact"]["compatibility"]["netclasses"] = ["RF", "DATA"]
-        rehash(spec["rf"]["artifact"])
         settings = json.loads((output.parent/"demo.kicad_pro").read_text())
         settings["net_settings"]["classes"].append({"name": "DATA", "priority": 0})
         settings["net_settings"]["netclass_patterns"] = [{"netclass": "DATA", "pattern": "CLOCK"}]
@@ -788,7 +786,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual("NOOP", self.backend.apply(self.backend.preview(output, desired), self.root/"unused-fields")["status"])
         self.assertEqual((raw, saved), (output.read_bytes(), output.stat().st_mtime_ns))
 
-    def test_rf_layer_side_and_netclass_are_independent_checks(self):
+    def test_rf_layer_and_side_are_checked_and_netclass_is_not(self):
         for mode in ("layer", "side", "class"):
             desired = copy.deepcopy(self.desired)
             spec = desired["instances"]["J101-1"]
@@ -803,8 +801,42 @@ class BackendTests(unittest.TestCase):
             else:
                 spec["netclass"] = "DATA"
             rehash(artifact)
+            if mode == "class":
+                # A transition is netclass-agnostic: any class may use it.
+                self.assertEqual(self.backend.preview(self.board_path, desired)["conflicts"], [])
+                continue
             with self.subTest(mode=mode), self.assertRaises(ValueError):
                 self.backend.preview(self.board_path, desired)
+
+    def test_resaved_transition_with_the_same_name_is_a_reviewed_update(self):
+        first = self.apply_first()
+        output = Path(first["board_path"])
+        self.assertEqual("NOOP", self.backend.preview(output, self.desired)["status"])
+        # The same name saved again with different content: only the hash
+        # tells the two apart. It is an ordinary reviewed change, not a conflict.
+        desired = copy.deepcopy(self.desired)
+        artifact = desired["instances"]["J101-1"]["rf"]["artifact"]
+        before = artifact["hashes"]["artifact"]
+        next(x for x in artifact["payload"]["objects"] if x["id"] == "signal-land")["diameter"] = .9
+        rehash(artifact)
+        preview = self.backend.preview(output, desired)
+        self.assertEqual((preview["status"], preview["conflicts"]), ("PREVIEW", []))
+        change, = preview["changes"]
+        self.assertEqual((change["key"], change["kind"]), ("J101-1", "update"))
+        self.assertEqual(change["rf"]["before"]["name"], change["rf"]["after"]["name"])
+        self.assertEqual((change["rf"]["before"]["sha256"], change["rf"]["after"]["sha256"]),
+                         (before, artifact["hashes"]["artifact"]))
+        self.assertNotIn("revision", change["rf"]["after"])
+        second = self.backend.apply(preview, self.root/"resaved")
+        board = p.LoadBoard(second["board_path"])
+        land = board_items(board)[second["registry"]["instances"]["J101-1"]["objects"]["signal-land"]]
+        self.assertEqual(land.GetRadius(), p.FromMM(.45))
+        # The placed objects keep their identities, and the project pins both contents by hash.
+        self.assertEqual(first["registry"]["instances"]["J101-1"]["objects"],
+                         second["registry"]["instances"]["J101-1"]["objects"])
+        pins = Path(second["board_path"]).parent/".connector-interposer-pinned"/"rf"
+        self.assertTrue((pins/(artifact["hashes"]["artifact"] + ".json")).is_file())
+        self.assertEqual("NOOP", self.backend.preview(second["board_path"], desired)["status"])
 
     def test_rf_stackup_identity_is_the_copper_layer_count(self):
         # A four-layer transition names only layers a six-layer board also

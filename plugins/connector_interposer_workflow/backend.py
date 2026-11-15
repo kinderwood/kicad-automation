@@ -701,9 +701,9 @@ class NativeBackend:
                 artifact = copy.deepcopy(rf["artifact"])
                 # Layer bindings resolve declared saved layer names only.
                 mapping = rf.get("layers", {})
-                check_key = (sha256(artifact), spec["footprint"]["sha256"], spec.get("netclass"))
+                check_key = (sha256(artifact), spec["footprint"]["sha256"])
                 if check_key not in artifact_checks:
-                    validate_artifact(artifact, part_sha256=spec["footprint"]["sha256"], netclass=spec.get("netclass"))
+                    validate_artifact(artifact, part_sha256=spec["footprint"]["sha256"])
                     artifact_checks.add(check_key)
                 signal_layer = artifact["payload"].get("layer_roles", {}).get("signal")
                 if spec.get("signal_layer") and mapping.get(signal_layer, signal_layer) != spec["signal_layer"]:
@@ -840,11 +840,6 @@ class NativeBackend:
                 kind = "remove"
             elif _spec_identity(old[key]["spec"]) != _spec_identity(new[key]):
                 kind = "update"
-                prior = old[key]["spec"].get("rf", {}).get("artifact")
-                after = new[key].get("rf", {}).get("artifact")
-                if prior and after and (prior["artifact_id"], prior["revision"]) == (after["artifact_id"], after["revision"]) and prior != after:
-                    conflicts.append({"kind": "revision-collision", "key": key,
-                                      "message": "Same RF artifact revision has different content"})
             else:
                 continue
             previous_pads = old.get(key, {}).get("spec", {}).get("pads", {})
@@ -862,7 +857,7 @@ class NativeBackend:
                     if not value:
                         return None
                     artifact = value["artifact"]
-                    return {"artifact_id": artifact["artifact_id"], "revision": artifact["revision"],
+                    return {"name": artifact["name"],
                             "sha256": artifact["hashes"]["artifact"], "clock": value.get("clock"),
                             "nets": value.get("nets"), "layers": value.get("layers")}
                 detail["rf"] = {"before": summary(before_spec.get("rf")), "after": summary(after_spec.get("rf"))}

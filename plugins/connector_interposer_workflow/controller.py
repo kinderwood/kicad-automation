@@ -430,10 +430,12 @@ class WorkflowController:
             raise ValueError('The requirement does not resolve to one footprint revision')
         if len(requirement['sides']) != 1:
             raise ValueError('The requirement is used on both board sides')
+        # A transition is netclass-agnostic: it matches on connector
+        # footprint (part id and hash), copper layer count, mount side and
+        # exit layer. The requirement's netclass only organises this page.
         artifact = load_artifact(
             path, layers=self.copper_layers,
             part_sha256=requirement['part_sha256s'][0],
-            netclass=requirement['netclass'],
         )
         compatibility = artifact['compatibility']
         if compatibility['part_id'] != requirement['footprint']:
@@ -477,7 +479,7 @@ class WorkflowController:
         artifact = self._checked_transition(requirement, source)
         self.config['artifacts'][requirement_key] = {
             'path': str(source), 'sha256': artifact['hashes']['artifact'],
-            'artifact_id': artifact['artifact_id'], 'revision': artifact['revision'],
+            'name': artifact['name'],
         }
         self.changed()
 
@@ -492,7 +494,8 @@ class WorkflowController:
         if (assignment.get('sha256') and
                 artifact['hashes']['artifact'] != assignment['sha256']):
             raise ValueError(
-                'Selected RF transition revision changed; explicitly select the new revision'
+                f'RF transition {artifact["name"]} was saved again with different content; '
+                'select it again to use the new content'
             )
         return artifact
 

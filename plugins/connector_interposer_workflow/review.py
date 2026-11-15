@@ -160,8 +160,10 @@ def _updated(change, length):
     if 'rf' in change:
         for words, key in ((before, 'before'), (after, 'after')):
             transition = change['rf'].get(key)
-            words.append(f'RF transition {transition["artifact_id"]} rev '
-                         f'{transition["revision"]}' if transition else 'no RF transition')
+            # A re-saved transition keeps its name; the hash tells the
+            # two contents apart.
+            words.append(f'RF transition {transition["name"]} ({transition["sha256"][:8]})'
+                         if transition else 'no RF transition')
     return ', '.join(before) or '—', ', '.join(after) or '—'
 
 
