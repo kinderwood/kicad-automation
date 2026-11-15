@@ -1,6 +1,6 @@
 # GPPO RF Transition Designer
 
-Independent librarian authoring ActionPlugin, version **0.4.1 testing**. Supports
+Independent librarian authoring ActionPlugin, version **0.5.0 testing**. Supports
 the repository's KiCad **10.0.0 through 10.0.8** range. Exact runtime results and
 scope are recorded in the repository's
 `docs/connector-interposer-implementation.md`.
@@ -29,7 +29,7 @@ and the names of its settings.
    fills the editor with that part's defaults; see "Defaults" below. A later
    selection replaces only the part, and for a through-hole source sets
    `signal_via` to `null` and adds an antipad entry for every layer.
-3. Set stackup, exit layer (`signal_layer`), netclasses, via dimensions, ground
+3. Set stackup, exit layer (`signal_layer`), via dimensions, ground
    ring construction, layer-specific copper and antipads. The JSON editor
    exposes every saved setting without an external program. Mount/part/pad
    roles come from the inspected base source. Architecture worksheet layer
@@ -38,20 +38,21 @@ and the names of its settings.
    filters the preview, which draws the exit trace on its layer; the arrow
    shows the default clock's exit direction. The report lists each warning
    under the validation line, then the supported runtime and explicit
-   limitations. A warning does not block publication; a blocking error does.
-   Any edit invalidates publication until the new recipe passes validation.
-5. **Publish immutable library bundle…** writes an exact artifact with recipe,
-   source hash and provenance, plus a catalog `manifest.json`. It writes no
-   library footprint because the base source already supplies that geometry;
-   vias and the exit trace are actual declarative board objects, never
-   footprint graphics.
+   limitations. A warning does not block saving; a blocking error does.
+   Any edit of the recipe or the name needs a new validation before saving.
+5. Type a **Name** and choose **Save…**. The name identifies the transition
+   and names its file, `<name>.gppo-rf.json`, in the library directory you
+   pick. If a transition of that name with different content is already
+   there, the dialog asks before replacing it. Saving identical content
+   leaves the file untouched. Saving writes no library footprint because the
+   base source already supplies that geometry; vias and the exit trace are
+   actual declarative board objects, never footprint graphics.
 
-**Open artifact…** checks integrity and reproduces the payload before reopening
-its recipe. An existing revision is immutable: choose **Clone variant** for a
-new artifact identity and parent pin, or **New revision** to retain identity and
-publish the next revision. Old files and project pins remain unchanged. A
-repeated publication of identical content leaves the artifact bytes and mtime
-unchanged. Reusing an identity/revision with different content is blocked.
+**Open transition…** checks integrity and reproduces the payload before
+reopening its recipe and name. To duplicate a transition, open it, give it a
+new name and save. To change one, open it, edit and save under the same name.
+There are no revisions, clones or parent links, and a transition is not tied
+to a netclass.
 
 ## Recipe geometry
 
@@ -66,7 +67,6 @@ complete transition.
 |---|---|
 | `stackup` | Literal KiCad copper layer names, top to bottom (`F.Cu`, `In1.Cu`, …, `B.Cu`). Compatibility is its length, the copper layer count |
 | `signal_layer` | The exit layer. It must be an inner layer |
-| `netclasses` | Netclasses the transition may be assigned to |
 | `signal_via` | SMD pin: `{diameter, drill}` of the stacked one-layer microvias from the mount layer to the exit layer. Through-hole pin: `null` |
 | `ground_via` | `{via_type, diameter, drill, construction}`; see below |
 | `ground_ring` | `{radius, start_deg, end_deg, count}` |
@@ -230,16 +230,32 @@ ratio), dielectric data, impedance, assembly
 tolerances or complete rendered/exported copper equivalence. There are no
 dogbone or jog launches.
 
-The catalog is a simple directory index. Publish from one librarian process at
-a time. Artifact creation is exclusive and complete-file publication prevents
-partial immutable files; the catalog is replaced separately and is not a
-multi-writer transaction or an atomic library/project commit.
+## Library
+
+A library is a directory of `<name>.gppo-rf.json` files, one per transition.
+The directory is the catalog: there is no manifest file. A name starts with a
+letter or digit and uses only letters, digits, `.`, `_` and `-`.
+
+- `save_artifact(directory, artifact, overwrite=False)` writes the file whole
+  and puts it in place atomically. Identical content leaves the file's bytes
+  and modification time untouched. Different content under an existing name
+  raises `RFExistsError` unless `overwrite=True`.
+- `list_library(directory)` returns one row per transition file, sorted by
+  name: `name`, `connector` (the footprint's part id), `pin_type`
+  (`through-hole` or `SMD`), `copper_layer_count`, `exit_layer`,
+  `last_modified`, `path` and `error`. `last_modified` is the file's own
+  modification time in seconds since the epoch; the artifact stores no
+  timestamp. A file that fails to load keeps its file name as `name`, has
+  `None` for the transition fields and gives the reason in `error`.
+
+Two people saving the same name at the same moment are not coordinated: the
+later save wins.
 
 ## File/API contract
 
 `model.py` has no KiCad or Workflow imports and provides `default_recipe`,
 `review_recipe`, `generate_payload`, `recipe_warnings`, `make_artifact`,
-`load_artifact`, `clone_artifact`, `revise_artifact` and `publish_bundle`.
+`load_artifact`, `save_artifact`, `artifact_path` and `list_library`.
 `review_recipe(recipe)` returns `{"payload": …, "warnings": […]}` for a valid
 recipe and raises `RFError` for a blocking finding. Each warning has `code`,
 `subject` and `message`; a measured one also has `value_mm` and `limit_mm`.
@@ -251,7 +267,7 @@ descriptor: `signal_pad`, `ground_pad`, `mount`, `side`, `signal_land`,
 `ground_zone_connection` (always `solid`). The native ActionPlugin
 class is `GPPORFTransitionDesignerPlugin`, registered as `PLUGIN` on KiCad import.
 
-The versioned `gppo.artifact/2.0` envelope and `gppo.rf/2.0` payload contain only
+The versioned `gppo.artifact/3.0` envelope and `gppo.rf/2.0` payload contain only
 data. A consumer binds explicit net/layer roles and materializes supported saved
 objects without importing this plugin or executing a recipe. Supported payloads
 can remain consumable when a newer generator's recipe cannot be reopened.
@@ -268,13 +284,18 @@ Payload object types:
 | `track` | `id` (`exit-trace`), `net` (`signal`), `layer`, `width`, `start`, `end` | Exactly one, from `[0, 0]` to the handoff |
 
 The payload's `anchors` are `signal` `[0, 0]`, `exit_direction_deg` `0` and
-`handoff`, the trace end. `compatibility.copper_layer_count` replaces a stackup
-name list.
+`handoff`, the trace end.
+
+The envelope's fields are `schema`, `name`, `kind`, `payload_schema`, `recipe`,
+`payload`, `compatibility`, `required_capabilities` and `hashes` (`recipe`,
+`payload`, `artifact`). `compatibility` is `part_id`, `part_sha256`, `mount`,
+`side` and `copper_layer_count`; the exit layer is the payload's
+`layer_roles.signal`. `make_artifact(recipe, name)` builds it.
 
 Run `scripts/test_kicad.sh` and repository PCM checks before release. Focused
 tests are in `tests/test_gppo_rf_transition.py`; they cover exact arc count and
 midpoints, native source read/round-trip and footprint rejection, signal stacks
 of any depth, stacked and staggered ground rings, land tangency/overlap,
 antipad layers, the ground disc, the exit trace and corridor, warnings,
-hash/schema rejection, clone/revision provenance and immutable no-op
-publication.
+hash/schema rejection, saving by name with and without overwrite, and the
+library listing.

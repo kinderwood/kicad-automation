@@ -1,4 +1,4 @@
-"""RF recipes and immutable declarative geometry. No pcbnew or Workflow imports.
+"""RF recipes, declarative geometry and the transition library. No pcbnew or Workflow imports.
 
 All coordinates are millimetres, +X right, +Y up; positive angles are CCW.
 Layer names refer to the pinned stackup, not architecture worksheet aliases.
@@ -13,10 +13,10 @@ from pathlib import Path
 import re
 import uuid
 
-VERSION = "0.4.0"
-SCHEMA = "gppo.artifact/2.0"
+VERSION = "0.5.0"
+SCHEMA = "gppo.artifact/3.0"
 PAYLOAD_SCHEMA = "gppo.rf/2.0"
-RECIPE_SCHEMA = "gppo.rf-recipe/3.0"
+RECIPE_SCHEMA = "gppo.rf-recipe/4.0"
 CAPABILITIES = {"native-vias", "net-copper-shapes", "layer-rule-areas",
                 "adjacent-microvia-stacks", "native-tracks", "filled-vias"}
 TOLERANCE_MM = 0.001
@@ -30,8 +30,16 @@ MIN_ANNULAR_RING_MM = {"drilled": 0.127, "microvia": 0.0635}
 MIL_MM = 0.0254  # Exact. Defaults are authored in mils and stored in millimetres.
 
 
+FILE_SUFFIX = ".gppo-rf.json"
+NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
+
+
 class RFError(ValueError):
     """A reviewable blocking authoring/compatibility error."""
+
+
+class RFExistsError(RFError):
+    """A different transition is already saved under this name."""
 
 
 def copper_layer_names(count):
@@ -200,7 +208,7 @@ def default_recipe(part=None):
         "units": "mm", "dependencies": {"base_part": deepcopy(part)},
         "parameters": {
             "stackup": layers,
-            "signal_layer": "In2.Cu", "netclasses": ["RF"],
+            "signal_layer": "In2.Cu",
             "signal_via": None if pth else {"diameter": pad, "drill": drill},
             "ground_via": {"via_type": "microvia", "diameter": pad, "drill": drill,
                            "construction": "stacked"},
@@ -318,8 +326,6 @@ def _generate(recipe):
                       "is never allowed, so the exit layer must be an inner layer")
     pth = part["mount"] == "PTH"
     annulus = part["ground_annulus"]
-    if not isinstance(params["netclasses"], list) or not params["netclasses"] or any(not isinstance(n, str) or not n for n in params["netclasses"]):
-        raise RFError("at least one explicit compatible netclass is required")
     ring = params["ground_ring"]
     _keys(ring, ["radius", "start_deg", "end_deg", "count"], "ground ring")
     radius = number(ring["radius"], "ground radius", True)
@@ -527,35 +533,41 @@ def _generate(recipe):
     return payload, warnings
 
 
-def make_artifact(recipe, artifact_id=None, revision=1, provenance=None):
+def _name(name):
+    if not isinstance(name, str) or not re.fullmatch(NAME_PATTERN, name):
+        raise RFError("a transition name starts with a letter or digit and uses only letters, "
+                      "digits, '.', '_' and '-', at most 128 characters")
+    return name
+
+
+def make_artifact(recipe, name):
+    """Build the saved form of a transition, identified by its name.
+
+    A transition is netclass-agnostic and has no revision or lineage. It
+    stores no timestamp: "last saved" is its file's modification time.
+    """
     payload = generate_payload(recipe)
-    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
-        raise RFError("revision must be a positive integer")
-    artifact_id = artifact_id or str(uuid.uuid4())
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", artifact_id):
-        raise RFError("artifact identity must be a safe nonempty library identifier")
+    _name(name)
     params = recipe["parameters"]
     part = recipe["dependencies"]["base_part"]
     caps = ["native-vias", "net-copper-shapes", "layer-rule-areas",
             "native-tracks", "filled-vias"]
     if any(o.get("via_type") == "microvia" for o in payload["objects"]):
         caps.append("adjacent-microvia-stacks")
-    artifact = {"schema": SCHEMA, "artifact_id": artifact_id, "revision": revision,
+    artifact = {"schema": SCHEMA, "name": name,
                 "kind": "rf-transition", "payload_schema": PAYLOAD_SCHEMA,
                 "recipe": deepcopy(recipe), "payload": payload,
                 "compatibility": {"part_id": part["part_id"], "part_sha256": part["sha256"],
                                   "mount": part["mount"], "side": part["side"],
-                                  "netclasses": deepcopy(params["netclasses"]),
                                   "copper_layer_count": len(params["stackup"])},
-                "required_capabilities": sorted(caps),
-                "provenance": deepcopy(provenance or {"operation": "new"})}
+                "required_capabilities": sorted(caps)}
     artifact["hashes"] = {"payload": digest(payload), "recipe": digest(recipe),
                           "artifact": digest(artifact)}
     return artifact
 
 
 def _supported_schema(value, prefix):
-    return isinstance(value, str) and re.fullmatch(re.escape(prefix) + r"/2\.\d+", value)
+    return isinstance(value, str) and re.fullmatch(re.escape(prefix) + r"/3\.\d+", value)
 
 
 def _validate_saved_payload(artifact):
@@ -621,10 +633,12 @@ def validate_artifact(artifact, reopen=False):
         raise RFError("artifact integrity failure (payload, recipe or metadata)")
     if set(artifact.get("required_capabilities", [])) - CAPABILITIES:
         raise RFError("unsupported required native capability")
-    if isinstance(artifact.get("revision"), bool) or not isinstance(artifact.get("revision"), int) or artifact["revision"] < 1:
-        raise RFError("invalid saved immutable revision")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", artifact.get("artifact_id", "")):
-        raise RFError("invalid saved artifact identity")
+    if set(artifact) != {"schema", "name", "kind", "payload_schema", "recipe", "payload",
+                         "compatibility", "required_capabilities", "hashes"}:
+        raise RFError("unsupported artifact envelope fields")
+    _name(artifact["name"])
+    if set(artifact["compatibility"]) != {"part_id", "part_sha256", "mount", "side", "copper_layer_count"}:
+        raise RFError("unsupported artifact compatibility fields")
     _validate_saved_payload(artifact)
     if reopen:
         expected = generate_payload(artifact["recipe"])
@@ -633,77 +647,88 @@ def validate_artifact(artifact, reopen=False):
     return artifact
 
 
-def clone_artifact(artifact, recipe=None, artifact_id=None):
-    validate_artifact(artifact, reopen=True)
-    if artifact_id == artifact["artifact_id"]:
-        raise RFError("clone must receive a new identity")
-    return make_artifact(recipe or artifact["recipe"], artifact_id=artifact_id,
-                         provenance={"operation": "clone", "parent": pin(artifact)})
-
-
-def revise_artifact(artifact, recipe):
-    validate_artifact(artifact, reopen=True)
-    return make_artifact(recipe, artifact["artifact_id"], artifact["revision"] + 1,
-                         {"operation": "revision", "parent": pin(artifact)})
-
-
-def pin(artifact):
-    return {"artifact_id": artifact["artifact_id"], "revision": artifact["revision"],
-            "sha256": artifact["hashes"]["artifact"]}
-
-
 def load_artifact(path, reopen=False):
     try:
         artifact = json.loads(Path(path).read_text(encoding="utf-8"))
         return validate_artifact(artifact, reopen=reopen)
-    except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
-        raise RFError(f"cannot read RF artifact: {error}") from error
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        if isinstance(error, RFError):
+            raise
+        raise RFError(f"cannot read RF transition: {error}") from error
 
 
-def publish_bundle(directory, artifact):
-    """Publish an immutable artifact and a small catalog. Existing bytes never change.
+def artifact_path(directory, name):
+    """The one library file a transition of this name is saved in."""
+    return Path(directory) / (_name(name) + FILE_SUFFIX)
 
-    Directory catalogs are advisory indexes; each selected file is independently
-    verified. A catalog update failure leaves a valid discoverable immutable file.
+
+def save_artifact(directory, artifact, overwrite=False):
+    """Save a transition as ``<name>.gppo-rf.json`` in a library directory.
+
+    Saving again under the same name replaces the file, but only when
+    ``overwrite`` is true; otherwise RFExistsError is raised so a caller can
+    ask first. Identical content leaves the file's bytes and modification
+    time untouched. The file is written whole and put in place atomically.
     """
     validate_artifact(artifact, reopen=True)
     root = Path(directory)
     root.mkdir(parents=True, exist_ok=True)
-    identity = artifact["artifact_id"]
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", identity):
-        raise RFError("unsafe artifact identity")
-    target = root / f"{identity}.r{artifact['revision']}.gppo-rf.json"
+    target = artifact_path(root, artifact["name"])
     data = canonical(artifact) + b"\n"
     if target.exists():
-        if target.read_bytes() != data:
-            raise RFError("immutable artifact identity/revision already has different content")
-        return target
-    # Publish complete bytes with an exclusive hard-link, so a failed write cannot
-    # expose a truncated immutable revision. Same-directory staging is required.
-    staging = root / f".artifact-{uuid.uuid4()}.tmp"
+        if target.read_bytes() == data:
+            return target
+        if not overwrite:
+            raise RFExistsError(f"a different transition named {artifact['name']} is already saved in this library")
+    # Same-directory staging, so a failed write cannot expose a truncated file.
+    staging = root / f".{artifact['name']}-{uuid.uuid4()}.tmp"
     try:
         with staging.open("xb") as stream:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        os.link(staging, target)
-    except FileExistsError as error:
-        raise RFError("artifact revision was concurrently published; reopen library") from error
+        if overwrite:
+            staging.replace(target)
+        else:
+            try:
+                os.link(staging, target)  # Exclusive: never replaces a concurrent save.
+            except FileExistsError as error:
+                raise RFExistsError(f"a transition named {artifact['name']} was saved meanwhile") from error
     finally:
         staging.unlink(missing_ok=True)
-    catalog_path = root / "manifest.json"
-    try:
-        catalog = json.loads(catalog_path.read_text(encoding="utf-8")) if catalog_path.exists() else {"schema": "gppo.catalog/1.0", "artifacts": []}
-        if catalog.get("schema") != "gppo.catalog/1.0" or not isinstance(catalog.get("artifacts"), list):
-            raise RFError("unsupported library catalog")
-        catalog["artifacts"].append({**pin(artifact), "path": target.name})
-        # Replace from a same-directory unique temp file, without touching artifacts.
-        temporary = root / f".manifest-{uuid.uuid4()}.tmp"
-        temporary.write_bytes(canonical(catalog) + b"\n")
-        temporary.replace(catalog_path)
-    except (OSError, json.JSONDecodeError) as error:
-        raise RFError(f"artifact saved at {target}; catalog update failed: {error}") from error
     return target
+
+
+def list_library(directory):
+    """One row per transition file in a library directory, for a listing UI.
+
+    The directory itself is the catalog. Each row has ``name``, ``connector``
+    (the footprint's part id), ``pin_type`` (``through-hole`` or ``SMD``),
+    ``copper_layer_count``, ``exit_layer``, ``last_modified`` (the file's
+    modification time, seconds since the epoch), ``path`` and ``error``. A
+    file that cannot be loaded keeps its file name as ``name``, has ``None``
+    for the transition fields and carries the reason in ``error``.
+    """
+    rows = []
+    root = Path(directory)
+    for path in sorted(root.glob("*" + FILE_SUFFIX)) if root.is_dir() else []:
+        row = {"name": path.name[:-len(FILE_SUFFIX)], "connector": None, "pin_type": None,
+               "copper_layer_count": None, "exit_layer": None, "last_modified": None,
+               "path": str(path), "error": None}
+        try:
+            row["last_modified"] = path.stat().st_mtime
+            artifact = load_artifact(path)
+            if artifact["name"] != row["name"]:
+                raise RFError(f"the file is named for {row['name']} but holds the transition {artifact['name']}")
+            compatibility = artifact["compatibility"]
+            row.update(connector=compatibility["part_id"],
+                       pin_type="through-hole" if compatibility["mount"] == "PTH" else "SMD",
+                       copper_layer_count=compatibility["copper_layer_count"],
+                       exit_layer=artifact["payload"]["layer_roles"]["signal"])
+        except (OSError, RFError) as error:
+            row["error"] = str(error)
+        rows.append(row)
+    return sorted(rows, key=lambda row: row["name"].casefold())
 
 
 def capability_report(version):

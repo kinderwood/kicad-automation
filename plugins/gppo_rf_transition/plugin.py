@@ -8,9 +8,8 @@ from pathlib import Path
 import pcbnew
 import wx
 
-from .model import (RFError, capability_report, clone_artifact, default_recipe,
-                    load_artifact, make_artifact, publish_bundle,
-                    review_recipe, revise_artifact)
+from .model import (RFError, RFExistsError, capability_report, default_recipe,
+                    load_artifact, make_artifact, review_recipe, save_artifact)
 from .native import read_base_part
 
 
@@ -74,29 +73,30 @@ class GeometryPreview(wx.Panel):
 
 
 class RFDesignerDialog(wx.Dialog):
-    """Edit a complete declarative recipe; immutable file publication only."""
+    """Edit a complete declarative recipe and save it by name to a library."""
 
     def __init__(self, parent=None):
         super().__init__(parent, title="GPPO RF Transition Designer — Librarian", size=(1180, 820),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
-        self.artifact = None
         self.recipe = default_recipe()
-        self.draft_mode = "new"
         self.validated = None
         self.base_path = None
         root = wx.BoxSizer(wx.VERTICAL)
         self.SetSizer(root)
         root.Add(wx.StaticText(self, label="Author reusable RF artifacts from approved central parts. Source footprints stay read-only."), 0, wx.ALL, 10)
         tools = wx.BoxSizer(wx.HORIZONTAL)
-        for label, handler in [("Open artifact…", self.open_artifact),
-                               ("Select approved GPPO…", self.select_part),
-                               ("Clone variant", self.clone), ("New revision", self.revision)]:
+        for label, handler in [("Open transition…", self.open_artifact),
+                               ("Select approved GPPO…", self.select_part)]:
             button = wx.Button(self, label=label)
             button.Bind(wx.EVT_BUTTON, handler)
             tools.Add(button, 0, wx.RIGHT, 6)
+        # The name identifies the transition and names its library file.
+        # A new name on a loaded transition saves a duplicate.
+        tools.Add(wx.StaticText(self, label="Name"), 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, 6)
+        self.name = wx.TextCtrl(self, value="", size=(260, -1))
+        self.name.Bind(wx.EVT_TEXT, self.invalidate)
+        tools.Add(self.name, 0, wx.ALIGN_CENTER_VERTICAL)
         root.Add(tools, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        self.identity = wx.StaticText(self, label="New unsaved artifact · revision 1")
-        root.Add(self.identity, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         splitter = wx.BoxSizer(wx.HORIZONTAL)
         left = wx.BoxSizer(wx.VERTICAL)
         left.Add(wx.StaticText(self, label="Complete recipe (JSON; millimetres, local +X exit, +Y up, angles CCW)"), 0, wx.BOTTOM, 5)
@@ -121,8 +121,8 @@ class RFDesignerDialog(wx.Dialog):
         validate = wx.Button(self, label="Validate / Preview")
         validate.Bind(wx.EVT_BUTTON, self.validate)
         actions.Add(validate, 0, wx.RIGHT, 6)
-        self.save = wx.Button(self, label="Publish immutable library bundle…")
-        self.save.Bind(wx.EVT_BUTTON, self.publish)
+        self.save = wx.Button(self, label="Save…")
+        self.save.Bind(wx.EVT_BUTTON, self.save_transition)
         self.save.Enable(False)
         actions.Add(self.save, 0, wx.RIGHT, 6)
         close = wx.Button(self, wx.ID_CLOSE, "Close")
@@ -156,17 +156,15 @@ class RFDesignerDialog(wx.Dialog):
         self.editor.SetValue(json.dumps(self.recipe, indent=2))
 
     def open_artifact(self, event):
-        with wx.FileDialog(self, "Reopen generation", wildcard="RF artifact (*.gppo-rf.json)|*.gppo-rf.json|JSON (*.json)|*.json",
+        with wx.FileDialog(self, "Open transition", wildcard="RF transition (*.gppo-rf.json)|*.gppo-rf.json|JSON (*.json)|*.json",
                            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return
             try:
                 artifact = load_artifact(dialog.GetPath(), reopen=True)
-                self.artifact = artifact
-                self.base_path = None  # Portable saved pins do not depend on a prior selection.
-                self.draft_mode = "existing"
+                self.base_path = None  # A saved part pin does not depend on a prior selection.
+                self.name.SetValue(artifact["name"])
                 self.set_recipe(artifact["recipe"])
-                self.identity.SetLabel(f"{artifact['artifact_id']} · pinned revision {artifact['revision']} · clone or create revision to change")
                 self.validate(None)
             except (RFError, OSError, ValueError) as error:
                 self.error(error)
@@ -205,20 +203,6 @@ class RFDesignerDialog(wx.Dialog):
             except (RFError, ValueError, KeyError, TypeError) as error:
                 self.error(error)
 
-    def clone(self, event):
-        if not self.artifact:
-            return self.error("Open a saved artifact before cloning")
-        self.draft_mode = "clone"
-        self.identity.SetLabel(f"Clone of {self.artifact['artifact_id']} r{self.artifact['revision']} · new identity on publication")
-        self.invalidate()
-
-    def revision(self, event):
-        if not self.artifact:
-            return self.error("Open a saved artifact before creating a revision")
-        self.draft_mode = "revision"
-        self.identity.SetLabel(f"{self.artifact['artifact_id']} · new immutable revision {self.artifact['revision'] + 1}")
-        self.invalidate()
-
     def change_layer(self, event):
         self.preview.layer = self.layer.GetStringSelection()
         self.preview.Refresh()
@@ -235,17 +219,8 @@ class RFDesignerDialog(wx.Dialog):
             self.preview.layer = self.layer.GetStringSelection()
             self.preview.payload = {**payload, "stackup": recipe["parameters"]["stackup"]}
             self.preview.Refresh()
-            if self.draft_mode == "existing":
-                if recipe != self.artifact["recipe"]:
-                    raise RFError("saved revisions are immutable; choose Clone variant or New revision")
-                candidate = self.artifact
-            elif self.draft_mode == "revision":
-                candidate = revise_artifact(self.artifact, recipe)
-            elif self.draft_mode == "clone":
-                candidate = clone_artifact(self.artifact, recipe)
-            else:
-                candidate = make_artifact(recipe)
-            self.validated = (self.editor.GetValue(), candidate)
+            candidate = make_artifact(recipe, self.name.GetValue().strip())
+            self.validated = (self.editor.GetValue(), self.name.GetValue(), candidate)
             self.save.Enable(True)
             findings = "".join(f"WARNING · {warning['message']}\n" for warning in warnings)
             self.report.SetValue(f"VALIDATED · {len(payload['objects'])} board objects · {len(warnings)} warnings\n" + findings +
@@ -254,24 +229,28 @@ class RFDesignerDialog(wx.Dialog):
         except (RFError, ValueError, KeyError, TypeError) as error:
             self.error(error)
 
-    def publish(self, event):
-        if not self.validated or self.validated[0] != self.editor.GetValue():
-            return self.error("preview is stale; validate the current recipe")
-        with wx.DirDialog(self, "Publish to librarian-managed RF library directory") as dialog:
+    def save_transition(self, event):
+        if not self.validated or self.validated[:2] != (self.editor.GetValue(), self.name.GetValue()):
+            return self.error("preview is stale; validate the current recipe and name")
+        with wx.DirDialog(self, "Save to an RF transition library directory") as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return
             try:
-                text, artifact = self.validated
+                artifact = self.validated[2]
                 if self.base_path:
                     import hashlib
                     expected = artifact["recipe"]["dependencies"]["base_part"]["sha256"]
                     if hashlib.sha256(Path(self.base_path).read_bytes()).hexdigest() != expected:
                         raise RFError("approved base source changed; select and validate again")
-                path = publish_bundle(dialog.GetPath(), artifact)
-                self.artifact = artifact
-                self.draft_mode = "existing"
-                self.identity.SetLabel(f"{artifact['artifact_id']} · immutable revision {artifact['revision']}")
-                self.report.SetValue(f"Published {path}\n\nExact payload, recipe and dependency pin preserved.\nSource part unchanged. Native geometry needs downstream project validation.")
+                try:
+                    path = save_artifact(dialog.GetPath(), artifact)
+                except RFExistsError:
+                    if wx.MessageBox(f"A transition named {artifact['name']} is already saved there "
+                                     "with different content. Replace it?", "Replace transition",
+                                     wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self) != wx.YES:
+                        return
+                    path = save_artifact(dialog.GetPath(), artifact, overwrite=True)
+                self.report.SetValue(f"Saved {path}\n\nSource part unchanged. Native geometry needs downstream project validation.")
             except (RFError, OSError, ValueError) as error:
                 self.error(error)
 
@@ -280,7 +259,7 @@ class GPPORFTransitionDesignerPlugin(pcbnew.ActionPlugin):
     def defaults(self):
         self.name = "GPPO RF Transition Designer"
         self.category = "Library authoring"
-        self.description = "Author and publish immutable GPPO RF transition recipes and board geometry"
+        self.description = "Author and save GPPO RF transition recipes and board geometry"
         self.show_toolbar_button = False
 
     def Run(self):

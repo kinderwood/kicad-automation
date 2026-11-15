@@ -13,22 +13,33 @@ for placement. The saved exact payload is authoritative. Recipe reopening is a
 separate operation that requires a known generator/schema and verifies exact
 regeneration; consuming saved output must not execute authoring code.
 
-`gppo.artifact/2.x` carries an immutable safe artifact identity, positive integer
-revision, kind, payload schema, full recipe, exact payload, compatibility,
-required native capabilities and provenance. `gppo.rf-recipe/3.0` fixes the
-generator identity/version, all parameters, units and dependency descriptor.
-Compatibility is the footprint identity and hash, mount type, mount side,
-allowed netclasses and `copper_layer_count`. Stackup identity is that count:
+`gppo.artifact/3.x` carries the transition's name, kind, payload schema, full
+recipe, exact payload, compatibility and required native capabilities.
+`gppo.rf-recipe/4.0` fixes the generator identity/version, all parameters,
+units and dependency descriptor. Compatibility is the footprint identity and
+hash, mount type, mount side and `copper_layer_count`; the exit layer is the
+payload's signal layer role. A transition is netclass-agnostic: nothing in a
+recipe or an artifact names a netclass. Stackup identity is the layer count:
 layer names inside a recipe and payload are KiCad's literal names for it, and
 nothing compares a name list. The base-part descriptor names no stackup, so a
 changed layer count never forces the source to be inspected again.
-Clones use a new identity/revision 1; revisions retain identity and increment
-revision. Both record the parent identity, revision and complete-artifact hash.
+
+A transition is identified by its name. It has no revision number, no parent
+or clone lineage and no timestamp, and it is not immutable: saving again under
+the same name replaces the file. Its file is `<name>.gppo-rf.json` in a
+library directory, and the directory itself is the catalog; there is no
+manifest. "Last saved" is the file's modification time. A save writes the
+whole file to a same-directory staging file and moves it into place, so a
+failed write cannot leave a truncated transition; identical content is not
+rewritten. Replacing existing content needs the caller's explicit overwrite
+flag, which the dialog sets only after asking. A consumer that needs to know
+whether a library transition changed compares the envelope hash with the one
+it pinned.
 
 Canonical JSON is UTF-8 with `sort_keys=True`, `separators=(',', ':')`,
 `ensure_ascii=False`, `allow_nan=False`. SHA-256 hashes cover the recipe and
 payload independently, and the complete envelope excluding its `hashes` member.
-Compatibility/provenance changes therefore invalidate the envelope hash.
+A changed name or compatibility entry therefore changes the envelope hash.
 Object iteration follows explicit stackup order, so round-tripping the sorted
 JSON object keys does not change generated object-list ordering. These are
 integrity checks, not signatures or proof of librarian approval.
@@ -66,7 +77,7 @@ true tangency is accepted. Antipad polygon edges circumscribe the intended
 circle with <=0.001 mm radial overshoot. Native consumers must preserve these
 exact saved vertices rather than retessellate a differently sized opening.
 
-The wx dialog performs read/preview/publish library actions only. It does not
+The wx dialog performs read/preview/save library actions only. It does not
 create board geometry, mutate the current board, invoke Workflow, regenerate
 interposer parts or silently revise placed instances. Native source inspection
 uses pcbnew for actual pad geometry and data-only S-expression inspection for

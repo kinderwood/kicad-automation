@@ -119,7 +119,7 @@ class RFRecipeTests(unittest.TestCase):
         self.assertEqual(a["payload"]["layer_roles"], {"mount": "F.Cu", "signal": "In2.Cu"})
         self.assertEqual(a["hashes"]["payload"], hashlib.sha256(rf.canonical(a["payload"])).hexdigest())
         self.assertEqual((a["schema"], a["payload_schema"], a["recipe"]["schema"]),
-                         ("gppo.artifact/2.0", "gppo.rf/2.0", "gppo.rf-recipe/3.0"))
+                         ("gppo.artifact/3.0", "gppo.rf/2.0", "gppo.rf-recipe/4.0"))
         self.assertEqual(a["required_capabilities"],
                          ["adjacent-microvia-stacks", "filled-vias", "layer-rule-areas",
                           "native-tracks", "native-vias", "net-copper-shapes"])
@@ -674,7 +674,7 @@ class RFRecipeTests(unittest.TestCase):
         recipe["parameters"]["tuned_signal_copper"]["F.Cu"] = 1.5
         recipe["parameters"]["antipads"]["F.Cu"] = 1.9
         with self.assertRaisesRegex(rf.RFError, "F.Cu: signal copper or required gap reaches the footprint ground pad"):
-            rf.make_artifact(recipe)
+            rf.make_artifact(recipe, "shorted")
         # Tangency at the required ground clearance is accepted.
         recipe["parameters"]["tuned_signal_copper"]["F.Cu"] = 0.8
         rf.generate_payload(recipe)
@@ -702,31 +702,126 @@ class RFRecipeTests(unittest.TestCase):
                 with self.subTest(change=change, mount=part["mount"]), self.assertRaisesRegex(rf.RFError, message):
                     rf.generate_payload(recipe)
 
-    def test_recipe_reopen_clone_revision_and_immutable_publication(self):
+    def test_transition_is_netclass_agnostic_and_has_no_revision_or_lineage(self):
+        recipe = self.recipe()
+        self.assertNotIn("netclasses", recipe["parameters"])
+        a = rf.make_artifact(recipe, "launch")
+        self.assertEqual(set(a), {"schema", "name", "kind", "payload_schema", "recipe", "payload",
+                                  "compatibility", "required_capabilities", "hashes"})
+        self.assertEqual(a["name"], "launch")
+        self.assertEqual(a["compatibility"], {"part_id": "Approved:GPPO", "part_sha256": "a" * 64,
+                                              "mount": "SMD", "side": "front", "copper_layer_count": 4})
+        self.assertEqual(set(a["hashes"]), {"payload", "recipe", "artifact"})
+        for name in ("clone_artifact", "revise_artifact", "publish_bundle", "pin"):
+            self.assertFalse(hasattr(rf, name), name)
+        recipe["parameters"]["netclasses"] = ["RF"]
+        with self.assertRaisesRegex(rf.RFError, "unsupported fields \\['netclasses'\\]"):
+            rf.generate_payload(recipe)
+        for field, value in (("revision", 1), ("artifact_id", "launch"), ("provenance", {}), ("saved", "now")):
+            bad = deepcopy(a)
+            bad[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(rf.RFError, "envelope fields"):
+                rf.validate_artifact(rehash(bad))
+        bad = deepcopy(a)
+        bad["compatibility"]["netclasses"] = ["RF"]
+        with self.assertRaisesRegex(rf.RFError, "compatibility fields"):
+            rf.validate_artifact(rehash(bad))
+        for name in ("", "has space", "../escape", "a/b", ".hidden", "x" * 129, None, 7):
+            with self.subTest(name=name), self.assertRaisesRegex(rf.RFError, "transition name"):
+                rf.make_artifact(self.recipe(), name)
+        with self.assertRaises(TypeError):
+            rf.make_artifact(self.recipe())  # The name is required.
+
+    def test_save_by_name_replaces_only_on_request_and_is_atomic(self):
         a = rf.make_artifact(self.recipe(), "library-rf")
-        old_bytes = rf.canonical(a)
         changed = deepcopy(a["recipe"])
         changed["parameters"]["ground_ring"]["radius"] = 2.2
-        revision = rf.revise_artifact(a, changed)
-        clone = rf.clone_artifact(a, changed, "new-variant")
-        self.assertEqual(revision["artifact_id"], a["artifact_id"])
-        self.assertEqual(revision["revision"], 2)
-        self.assertEqual(clone["revision"], 1)
-        self.assertEqual(clone["provenance"]["parent"], rf.pin(a))
-        self.assertEqual(rf.canonical(a), old_bytes)
+        different = rf.make_artifact(changed, "library-rf")
         with tempfile.TemporaryDirectory() as temporary:
-            path = rf.publish_bundle(temporary, a)
-            mtime = path.stat().st_mtime_ns
+            library = Path(temporary) / "rf"
+            path = rf.save_artifact(library, a)
+            # One JSON file named from the transition name; no catalog file.
+            self.assertEqual(path, library / "library-rf.gppo-rf.json")
+            self.assertEqual(path, rf.artifact_path(library, "library-rf"))
+            self.assertEqual([p.name for p in library.iterdir()], ["library-rf.gppo-rf.json"])
             self.assertEqual(rf.load_artifact(path, reopen=True), a)
-            self.assertEqual(rf.publish_bundle(temporary, a), path)
-            self.assertEqual(path.stat().st_mtime_ns, mtime)
-            rf.publish_bundle(temporary, revision)
-            catalog = json.loads((Path(temporary) / "manifest.json").read_text())
-            self.assertEqual(len(catalog["artifacts"]), 2)
-            different = rf.make_artifact(changed, "library-rf")
-            with self.assertRaisesRegex(rf.RFError, "immutable"):
-                rf.publish_bundle(temporary, different)
-            self.assertEqual(path.read_bytes(), old_bytes + b"\n")
+            # Saving identical content leaves bytes and mtime untouched,
+            # with or without the overwrite flag.
+            os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+            before = path.read_bytes()
+            for overwrite in (False, True):
+                self.assertEqual(rf.save_artifact(library, a, overwrite=overwrite), path)
+                self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), (before, 1_000_000_000))
+            # Different content under the same name is refused until the
+            # caller asks to overwrite; nothing is changed by the refusal.
+            with self.assertRaises(rf.RFExistsError) as refused:
+                rf.save_artifact(library, different)
+            self.assertIsInstance(refused.exception, rf.RFError)
+            self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), (before, 1_000_000_000))
+            self.assertEqual(rf.save_artifact(library, different, overwrite=True), path)
+            self.assertEqual(rf.load_artifact(path, reopen=True), different)
+            self.assertGreater(path.stat().st_mtime_ns, 1_000_000_000)
+            # No staging file is left behind, and a failed save leaves the
+            # saved transition intact.
+            self.assertEqual([p.name for p in library.iterdir()], ["library-rf.gppo-rf.json"])
+            saved = path.read_bytes()
+            broken = deepcopy(a)
+            broken["payload"]["objects"].pop()
+            with self.assertRaises(rf.RFError):
+                rf.save_artifact(library, broken, overwrite=True)
+            self.assertEqual(path.read_bytes(), saved)
+            self.assertEqual([p.name for p in library.iterdir()], ["library-rf.gppo-rf.json"])
+            # Duplicate: load, give a new name, save.
+            loaded = rf.load_artifact(path, reopen=True)
+            copy = rf.make_artifact(loaded["recipe"], "library-rf-copy")
+            self.assertEqual(rf.save_artifact(library, copy).name, "library-rf-copy.gppo-rf.json")
+            self.assertEqual(copy["payload"], loaded["payload"])
+            self.assertNotEqual(copy["hashes"]["artifact"], loaded["hashes"]["artifact"])
+
+    def test_library_listing_scans_the_directory_one_row_per_transition(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            library = Path(temporary)
+            self.assertEqual(rf.list_library(library / "missing"), [])
+            self.assertEqual(rf.list_library(library), [])
+            smd = rf.save_artifact(library, rf.make_artifact(self.recipe(), "b-smd"))
+            recipe = self.pth_recipe()
+            resize(recipe, 6, "In3.Cu")
+            pth = rf.save_artifact(library, rf.make_artifact(recipe, "A-through"))
+            os.utime(smd, ns=(5_000_000_000, 5_000_000_000))
+            os.utime(pth, ns=(7_500_000_000, 7_500_000_000))
+            (library / "broken.gppo-rf.json").write_text("{not json")
+            tampered = json.loads(smd.read_text())
+            tampered["name"] = "renamed-inside"
+            (library / "tampered.gppo-rf.json").write_text(json.dumps(tampered))
+            misnamed = rf.make_artifact(self.recipe(), "other-name")
+            (library / "misnamed.gppo-rf.json").write_bytes(rf.canonical(misnamed))
+            (library / "notes.txt").write_text("not a transition")
+            (library / "manifest.json").write_text("{}")
+            rows = rf.list_library(library)
+            self.assertEqual([row["name"] for row in rows],
+                             ["A-through", "b-smd", "broken", "misnamed", "tampered"])
+            self.assertEqual(set(rows[0]), {"name", "connector", "pin_type", "copper_layer_count",
+                                            "exit_layer", "last_modified", "path", "error"})
+            self.assertEqual(rows[0], {
+                "name": "A-through", "connector": "Approved:GPPO", "pin_type": "through-hole",
+                "copper_layer_count": 6, "exit_layer": "In3.Cu", "last_modified": 7.5,
+                "path": str(pth), "error": None})
+            self.assertEqual(rows[1], {
+                "name": "b-smd", "connector": "Approved:GPPO", "pin_type": "SMD",
+                "copper_layer_count": 4, "exit_layer": "In2.Cu", "last_modified": 5.0,
+                "path": str(smd), "error": None})
+            # Files that fail to load are listed with the reason.
+            for row, message in zip(rows[2:], ("cannot read RF transition", "holds the transition other-name",
+                                               "integrity failure")):
+                self.assertIn(message, row["error"])
+                self.assertEqual((row["connector"], row["pin_type"], row["copper_layer_count"],
+                                  row["exit_layer"]), (None, None, None, None))
+                self.assertIsNotNone(row["last_modified"])
+            # "Last saved" is the file's own modification time: nothing in
+            # the artifact records one.
+            self.assertNotIn("7.5", smd.read_text())
+            os.utime(pth, ns=(9_000_000_000, 9_000_000_000))
+            self.assertEqual(rf.list_library(library)[0]["last_modified"], 9.0)
 
     def test_integrity_capability_and_opaque_recipe_compatibility(self):
         a = rf.make_artifact(self.recipe(), "test")
@@ -741,7 +836,7 @@ class RFRecipeTests(unittest.TestCase):
             rf.validate_artifact(rehash(bad))
         newer = deepcopy(a)
         newer["recipe"]["generator"]["version"] = "99.0.0"
-        newer["schema"] = "gppo.artifact/2.1"
+        newer["schema"] = "gppo.artifact/3.1"
         rf.validate_artifact(rehash(newer))
         with self.assertRaisesRegex(rf.RFError, "different generator"):
             rf.validate_artifact(newer, reopen=True)
@@ -750,9 +845,11 @@ class RFRecipeTests(unittest.TestCase):
         with self.assertRaisesRegex(rf.RFError, "object type"):
             rf.validate_artifact(rehash(unsupported))
         older = deepcopy(a)
-        older["schema"] = "gppo.artifact/1.0"
-        with self.assertRaisesRegex(rf.RFError, "unsupported artifact envelope"):
-            rf.validate_artifact(rehash(older))
+        for schema in ("gppo.artifact/1.0", "gppo.artifact/2.0"):
+            older = deepcopy(a)
+            older["schema"] = schema
+            with self.assertRaisesRegex(rf.RFError, "unsupported artifact envelope"):
+                rf.validate_artifact(rehash(older))
         for change in ("second", "moved", "layer", "handoff"):
             bad = deepcopy(a)
             trace = objects(bad["payload"], type="track")[0]
@@ -827,7 +924,7 @@ class RFNativeTests(unittest.TestCase):
             # Via-in-pad default: the ring sits on the annulus mid-radius.
             self.assertEqual(recipe["parameters"]["ground_ring"]["radius"], 1.11125)
             artifact = rf.make_artifact(recipe, "native-read")
-            rf.publish_bundle(Path(temporary) / "RF", artifact)
+            rf.save_artifact(Path(temporary) / "RF", artifact)
             self.assertEqual(path.read_bytes(), before)
             self.assertEqual(part["sha256"], hashlib.sha256(before).hexdigest())
             # The same inspection serves a board with another layer count.
@@ -958,6 +1055,7 @@ class RFNativeTests(unittest.TestCase):
             app.Yield()
             self.assertFalse(dialog.save.IsEnabled())
             dialog.set_recipe(wide_ring(rf.default_recipe(smd_part())))
+            dialog.name.SetValue("launch-L3")
             dialog.validate(None)
             app.Yield()
             self.assertTrue(dialog.save.IsEnabled(), dialog.report.GetValue())
@@ -965,16 +1063,22 @@ class RFNativeTests(unittest.TestCase):
             # A warning is shown in the report and does not block publication.
             self.assertIn("1 warnings", dialog.report.GetValue())
             self.assertIn("WARNING · ground disc: the ground ring does not land", dialog.report.GetValue())
-            original = dialog.validated[1]
-            dialog.artifact = original
-            dialog.revision(None)
+            self.assertEqual(dialog.save.GetLabel(), "Save…")
+            self.assertEqual(dialog.validated[2]["name"], "launch-L3")
+            # A new name on the loaded recipe is a duplicate; any edit of the
+            # name or the recipe needs a fresh validation before saving.
+            dialog.name.SetValue("launch-L3-copy")
+            app.Yield()
             self.assertFalse(dialog.save.IsEnabled())
             dialog.validate(None)
             self.assertTrue(dialog.save.IsEnabled())
-            self.assertEqual(dialog.validated[1]["revision"], 2)
-            dialog.clone(None)
+            self.assertEqual(dialog.validated[2]["name"], "launch-L3-copy")
+            self.assertEqual(dialog.validated[2]["recipe"], json.loads(dialog.editor.GetValue()))
+            dialog.name.SetValue("")
             dialog.validate(None)
-            self.assertNotEqual(dialog.validated[1]["artifact_id"], original["artifact_id"])
+            self.assertIn("BLOCKED", dialog.report.GetValue())
+            self.assertIn("transition name", dialog.report.GetValue())
+            dialog.name.SetValue("launch-L3")
             dialog.editor.SetValue("{}")
             app.Yield()
             self.assertFalse(dialog.save.IsEnabled())
