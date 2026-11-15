@@ -1,8 +1,8 @@
 # Connector to Interposer implementation and acceptance
 
 Implementation through Stage 6 and publication to the testing PCM catalogue
-are authorized. Connector to Interposer Workflow is version 0.8.0 and the
-separate GPPO RF Transition Designer is version 0.4.1; both have `testing`
+are authorized. Connector to Interposer Workflow is version 0.9.0 and the
+separate GPPO RF Transition Designer is version 0.5.0; both have `testing`
 status. Publication does not imply manufacturing or RF qualification. The BGA
 Interposer Wizard remains an independent package at version 0.16.1.
 
@@ -23,7 +23,7 @@ identity is its reference, with workbook connector-pin values mapped to pads on
 that one instance. Nets, netclasses and destinations may change without moving
 surviving connectors. Complete input
 snapshots are reconciled incrementally. Ambiguous ownership and affected manual
-routing block mutation. A new artifact revision requires explicit selection and
+routing block mutation. A re-saved RF transition requires explicit selection and
 a fresh preview. No generator code is executed from a saved artifact.
 
 ## Stage acceptance
@@ -42,7 +42,7 @@ file-path controls with native wx selectors over KiCad's loaded global and
 project libraries. KiCad 10 nested tables and project-over-global precedence
 are resolved with KiCad's own path-variable expansion. The selected
 `LibraryNickname:PartName` is user-facing; exact source paths and hashes remain
-internal deterministic pins. RF artifact catalog selection is unchanged.
+internal deterministic pins. RF transition file selection is unchanged.
 
 The 0.2.3 Workflow fixes bundled-interpreter discovery on Windows installations
 where the embedded editor reports `pcbnew.exe` as `sys.executable`. Discovery
@@ -537,6 +537,20 @@ The example GPPO footprint's through-hole signal land is now 23 mil on its
 The Designer still reports that ring as under the 5 mil drilled-hole limit.
 Designer 0.4.1 changes only its README to quote the new land.
 
+RF Transition Designer 0.5.0 and Workflow 0.9.0 simplify what a transition
+is. It is netclass-agnostic: netclasses are gone from the recipe and from the
+artifact's compatibility data, and Workflow no longer compares a requirement's
+netclass with anything in a transition. It is identified by its name: there
+are no revision numbers, clone or revision lineage, parent pins or immutable
+files. A transition is one `<name>.gppo-rf.json` file in a library directory,
+saving under the same name replaces it after the Designer asks, and the
+directory itself is the catalog, so `manifest.json` is gone. The Designer
+gains a library listing for a future UI. The envelope is `gppo.artifact/3.0`
+and the recipe `gppo.rf-recipe/4.0`; the payload stays `gppo.rf/2.0`. Workflow
+identifies an assigned transition by name and hash, keeps its pinned copy, and
+treats a re-saved library file as a change that needs an explicit selection
+and a reviewed update. A same-name content change is no longer a conflict.
+
 These boundaries align with KiCad 10's documented
 [hierarchical schematic model](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics),
 its normal
@@ -614,7 +628,7 @@ weakened and findings are not waived merely to make the demonstration pass.
 | Per-net routing permissions | Current class-by-layer matrix is workflow validation only | Searchable high-count per-net UI, decision on a separate workflow step, previewed rule changes, managed `.kicad_dru` ownership/merge behavior, and KiCad 10 router and DRC prototypes |
 | DXF variation | Native import and explicit source validation | Arbitrary nested blocks, curves and repair tolerances |
 | RF electrical/fabrication acceptance | Geometry and native output controls | Fabricator stackup review and impedance/EM qualification |
-| Automatic RF selection | Explicit approved artifact selection | Reviewed rules by connector, netclass, layer and stackup |
+| Automatic RF selection | Explicit transition selection | Reviewed rules by connector, layer and stackup |
 | Git checkpoints | Deferred | Project Git integration and recovery policy |
 | Example manufacturing rules | Annular-ring and cutout-clearance failures remain | Librarian-approved revised parts and fabricator rules; rerun DRC |
 | Full mechanical A/B demonstration | Both DXFs supplied; worked controller run starts from native DXF B | Interactive import, explicit revision reselection and review of the A-to-B layout change |

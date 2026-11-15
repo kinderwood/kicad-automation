@@ -7,7 +7,7 @@ board. It records owner decisions made on 2026-11-14.
 
 It is the target. Where the code differs, the last section lists the gap; the
 code changes to match this document, not the reverse. The artifact file format
-(envelope, hashes, revisions) is separate and stays in
+(envelope, hashes) is separate and stays in
 `plugins/gppo_rf_transition/DESIGN.md`.
 
 ## Who owns what
@@ -47,6 +47,17 @@ code changes to match this document, not the reverse. The artifact file format
 A transition is authored for one footprint, one copper layer count, one mount
 side and one exit layer. All geometry is local: signal at the origin, exit
 along +X.
+
+**A transition is netclass-agnostic.** It names no netclass and may serve any.
+The Workflow groups its RF requirements by netclass for its own organisation
+only. Impedance will be added as a field later.
+
+**A transition is identified by its name.** There are no revisions, no clone
+or parent lineage and no immutability. It is saved as one file named from its
+name in a library directory, and saving again under the same name replaces
+it; the Designer asks before overwriting. To duplicate a transition, load it,
+give it a new name and save. "Last saved" is the file's own modification
+time: the transition stores no timestamp.
 
 **The exit layer is always an inner layer.** Routing on the outer layers is
 never allowed, for through-hole and SMD parts alike.
@@ -191,8 +202,13 @@ at the boundary.
   Gerber, ODB++ and IPC-2581 output. Those files cannot name the material;
   the copper callout belongs in the fabrication notes.
 - Lock the placed transition, including the exit trace.
-- Accept a transition only when its footprint hash, copper layer count, mount
-  side and exit layer match the requirement.
+- Accept a transition when its connector footprint (part id and hash), copper
+  layer count, mount side and exit layer match the requirement, and on
+  nothing else. A requirement's netclass is not compared with the transition.
+- Keep its own pinned copy of each assigned transition, with its hash. A
+  library transition "changed" when its file's hash differs from the pinned
+  copy. A changed library transition never alters placed instances silently:
+  it is adopted only by an explicit selection and a reviewed change.
 - Start designer routing at the handoff point.
 
 ## Limits accepted for now
@@ -233,8 +249,8 @@ Tested on a six-layer board on 2026-11-14.
 
 ## Not yet implemented
 
-As of GPPO RF Transition Designer 0.4.1 and Connector to Interposer Workflow
-0.8.0 the code differs from this contract in this way:
+As of GPPO RF Transition Designer 0.5.0 and Connector to Interposer Workflow
+0.9.0 the code differs from this contract in this way:
 
 | Contract | Code today |
 |---|---|
