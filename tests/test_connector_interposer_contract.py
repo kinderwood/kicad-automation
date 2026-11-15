@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "plugins"))
 
 import pcbnew as p
 
-from gppo_rf_transition.model import load_artifact as author_load, publish_bundle
+from gppo_rf_transition.model import list_library, load_artifact as author_load, save_artifact
 from connector_interposer_workflow.artifacts import (ArtifactError, load_artifact,
                                                 validate_artifact)
 from connector_interposer_workflow.backend import NativeBackend, board_items, uuid_of
@@ -98,8 +98,7 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
         for row in rows:
             pos = self.positions[row.key]
             artifact = deepcopy(self.artifacts[row.layer])
-            validate_artifact(artifact, layers=LAYERS,
-                              part_sha256=selection["sha256"], netclass=row.netclass)
+            validate_artifact(artifact, layers=LAYERS, part_sha256=selection["sha256"])
             instances[row.key] = {
                 "gang": row.connector, "kind": "connector", "footprint": deepcopy(selection),
                 "pose": [pos["x_mm"], pos["y_mm"], pos["orientation_degrees"]],
@@ -188,7 +187,7 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
 
     def test_actual_author_artifacts_validate_save_reopen_and_consume(self):
         for architecture, artifact in self.artifacts.items():
-            shipped = DEMO / "library" / "rf" / f"RF-{architecture}.r1.gppo-rf.json"
+            shipped = DEMO / "library" / "rf" / f"RF-{architecture}.gppo-rf.json"
             self.assertEqual(author_load(shipped, reopen=True), artifact)
             self.assertEqual(artifact["compatibility"]["mount"], "PTH")
             self.assertEqual(artifact["compatibility"]["part_id"], "Example:" + SOURCE.stem)
@@ -200,10 +199,16 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
             self.assertEqual({kind: kinds.count(kind) for kind in set(kinds)},
                              {"via": GROUND_VIAS, "signal-overlay": 1, "antipad": len(LAYERS),
                               "exit-corridor": 1, "track": 1})
-            path = publish_bundle(self.root / "rf-library", artifact)
+            path = save_artifact(self.root / "rf-library", artifact)
             self.assertEqual(author_load(path, reopen=True), artifact)
-            for netclass in ["CLOCK", "DATA"]:
-                self.assertEqual(load_artifact(path, layers=LAYERS, part_sha256=self.source_hashes[SOURCE], netclass=netclass), artifact)
+            self.assertEqual(load_artifact(path, layers=LAYERS, part_sha256=self.source_hashes[SOURCE]), artifact)
+        # The shipped library is a plain directory of named transitions.
+        self.assertEqual(sorted(path.name for path in (DEMO / "library" / "rf").iterdir()),
+                         ["README.md", "RF-L2.gppo-rf.json", "RF-L3.gppo-rf.json"])
+        self.assertEqual([(row["name"], row["connector"], row["pin_type"], row["copper_layer_count"],
+                           row["exit_layer"], row["error"]) for row in list_library(DEMO / "library" / "rf")],
+                         [("RF-L2", "Example:" + SOURCE.stem, "through-hole", 4, "In1.Cu", None),
+                          ("RF-L3", "Example:" + SOURCE.stem, "through-hole", 4, "In2.Cu", None)])
         desired = self.desired("A")
         result = self.backend.apply(self.backend.preview(self.board, desired), self.root / "A")
         self.assert_native_contract(result, desired)
@@ -407,12 +412,10 @@ class ConnectorInterposerArtifactContractTests(unittest.TestCase):
         self.assertEqual(self.backend.apply(noop, self.root / "unused")["status"], "NOOP")
         self.assertEqual((output.read_bytes(), output.stat().st_mtime_ns), before)
 
-    def test_wrong_part_hash_layer_and_class_block_before_mutation(self):
+    def test_wrong_part_hash_and_layer_block_before_mutation(self):
         artifact = self.artifacts["L2"]
         with self.assertRaises(ArtifactError):
             validate_artifact(artifact, layers=LAYERS, part_sha256="f" * 64)
-        with self.assertRaises(ArtifactError):
-            validate_artifact(artifact, layers=LAYERS, netclass="Control")
         desired = self.desired("A")
         desired["instances"]["J101-1"]["signal_layer"] = "In2.Cu"
         before = self.board.read_bytes()

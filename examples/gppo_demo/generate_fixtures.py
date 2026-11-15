@@ -27,7 +27,7 @@ import pcbnew as p
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parents[1] / "plugins"))
 
-from gppo_rf_transition.model import default_recipe, make_artifact, publish_bundle
+from gppo_rf_transition.model import default_recipe, make_artifact, save_artifact
 from gppo_rf_transition.native import read_base_part
 
 INPUTS = ROOT / "inputs"
@@ -453,6 +453,10 @@ def interposer_pad_centers() -> list[tuple[str, tuple[float, float]]]:
 def rf_artifacts() -> dict:
     """Author the demo RF transitions, one per exit layer, deterministically.
 
+    DEMONSTRATION FIXTURES ONLY: not manufacturing or RF qualified. The
+    connector footprint is experimental; its dimensions come from vendor
+    drawing OL-B012-L1X-01 (vendor drawing revision B).
+
     The footprint is through-hole, so its own barrel is the signal conductor
     and the ground ring runs through the whole board. The Designer's defaults
     apply: stacked 5 mil drill, 10 mil pad microvias, placed in the footprint's
@@ -463,27 +467,21 @@ def rf_artifacts() -> dict:
     for architecture, copper in RF_EXIT_LAYERS.items():
         recipe = default_recipe(part)
         params = recipe["parameters"]
-        params["netclasses"] = ["CLOCK", "DATA"]
         params["signal_layer"] = copper
         # The default 25 mil signal disc, on whichever layer is the exit.
         tuned = params["tuned_signal_copper"]["In2.Cu"]
         params["tuned_signal_copper"] = {
             layer: tuned if layer == copper else None for layer in params["stackup"]}
-        result[architecture] = make_artifact(
-            recipe, f"RF-{architecture}", provenance={
-                "operation": "new",
-                "purpose": "DEMONSTRATION FIXTURE ONLY — not manufacturing or RF qualified",
-                "source": "Supplied OL-B012-L1X-01 rev B drawing; experimental central source",
-            })
+        result[architecture] = make_artifact(recipe, f"RF-{architecture}")
     return result
 
 
 def write_rf_library() -> None:
-    """Replace the published demo transitions and their catalog."""
-    for stale in [*RF_LIBRARY.glob("*.gppo-rf.json"), RF_LIBRARY / "manifest.json"]:
-        stale.unlink(missing_ok=True)
+    """Replace the demo transitions, one file per transition name."""
+    for stale in RF_LIBRARY.glob("*.gppo-rf.json"):
+        stale.unlink()
     for artifact in rf_artifacts().values():
-        publish_bundle(RF_LIBRARY, artifact)
+        save_artifact(RF_LIBRARY, artifact)
 
 
 def update_provenance() -> None:

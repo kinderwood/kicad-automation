@@ -3,7 +3,7 @@
 	(generator "pcbnew")
 	(generator_version "9.0")
 	(layer "F.Cu")
-	(descr "Stage0: OL-B012-L1X-01 rev B minima. Mask/paste/courtyard/internal pads provisional.")
+	(descr "Dimensions from vendor drawing OL-B012-L1X-01 (drawing revision B), with a 23 mil signal land on a 15 mil hole. Mask/paste/courtyard provisional.")
 	(property "Reference" ""
 		(at 0 -2.5 0)
 		(layer "F.SilkS")

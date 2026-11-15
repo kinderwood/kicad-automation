@@ -129,7 +129,7 @@ def prepare(destination):
         )
         controller.set_rf_transition(
             requirement['key'],
-            FIXTURE / 'library/rf' / f'RF-{architecture}.r1.gppo-rf.json',
+            FIXTURE / 'library/rf' / f'RF-{architecture}.gppo-rf.json',
         )
 
     native = controller.backend.call(
